@@ -84,12 +84,12 @@ function viewHome() {
 // ---------- JOGADORES ----------
 async function viewJogadores() {
   const todos = (await DB.listar("jogadores")).sort((a, b) => a.nome.localeCompare(b.nome));
-  const lista = state.fj ? todos.filter((j) => escalaoDeDataNasc(j.data_nasc) === state.fj) : todos;
+  const lista = state.fj ? todos.filter((j) => escalaoDeJogador(j) === state.fj) : todos;
   const pills = ESCALOES.map((e) =>
     `<button class="pill ${state.fj === e ? "on" : ""}" data-action="fj" data-e="${e}">${e}</button>`).join("");
   const rows = lista.length ? `<ul class="list">${lista.map((j) => {
     const ini = j.numero != null ? j.numero : (j.nome[0] || "?").toUpperCase();
-    const escal = escalaoDeDataNasc(j.data_nasc) || "sem escalão";
+    const escal = escalaoDeJogador(j) || "sem escalão";
     return `<li><a class="row card" href="#/jogadores/${j.id}">
       <span class="avatar">${esc(ini)}</span>
       <span class="grow"><span class="t">${esc(j.nome)}</span>
@@ -109,9 +109,14 @@ async function viewJogadorForm(id) {
   setView(id ? "Editar jogador" : "Novo jogador", `
     <form class="stack" data-form="jogador" data-id="${id || ""}">
       <label class="field"><span>Nome *</span><input name="nome" required value="${esc(j?.nome)}"></label>
-      <label class="field"><span>Data de nascimento *</span>
-        <input type="date" name="data_nasc" required value="${esc(j?.data_nasc)}">
-        <div class="hint">O escalão é calculado automaticamente.</div></label>
+      <label class="field"><span>Escalão *</span>
+        <select name="escalao" required>
+          <option value="">— escolher —</option>
+          ${ESCALOES.map((e) => `<option ${escalaoDeJogador(j) === e ? "selected" : ""}>${e}</option>`).join("")}
+        </select>
+        <div class="hint">És tu que defines o escalão do jogador.</div></label>
+      <label class="field"><span>Data de nascimento</span>
+        <input type="date" name="data_nasc" value="${esc(j?.data_nasc)}"></label>
       <div class="grid2">
         <label class="field"><span>Posição</span><select name="posicao">
           <option value="">—</option>${POSICOES.map((p) => `<option ${j?.posicao === p ? "selected" : ""}>${p}</option>`).join("")}
@@ -132,7 +137,7 @@ async function viewJogadorForm(id) {
 async function viewJogadorDetalhe(id) {
   const j = await DB.obter("jogadores", id);
   if (!j) return go("#/jogadores");
-  const escal = escalaoDeDataNasc(j.data_nasc) || "sem escalão";
+  const escal = escalaoDeJogador(j) || "sem escalão";
   const idade = idadeDeDataNasc(j.data_nasc);
   const ini = j.numero != null ? j.numero : (j.nome[0] || "?").toUpperCase();
   setView(j.nome, `
@@ -143,7 +148,7 @@ async function viewJogadorDetalhe(id) {
         <div class="muted">${escal}${idade != null ? " · " + idade + " anos" : ""}</div></div>
       </div>
       <dl class="info">
-        <dt>Data nasc.</dt><dd>${fmtData(j.data_nasc)}</dd>
+        <dt>Data nasc.</dt><dd>${fmtData(j.data_nasc) || "—"}</dd>
         <dt>Posição</dt><dd>${esc(j.posicao) || "—"}</dd>
         <dt>Pé preferido</dt><dd>${esc(j.pe) || "—"}</dd>
         <dt>Número</dt><dd>${j.numero ?? "—"}</dd>
@@ -278,7 +283,7 @@ async function viewTreinoDetalhe(id) {
   const total = itens.reduce((s, it) => s + durItem(it, exMap[it.exercicio_id]), 0);
 
   const jogadores = (await DB.listar("jogadores"))
-    .filter((j) => escalaoDeDataNasc(j.data_nasc) === t.escalao)
+    .filter((j) => escalaoDeJogador(j) === t.escalao)
     .sort((a, b) => a.nome.localeCompare(b.nome));
   const presencas = await DB.porIndice("presencas", "treino_id", Number(id));
   const presMap = Object.fromEntries(presencas.map((p) => [p.jogador_id, p.estado]));
@@ -396,7 +401,7 @@ app.addEventListener("submit", async (ev) => {
   const txt = (v) => (v === "" || v == null ? null : v);
 
   if (tipo === "jogador") {
-    const obj = { nome: fd.get("nome"), data_nasc: fd.get("data_nasc"),
+    const obj = { nome: fd.get("nome"), escalao: fd.get("escalao"), data_nasc: txt(fd.get("data_nasc")),
       posicao: txt(fd.get("posicao")), pe: txt(fd.get("pe")), numero: num(fd.get("numero")), notas: txt(fd.get("notas")) };
     const novoId = await salvar("jogadores", id, obj);
     return go("#/jogadores/" + novoId);

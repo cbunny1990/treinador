@@ -98,6 +98,11 @@ function escalaoDeDataNasc(dataNascISO) {
   const ano = new Date(dataNascISO).getFullYear();
   return _ESCALAO_POR_IDADE[EPOCA_ANO_INICIO - ano + 1] || null;
 }
+// O escalão é definido pelo treinador. Registos antigos (sem campo) recuam à data de nascimento.
+function escalaoDeJogador(j) {
+  if (!j) return null;
+  return j.escalao || escalaoDeDataNasc(j.data_nasc);
+}
 function idadeDeDataNasc(dataNascISO) {
   if (!dataNascISO) return null;
   const n = new Date(dataNascISO), h = new Date();
