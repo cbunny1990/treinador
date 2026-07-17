@@ -1,7 +1,7 @@
 // Camada de dados offline (IndexedDB). Sem servidor: tudo vive no telemóvel.
 const DB_NOME = "treinador";
-const DB_VERSAO = 1;
-const STORES = ["jogadores", "exercicios", "treinos", "treino_itens", "presencas"];
+const DB_VERSAO = 2;
+const STORES = ["jogadores", "exercicios", "treinos", "treino_itens", "presencas", "avaliacoes"];
 
 let _db = null;
 
@@ -24,6 +24,10 @@ function abrirDB() {
       if (!db.objectStoreNames.contains("presencas")) {
         const s = db.createObjectStore("presencas", { keyPath: "id", autoIncrement: true });
         s.createIndex("treino_id", "treino_id", { unique: false });
+      }
+      if (!db.objectStoreNames.contains("avaliacoes")) {
+        const s = db.createObjectStore("avaliacoes", { keyPath: "id", autoIncrement: true });
+        s.createIndex("jogador_id", "jogador_id", { unique: false });
       }
     };
     req.onsuccess = () => { _db = req.result; resolve(_db); };
@@ -87,6 +91,26 @@ const DB = {
     });
   },
 };
+
+// ------- avaliações (escala 1-4 em 4 dimensões) -------
+const DIMENSOES = [
+  ["tecnica", "Técnica"],
+  ["tatica", "Tática"],
+  ["fisico", "Físico"],
+  ["psico", "Psico-social"],
+];
+const NIVEIS = [
+  [1, "Insuficiente"],
+  [2, "Em desenvolvimento"],
+  [3, "Bom"],
+  [4, "Muito bom"],
+];
+function mediaAvaliacao(a) {
+  if (!a) return null;
+  const vs = DIMENSOES.map(([k]) => a[k]).filter((v) => typeof v === "number");
+  if (!vs.length) return null;
+  return vs.reduce((s, v) => s + v, 0) / vs.length;
+}
 
 // ------- regras de escalão (mesma lógica do backend, critério FPF) -------
 const EPOCA_ANO_INICIO = 2025; // atualizar a cada nova época desportiva

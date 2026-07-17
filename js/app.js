@@ -40,6 +40,8 @@ async function router() {
     if (p[0] === "jogadores") {
       if (p[1] === "novo") return viewJogadorForm();
       if (p[1] && p[2] === "editar") return viewJogadorForm(p[1]);
+      if (p[1] && p[2] === "avaliar") return viewAvaliacaoForm(p[1]);
+      if (p[1] && p[2] === "avaliacoes" && p[3] && p[4] === "editar") return viewAvaliacaoForm(p[1], p[3]);
       if (p[1]) return viewJogadorDetalhe(p[1]);
       return viewJogadores();
     }
@@ -159,7 +161,95 @@ async function viewJogadorDetalhe(id) {
       <a class="btn" href="#/jogadores/${j.id}/editar">Editar</a>
       <button class="btn danger" data-action="apagar-jogador" data-id="${j.id}">Apagar</button>
     </div>
-    <p class="muted" style="text-align:center;margin-top:24px;font-size:12px">Avaliação e evolução chegam na próxima fase.</p>`);
+    ${await secaoAvaliacoes(j)}`);
+}
+
+// ---------- AVALIAÇÕES ----------
+// Barra horizontal 1-4 para uma dimensão.
+function barraDim(label, valor) {
+  const pct = valor ? (valor / 4) * 100 : 0;
+  const cor = valor >= 3.5 ? "var(--grama)" : valor >= 2.5 ? "var(--emerald)" : valor >= 1.5 ? "var(--amber)" : "var(--red)";
+  return `<div class="dim">
+    <span class="dim-l">${label}</span>
+    <span class="dim-bar"><span class="dim-fill" style="width:${pct}%;background:${cor}"></span></span>
+    <span class="dim-v">${valor ?? "—"}</span></div>`;
+}
+
+// Gráfico de evolução da média (SVG puro, escala 1-4). pontos = [{data, valor}] por ordem cronológica.
+function graficoEvolucao(pontos) {
+  if (pontos.length < 2) return "";
+  const W = 320, H = 140, mL = 26, mR = 10, mT = 12, mB = 22;
+  const iW = W - mL - mR, iH = H - mT - mB;
+  const x = (i) => mL + (pontos.length === 1 ? iW / 2 : (i / (pontos.length - 1)) * iW);
+  const y = (v) => mT + (1 - (v - 1) / 3) * iH; // 1 em baixo, 4 em cima
+  const grelha = [1, 2, 3, 4].map((v) =>
+    `<line x1="${mL}" y1="${y(v)}" x2="${W - mR}" y2="${y(v)}" stroke="var(--slate-200)" stroke-width="1"/>
+     <text x="${mL - 6}" y="${y(v) + 3}" text-anchor="end" font-size="9" fill="var(--slate-400)">${v}</text>`).join("");
+  const linha = pontos.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.valor).toFixed(1)}`).join(" ");
+  const bolas = pontos.map((p, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(p.valor).toFixed(1)}" r="3.5" fill="var(--grama)"/>`).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Evolução da média">
+    ${grelha}
+    <path d="${linha}" fill="none" stroke="var(--grama)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+    ${bolas}
+  </svg>`;
+}
+
+async function secaoAvaliacoes(j) {
+  const avals = (await DB.porIndice("avaliacoes", "jogador_id", Number(j.id)))
+    .sort((a, b) => (a.data < b.data ? -1 : a.data > b.data ? 1 : a.id - b.id));
+  const cab = `<div class="head" style="margin-top:24px"><h2>Avaliações</h2>
+    <a class="btn sm" href="#/jogadores/${j.id}/avaliar">+ Avaliar</a></div>`;
+  if (!avals.length) {
+    return cab + `<div class="empty"><div class="big">📈</div>Ainda sem avaliações.
+      <div><a class="btn-link" href="#/jogadores/${j.id}/avaliar">Registar a primeira</a></div></div>`;
+  }
+  const ultima = avals[avals.length - 1];
+  const mUlt = mediaAvaliacao(ultima);
+  const pontos = avals.map((a) => ({ data: a.data, valor: mediaAvaliacao(a) })).filter((p) => p.valor != null);
+  const graf = graficoEvolucao(pontos);
+
+  const cardUltima = `<div class="card" style="margin-bottom:16px">
+    <div class="row" style="margin-bottom:10px"><div class="grow">
+      <div class="s" style="font-size:11px;text-transform:uppercase;color:var(--slate-400);font-weight:600">Última avaliação · ${fmtData(ultima.data)}</div></div>
+      <span class="media-badge">${mUlt != null ? mUlt.toFixed(1) : "—"}</span></div>
+    ${DIMENSOES.map(([k, lbl]) => barraDim(lbl, ultima[k])).join("")}
+    ${ultima.notas ? `<p class="muted" style="margin-top:10px;white-space:pre-line">${esc(ultima.notas)}</p>` : ""}</div>`;
+
+  const cardGraf = graf ? `<div class="card" style="margin-bottom:16px">
+    <div class="s" style="font-size:11px;text-transform:uppercase;color:var(--slate-400);font-weight:600;margin-bottom:8px">Evolução da média (${pontos.length} avaliações)</div>
+    ${graf}</div>` : "";
+
+  const historico = `<ul class="list">${avals.slice().reverse().map((a) => {
+    const m = mediaAvaliacao(a);
+    return `<li class="card row">
+      <span class="media-badge sm">${m != null ? m.toFixed(1) : "—"}</span>
+      <span class="grow"><span class="t">${fmtData(a.data)}</span>
+      <span class="s">${DIMENSOES.map(([k, lbl]) => `${lbl.slice(0, 3)} ${a[k] ?? "—"}`).join(" · ")}</span></span>
+      <a class="btn-link" href="#/jogadores/${j.id}/avaliacoes/${a.id}/editar">Editar</a>
+      <button class="x" data-action="apagar-avaliacao" data-id="${a.id}" data-jog="${j.id}">✕</button></li>`;
+  }).join("")}</ul>`;
+
+  return cab + cardUltima + cardGraf + historico;
+}
+
+async function viewAvaliacaoForm(jogadorId, avId) {
+  const j = await DB.obter("jogadores", jogadorId);
+  if (!j) return go("#/jogadores");
+  const a = avId ? await DB.obter("avaliacoes", avId) : null;
+  const hoje = new Date().toISOString().slice(0, 10);
+  const seletorNivel = (k) => `<div class="niveis">${NIVEIS.map(([v, lbl]) =>
+    `<label class="nivel"><input type="radio" name="${k}" value="${v}" ${a?.[k] === v ? "checked" : ""} required>
+      <span class="n-v">${v}</span><span class="n-l">${lbl}</span></label>`).join("")}</div>`;
+  setView(avId ? "Editar avaliação" : `Avaliar · ${j.nome}`, `
+    <form class="stack" data-form="avaliacao" data-id="${avId || ""}" data-jog="${j.id}">
+      <label class="field"><span>Data *</span><input type="date" name="data" required value="${esc(a?.data) || hoje}"></label>
+      ${DIMENSOES.map(([k, lbl]) => `<div class="field"><span>${lbl} *</span>${seletorNivel(k)}</div>`).join("")}
+      <label class="field"><span>Notas</span><textarea name="notas" rows="3" placeholder="Pontos fortes, a melhorar…">${esc(a?.notas)}</textarea></label>
+      <div class="actions">
+        <button class="btn" type="submit">Guardar</button>
+        <a class="btn ghost" href="#/jogadores/${j.id}">Cancelar</a>
+      </div>
+    </form>`);
 }
 
 // ---------- EXERCÍCIOS ----------
@@ -367,7 +457,10 @@ app.addEventListener("click", async (ev) => {
   const a = alvo.dataset.action;
   if (a === "fj") { ev.preventDefault(); state.fj = alvo.dataset.e || null; return viewJogadores(); }
   if (a === "apagar-jogador") {
-    if (confirm("Apagar este jogador?")) { await DB.apagar("jogadores", alvo.dataset.id); go("#/jogadores"); }
+    if (confirm("Apagar este jogador?")) { await apagarJogadorCascata(alvo.dataset.id); go("#/jogadores"); }
+  }
+  if (a === "apagar-avaliacao") {
+    if (confirm("Apagar esta avaliação?")) { await DB.apagar("avaliacoes", alvo.dataset.id); router(); }
   }
   if (a === "apagar-exercicio") {
     if (confirm("Apagar este exercício?")) { await DB.apagar("exercicios", alvo.dataset.id); go("#/exercicios"); }
@@ -419,6 +512,13 @@ app.addEventListener("submit", async (ev) => {
     const novoId = await salvar("treinos", id, obj);
     return go("#/treinos/" + novoId);
   }
+  if (tipo === "avaliacao") {
+    const jogId = Number(form.dataset.jog);
+    const obj = { jogador_id: jogId, data: fd.get("data"), notas: txt(fd.get("notas")) };
+    DIMENSOES.forEach(([k]) => { obj[k] = num(fd.get(k)); });
+    await salvar("avaliacoes", id, obj);
+    return go("#/jogadores/" + jogId);
+  }
   if (tipo === "add-item") {
     const treinoId = Number(location.hash.split("/")[2]);
     const itens = await DB.porIndice("treino_itens", "treino_id", treinoId);
@@ -432,6 +532,12 @@ app.addEventListener("submit", async (ev) => {
 async function salvar(store, id, obj) {
   if (id) { obj.id = id; await DB.atualizar(store, obj); return id; }
   return await DB.criar(store, obj);
+}
+async function apagarJogadorCascata(id) {
+  id = Number(id);
+  for (const av of await DB.porIndice("avaliacoes", "jogador_id", id)) await DB.apagar("avaliacoes", av.id);
+  for (const p of await DB.listar("presencas")) if (p.jogador_id === id) await DB.apagar("presencas", p.id);
+  await DB.apagar("jogadores", id);
 }
 async function apagarTreinoCascata(id) {
   id = Number(id);
