@@ -266,8 +266,13 @@ async function viewExercicios() {
           " · " + (e.n_jogadores_min || "?") + (e.n_jogadores_max && e.n_jogadores_max !== e.n_jogadores_min ? "–" + e.n_jogadores_max : "") + " jog." : ""}
         ${(e.escaloes || []).length ? " · " + e.escaloes.join(", ") : ""}
       </div></a></li>`).join("")}</ul>`
-    : `<div class="empty"><div class="big">📋</div>Ainda sem exercícios${state.fcat || state.fesc ? " com estes filtros" : ""}.
-       <div><a class="btn-link" href="#/exercicios/novo">Adicionar o primeiro</a></div></div>`;
+    : (state.fcat || state.fesc)
+      ? `<div class="empty"><div class="big">📋</div>Nenhum exercício com estes filtros.</div>`
+      : `<div class="empty"><div class="big">📋</div>Ainda sem exercícios.
+         <div style="margin-top:16px;display:flex;flex-direction:column;gap:8px;align-items:center">
+           <button class="btn" data-action="carregar-base">📚 Carregar biblioteca de formação</button>
+           <a class="btn-link" href="#/exercicios/novo">ou criar um exercício</a>
+         </div></div>`;
   setView("Exercícios", `
     <div class="head"><span class="muted">${lista.length} exercício(s)</span><a class="btn sm" href="#/exercicios/novo">+ Novo</a></div>
     <div class="grid2" style="margin-bottom:16px">
@@ -447,7 +452,12 @@ async function viewDados() {
       <label class="btn ghost" style="width:100%;cursor:pointer">⬆️ Importar cópia
         <input type="file" accept="application/json" data-action="importar" hidden></label>
     </div>
-    <p class="muted" style="font-size:12px;margin-top:12px">Importar substitui todos os dados atuais por os do ficheiro.</p>`);
+    <p class="muted" style="font-size:12px;margin-top:12px">Importar substitui todos os dados atuais por os do ficheiro.</p>
+    <div class="card" style="margin-top:16px">
+      <h2 style="font-weight:700;margin-bottom:8px">Biblioteca de formação</h2>
+      <p class="muted" style="margin-bottom:12px">Exercícios prontos para os sub-7 a sub-10 (jogos reduzidos, condução, passe, lúdicos…). Adicionar não apaga nem substitui os teus.</p>
+      <button class="btn ghost" data-action="carregar-base" style="width:100%">📚 Adicionar biblioteca-base de exercícios</button>
+    </div>`);
 }
 
 // ---------- ações (delegação de eventos) ----------
@@ -474,6 +484,14 @@ app.addEventListener("click", async (ev) => {
   if (a === "mover") { await moverItem(alvo.dataset.item, alvo.dataset.dir); router(); }
   if (a === "presenca") { await marcarPresenca(alvo.dataset.jog, alvo.dataset.est); router(); }
   if (a === "exportar") { await exportar(); }
+  if (a === "carregar-base") {
+    const n = (typeof EXERCICIOS_BASE !== "undefined") ? EXERCICIOS_BASE.length : 0;
+    if (!confirm(`Adicionar a biblioteca-base de exercícios de formação (${n})? Não apaga nem substitui os teus.`)) return;
+    alvo.disabled = true;
+    const add = await carregarBibliotecaBase();
+    alert(add ? `${add} exercício(s) adicionado(s).` : "Já tens todos os exercícios da biblioteca-base.");
+    router();
+  }
 });
 
 app.addEventListener("change", async (ev) => {
@@ -562,6 +580,24 @@ async function marcarPresenca(jogId, estado) {
   const p = existentes.find((x) => x.jogador_id === jogId);
   if (p) { p.estado = estado; await DB.atualizar("presencas", p); }
   else { await DB.criar("presencas", { treino_id: treinoId, jogador_id: jogId, estado }); }
+}
+
+// ---------- biblioteca-base de exercícios ----------
+// Carrega os exercícios de formação embutidos (js/exercicios_base.js), sem duplicar.
+// A deduplicação usa a `chave` estável (recuo: título) — reexecutar só adiciona os que faltam.
+async function carregarBibliotecaBase() {
+  const base = (typeof EXERCICIOS_BASE !== "undefined") ? EXERCICIOS_BASE : [];
+  if (!base.length) { alert("Biblioteca-base indisponível."); return 0; }
+  const existentes = await DB.listar("exercicios");
+  const chaves = new Set(existentes.map((e) => e.chave).filter(Boolean));
+  const titulos = new Set(existentes.map((e) => e.titulo));
+  let adicionados = 0;
+  for (const ex of base) {
+    if (chaves.has(ex.chave) || titulos.has(ex.titulo)) continue;
+    await DB.criar("exercicios", { ...ex });
+    adicionados++;
+  }
+  return adicionados;
 }
 
 // ---------- backup ----------

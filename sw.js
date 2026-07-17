@@ -1,11 +1,12 @@
 // Service worker — cache do "app shell" para funcionar offline.
 // Sobe a versão sempre que mudares ficheiros estáticos.
-const CACHE = "treinador-v3";
+const CACHE = "treinador-v4";
 const ASSETS = [
   "./",
   "./index.html",
   "./css/styles.css",
   "./js/db.js",
+  "./js/exercicios_base.js",
   "./js/app.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
