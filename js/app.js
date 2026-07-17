@@ -1,0 +1,482 @@
+"use strict";
+
+// ---------- constantes (espelham o backend) ----------
+const CATEGORIAS = [
+  "Coordenação / motricidade", "Domínio e condução de bola", "Passe e receção",
+  "Remate / finalização", "Jogos reduzidos (SSG)", "Jogo final", "Jogos lúdicos",
+];
+const POSICOES = ["Guarda-redes", "Defesa", "Médio", "Avançado"];
+const PES = ["Direito", "Esquerdo", "Ambos"];
+const ESTADOS = [["presente", "P", "p"], ["ausente", "A", "a"], ["justificado", "J", "j"]];
+const FASES = ["Aquecimento", "Técnica", "Jogo reduzido", "Jogo final"];
+
+// ---------- utilidades ----------
+const app = document.getElementById("app");
+const elTitulo = document.getElementById("titulo");
+function esc(s) {
+  return (s == null ? "" : String(s)).replace(/[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function setView(titulo, html) {
+  elTitulo.textContent = titulo;
+  app.innerHTML = html;
+  window.scrollTo(0, 0);
+}
+function go(hash) { location.hash = hash; }
+function fmtData(iso) {
+  if (!iso) return "";
+  const [a, m, d] = iso.split("-");
+  return `${d}/${m}/${a}`;
+}
+const state = { fj: null, fcat: null, fesc: null }; // filtros
+
+// ---------- ROUTER ----------
+async function router() {
+  const h = (location.hash || "#/").slice(1); // ex: "/jogadores/5/editar"
+  const p = h.split("/").filter(Boolean);     // ["jogadores","5","editar"]
+  marcarTab(p[0] || "home");
+  try {
+    if (p.length === 0) return viewHome();
+    if (p[0] === "jogadores") {
+      if (p[1] === "novo") return viewJogadorForm();
+      if (p[1] && p[2] === "editar") return viewJogadorForm(p[1]);
+      if (p[1]) return viewJogadorDetalhe(p[1]);
+      return viewJogadores();
+    }
+    if (p[0] === "exercicios") {
+      if (p[1] === "novo") return viewExercicioForm();
+      if (p[1] && p[2] === "editar") return viewExercicioForm(p[1]);
+      if (p[1]) return viewExercicioDetalhe(p[1]);
+      return viewExercicios();
+    }
+    if (p[0] === "treinos") {
+      if (p[1] === "novo") return viewTreinoForm();
+      if (p[1] && p[2] === "editar") return viewTreinoForm(p[1]);
+      if (p[1]) return viewTreinoDetalhe(p[1]);
+      return viewTreinos();
+    }
+    if (p[0] === "dados") return viewDados();
+    viewHome();
+  } catch (e) {
+    app.innerHTML = `<div class="card">Erro: ${esc(e.message)}</div>`;
+    console.error(e);
+  }
+}
+function marcarTab(tab) {
+  document.querySelectorAll("nav.tab a").forEach((a) =>
+    a.classList.toggle("ativo", a.dataset.tab === tab));
+}
+
+// ---------- HOME ----------
+function viewHome() {
+  setView("Início", `
+    <p class="muted" style="margin-bottom:16px">Futebol de formação (sub-7 a sub-10).</p>
+    <div class="tiles">
+      <a class="tile" href="#/jogadores"><span class="ic">👦</span><span class="t">Plantel</span><span class="s">Ver e gerir jogadores</span></a>
+      <a class="tile" href="#/exercicios"><span class="ic">📋</span><span class="t">Exercícios</span><span class="s">Biblioteca de treino</span></a>
+      <a class="tile" href="#/treinos"><span class="ic">🗓️</span><span class="t">Treinos</span><span class="s">Planos e presenças</span></a>
+      <a class="tile" href="#/treinos/novo"><span class="ic">🆕</span><span class="t">Novo treino</span><span class="s">Planear uma sessão</span></a>
+      <a class="tile" href="#/jogadores/novo"><span class="ic">➕</span><span class="t">Novo jogador</span><span class="s">Adicionar ao plantel</span></a>
+      <a class="tile" href="#/dados"><span class="ic">💾</span><span class="t">Dados</span><span class="s">Cópia de segurança</span></a>
+    </div>`);
+}
+
+// ---------- JOGADORES ----------
+async function viewJogadores() {
+  const todos = (await DB.listar("jogadores")).sort((a, b) => a.nome.localeCompare(b.nome));
+  const lista = state.fj ? todos.filter((j) => escalaoDeDataNasc(j.data_nasc) === state.fj) : todos;
+  const pills = ESCALOES.map((e) =>
+    `<button class="pill ${state.fj === e ? "on" : ""}" data-action="fj" data-e="${e}">${e}</button>`).join("");
+  const rows = lista.length ? `<ul class="list">${lista.map((j) => {
+    const ini = j.numero != null ? j.numero : (j.nome[0] || "?").toUpperCase();
+    const escal = escalaoDeDataNasc(j.data_nasc) || "sem escalão";
+    return `<li><a class="row card" href="#/jogadores/${j.id}">
+      <span class="avatar">${esc(ini)}</span>
+      <span class="grow"><span class="t">${esc(j.nome)}</span>
+      <span class="s">${escal}${j.posicao ? " · " + esc(j.posicao) : ""}</span></span>
+      <span class="chev">›</span></a></li>`;
+  }).join("")}</ul>` : `<div class="empty"><div class="big">👦</div>Ainda sem jogadores${state.fj ? " em " + state.fj : ""}.
+      <div><a class="btn-link" href="#/jogadores/novo">Adicionar o primeiro</a></div></div>`;
+  setView("Plantel", `
+    <div class="head">
+      <div class="pills"><button class="pill ${!state.fj ? "on" : ""}" data-action="fj" data-e="">Todos</button>${pills}</div>
+      <a class="btn sm" href="#/jogadores/novo">+ Novo</a>
+    </div>${rows}`);
+}
+
+async function viewJogadorForm(id) {
+  const j = id ? await DB.obter("jogadores", id) : null;
+  setView(id ? "Editar jogador" : "Novo jogador", `
+    <form class="stack" data-form="jogador" data-id="${id || ""}">
+      <label class="field"><span>Nome *</span><input name="nome" required value="${esc(j?.nome)}"></label>
+      <label class="field"><span>Data de nascimento *</span>
+        <input type="date" name="data_nasc" required value="${esc(j?.data_nasc)}">
+        <div class="hint">O escalão é calculado automaticamente.</div></label>
+      <div class="grid2">
+        <label class="field"><span>Posição</span><select name="posicao">
+          <option value="">—</option>${POSICOES.map((p) => `<option ${j?.posicao === p ? "selected" : ""}>${p}</option>`).join("")}
+        </select></label>
+        <label class="field"><span>Pé preferido</span><select name="pe">
+          <option value="">—</option>${PES.map((p) => `<option ${j?.pe === p ? "selected" : ""}>${p}</option>`).join("")}
+        </select></label>
+      </div>
+      <label class="field"><span>Número</span><input type="number" name="numero" min="1" value="${j?.numero ?? ""}"></label>
+      <label class="field"><span>Notas</span><textarea name="notas" rows="3">${esc(j?.notas)}</textarea></label>
+      <div class="actions">
+        <button class="btn" type="submit">Guardar</button>
+        <a class="btn ghost" href="${id ? "#/jogadores/" + id : "#/jogadores"}">Cancelar</a>
+      </div>
+    </form>`);
+}
+
+async function viewJogadorDetalhe(id) {
+  const j = await DB.obter("jogadores", id);
+  if (!j) return go("#/jogadores");
+  const escal = escalaoDeDataNasc(j.data_nasc) || "sem escalão";
+  const idade = idadeDeDataNasc(j.data_nasc);
+  const ini = j.numero != null ? j.numero : (j.nome[0] || "?").toUpperCase();
+  setView(j.nome, `
+    <div class="card" style="margin-bottom:16px">
+      <div class="row" style="margin-bottom:12px">
+        <span class="avatar" style="width:56px;height:56px;font-size:20px">${esc(ini)}</span>
+        <div><div style="font-weight:700;font-size:18px">${esc(j.nome)}</div>
+        <div class="muted">${escal}${idade != null ? " · " + idade + " anos" : ""}</div></div>
+      </div>
+      <dl class="info">
+        <dt>Data nasc.</dt><dd>${fmtData(j.data_nasc)}</dd>
+        <dt>Posição</dt><dd>${esc(j.posicao) || "—"}</dd>
+        <dt>Pé preferido</dt><dd>${esc(j.pe) || "—"}</dd>
+        <dt>Número</dt><dd>${j.numero ?? "—"}</dd>
+      </dl>
+      ${j.notas ? `<p class="muted" style="margin-top:12px">${esc(j.notas)}</p>` : ""}
+    </div>
+    <div class="actions">
+      <a class="btn" href="#/jogadores/${j.id}/editar">Editar</a>
+      <button class="btn danger" data-action="apagar-jogador" data-id="${j.id}">Apagar</button>
+    </div>
+    <p class="muted" style="text-align:center;margin-top:24px;font-size:12px">Avaliação e evolução chegam na próxima fase.</p>`);
+}
+
+// ---------- EXERCÍCIOS ----------
+async function viewExercicios() {
+  let lista = (await DB.listar("exercicios")).sort((a, b) => a.titulo.localeCompare(b.titulo));
+  if (state.fcat) lista = lista.filter((e) => e.categoria === state.fcat);
+  if (state.fesc) lista = lista.filter((e) => (e.escaloes || []).includes(state.fesc));
+  const rows = lista.length ? `<ul class="list">${lista.map((e) => `
+    <li><a class="card" style="display:block" href="#/exercicios/${e.id}">
+      <div class="row"><span class="grow"><span class="t">${esc(e.titulo)}</span></span>
+      ${e.duracao_min ? `<span class="tag">${e.duracao_min} min</span>` : ""}</div>
+      <div class="s" style="margin-top:2px;color:var(--slate-500);font-size:12px">
+        ${esc(e.categoria) || "sem categoria"}${(e.n_jogadores_min || e.n_jogadores_max) ?
+          " · " + (e.n_jogadores_min || "?") + (e.n_jogadores_max && e.n_jogadores_max !== e.n_jogadores_min ? "–" + e.n_jogadores_max : "") + " jog." : ""}
+        ${(e.escaloes || []).length ? " · " + e.escaloes.join(", ") : ""}
+      </div></a></li>`).join("")}</ul>`
+    : `<div class="empty"><div class="big">📋</div>Ainda sem exercícios${state.fcat || state.fesc ? " com estes filtros" : ""}.
+       <div><a class="btn-link" href="#/exercicios/novo">Adicionar o primeiro</a></div></div>`;
+  setView("Exercícios", `
+    <div class="head"><span class="muted">${lista.length} exercício(s)</span><a class="btn sm" href="#/exercicios/novo">+ Novo</a></div>
+    <div class="grid2" style="margin-bottom:16px">
+      <select data-action="fcat"><option value="">Todas as categorias</option>
+        ${CATEGORIAS.map((c) => `<option ${state.fcat === c ? "selected" : ""}>${c}</option>`).join("")}</select>
+      <select data-action="fesc"><option value="">Todos os escalões</option>
+        ${ESCALOES.map((e) => `<option ${state.fesc === e ? "selected" : ""}>${e}</option>`).join("")}</select>
+    </div>${rows}`);
+}
+
+async function viewExercicioForm(id) {
+  const e = id ? await DB.obter("exercicios", id) : null;
+  const escSel = (x) => (e?.escaloes || []).includes(x) ? "checked" : "";
+  setView(id ? "Editar exercício" : "Novo exercício", `
+    <form class="stack" data-form="exercicio" data-id="${id || ""}">
+      <label class="field"><span>Título *</span><input name="titulo" required value="${esc(e?.titulo)}"></label>
+      <label class="field"><span>Objetivo</span><input name="objetivo" value="${esc(e?.objetivo)}"></label>
+      <label class="field"><span>Categoria</span><select name="categoria"><option value="">—</option>
+        ${CATEGORIAS.map((c) => `<option ${e?.categoria === c ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+      <div class="grid3">
+        <label class="field"><span>Jog. mín.</span><input type="number" name="n_jogadores_min" min="1" value="${e?.n_jogadores_min ?? ""}"></label>
+        <label class="field"><span>Jog. máx.</span><input type="number" name="n_jogadores_max" min="1" value="${e?.n_jogadores_max ?? ""}"></label>
+        <label class="field"><span>Duração</span><input type="number" name="duracao_min" min="1" value="${e?.duracao_min ?? ""}"></label>
+      </div>
+      <label class="field"><span>Escalões-alvo</span>
+        <div class="pills">${ESCALOES.map((x) => `<label class="pill"><input type="checkbox" name="escaloes" value="${x}" ${escSel(x)} style="width:auto;margin-right:6px">${x}</label>`).join("")}</div></label>
+      <label class="field"><span>Descrição</span><textarea name="descricao" rows="4">${esc(e?.descricao)}</textarea></label>
+      <label class="field"><span>Material</span><input name="material" value="${esc(e?.material)}"></label>
+      <div class="actions">
+        <button class="btn" type="submit">Guardar</button>
+        <a class="btn ghost" href="${id ? "#/exercicios/" + id : "#/exercicios"}">Cancelar</a>
+      </div>
+    </form>`);
+}
+
+async function viewExercicioDetalhe(id) {
+  const e = await DB.obter("exercicios", id);
+  if (!e) return go("#/exercicios");
+  const tags = [];
+  if (e.categoria) tags.push(`<span class="tag grama">${esc(e.categoria)}</span>`);
+  if (e.duracao_min) tags.push(`<span class="tag">${e.duracao_min} min</span>`);
+  if (e.n_jogadores_min || e.n_jogadores_max)
+    tags.push(`<span class="tag">${e.n_jogadores_min || "?"}${e.n_jogadores_max && e.n_jogadores_max !== e.n_jogadores_min ? "–" + e.n_jogadores_max : ""} jogadores</span>`);
+  (e.escaloes || []).forEach((x) => tags.push(`<span class="tag">${x}</span>`));
+  setView("Exercício", `
+    <div class="card" style="margin-bottom:16px">
+      <h2 style="font-size:18px;font-weight:700">${esc(e.titulo)}</h2>
+      ${e.objetivo ? `<p class="muted" style="margin-top:4px">${esc(e.objetivo)}</p>` : ""}
+      <div class="pills" style="margin-top:12px">${tags.join("")}</div>
+      ${e.descricao ? `<div class="divider"><div class="s" style="text-transform:uppercase;font-size:11px;font-weight:600;color:var(--slate-400);margin-bottom:4px">Descrição</div><p style="white-space:pre-line">${esc(e.descricao)}</p></div>` : ""}
+      ${e.material ? `<div class="divider"><div class="s" style="text-transform:uppercase;font-size:11px;font-weight:600;color:var(--slate-400);margin-bottom:4px">Material</div><p>${esc(e.material)}</p></div>` : ""}
+    </div>
+    <div class="actions">
+      <a class="btn" href="#/exercicios/${e.id}/editar">Editar</a>
+      <button class="btn danger" data-action="apagar-exercicio" data-id="${e.id}">Apagar</button>
+    </div>`);
+}
+
+// ---------- TREINOS ----------
+async function viewTreinos() {
+  const treinos = (await DB.listar("treinos")).sort((a, b) => (a.data < b.data ? 1 : -1));
+  const rows = treinos.length ? `<ul class="list">${treinos.map((t) => {
+    const [a, m, d] = t.data.split("-");
+    return `<li><a class="row card" href="#/treinos/${t.id}">
+      <span class="avatar" style="border-radius:12px;flex-direction:column;line-height:1">
+        <span style="font-size:18px;font-weight:700">${d}</span><span style="font-size:10px">${m}/${a}</span></span>
+      <span class="grow"><span class="t">${esc(t.escalao)}</span><span class="s">${esc(t.notas) || "sem notas"}</span></span>
+      <span class="chev">›</span></a></li>`;
+  }).join("")}</ul>` : `<div class="empty"><div class="big">🗓️</div>Ainda sem treinos.
+      <div><a class="btn-link" href="#/treinos/novo">Planear o primeiro</a></div></div>`;
+  setView("Treinos", `
+    <div class="head"><span class="muted">${treinos.length} treino(s)</span><a class="btn sm" href="#/treinos/novo">+ Novo</a></div>${rows}`);
+}
+
+async function viewTreinoForm(id) {
+  const t = id ? await DB.obter("treinos", id) : null;
+  const hoje = new Date().toISOString().slice(0, 10);
+  setView(id ? "Editar treino" : "Novo treino", `
+    <form class="stack" data-form="treino" data-id="${id || ""}">
+      <label class="field"><span>Data *</span><input type="date" name="data" required value="${esc(t?.data) || hoje}"></label>
+      <label class="field"><span>Escalão *</span><select name="escalao" required>
+        ${ESCALOES.map((e) => `<option ${t?.escalao === e ? "selected" : ""}>${e}</option>`).join("")}</select></label>
+      <label class="field"><span>Notas</span><textarea name="notas" rows="3">${esc(t?.notas)}</textarea></label>
+      <div class="actions">
+        <button class="btn" type="submit">Guardar</button>
+        <a class="btn ghost" href="${id ? "#/treinos/" + id : "#/treinos"}">Cancelar</a>
+      </div>
+    </form>`);
+}
+
+function durItem(item, ex) {
+  if (item.duracao_min != null) return item.duracao_min;
+  if (ex && ex.duracao_min != null) return ex.duracao_min;
+  return 0;
+}
+
+async function viewTreinoDetalhe(id) {
+  const t = await DB.obter("treinos", id);
+  if (!t) return go("#/treinos");
+  const exercicios = (await DB.listar("exercicios")).sort((a, b) => a.titulo.localeCompare(b.titulo));
+  const exMap = Object.fromEntries(exercicios.map((e) => [e.id, e]));
+  const itens = (await DB.porIndice("treino_itens", "treino_id", Number(id))).sort((a, b) => a.ordem - b.ordem);
+  const total = itens.reduce((s, it) => s + durItem(it, exMap[it.exercicio_id]), 0);
+
+  const jogadores = (await DB.listar("jogadores"))
+    .filter((j) => escalaoDeDataNasc(j.data_nasc) === t.escalao)
+    .sort((a, b) => a.nome.localeCompare(b.nome));
+  const presencas = await DB.porIndice("presencas", "treino_id", Number(id));
+  const presMap = Object.fromEntries(presencas.map((p) => [p.jogador_id, p.estado]));
+  const cont = { presente: 0, ausente: 0, justificado: 0 };
+  presencas.forEach((p) => { if (cont[p.estado] != null) cont[p.estado]++; });
+
+  const itensHtml = itens.length ? `<ol class="list" style="margin-bottom:12px">${itens.map((it, i) => {
+    const ex = exMap[it.exercicio_id];
+    const dur = it.duracao_min != null ? it.duracao_min : (ex && ex.duracao_min != null ? ex.duracao_min : "—");
+    return `<li class="card item">
+      <span class="num">${i + 1}</span>
+      <span class="grow">${ex ? `<a class="t" href="#/exercicios/${ex.id}" style="text-decoration:none;color:inherit">${esc(ex.titulo)}</a><span class="s">${esc(ex.categoria) || "sem categoria"}</span>` : `<span class="t" style="color:var(--slate-400)">(exercício apagado)</span>`}</span>
+      <span class="dur">${dur}′</span>
+      <span class="reorder">
+        <button data-action="mover" data-item="${it.id}" data-dir="cima" ${i === 0 ? "disabled" : ""}>▲</button>
+        <button data-action="mover" data-item="${it.id}" data-dir="baixo" ${i === itens.length - 1 ? "disabled" : ""}>▼</button>
+      </span>
+      <button class="x" data-action="apagar-item" data-item="${it.id}">✕</button>
+    </li>`;
+  }).join("")}</ol>` : `<p class="muted" style="margin-bottom:12px">Ainda sem exercícios no plano.</p>`;
+
+  const addHtml = exercicios.length ? `
+    <form class="card item" data-form="add-item" style="gap:8px;align-items:flex-end">
+      <label class="field grow"><span style="font-size:12px;color:var(--slate-500)">Adicionar exercício</span>
+        <select name="exercicio_id" required>${exercicios.map((e) => `<option value="${e.id}">${esc(e.titulo)}${e.categoria ? " · " + esc(e.categoria) : ""}</option>`).join("")}</select></label>
+      <label class="field" style="width:64px"><span style="font-size:12px;color:var(--slate-500)">Min.</span><input type="number" name="duracao_min" min="1" placeholder="auto"></label>
+      <button class="btn" type="submit" style="padding:10px 16px">+</button>
+    </form>`
+    : `<p class="muted">Sem exercícios na biblioteca. <a class="btn-link" href="#/exercicios/novo">Cria um</a> para o poderes adicionar.</p>`;
+
+  const presHtml = jogadores.length ? `<ul class="list">${jogadores.map((j) => {
+    const est = presMap[j.id];
+    const btns = ESTADOS.map(([e, letra, cls]) =>
+      `<button class="pbtn ${est === e ? "on " + cls : ""}" data-action="presenca" data-jog="${j.id}" data-est="${e}">${letra}</button>`).join("");
+    return `<li class="card row"><span class="grow" style="font-weight:500">${esc(j.nome)}</span><span class="pbtns">${btns}</span></li>`;
+  }).join("")}</ul>` : `<p class="muted">Sem jogadores no escalão ${esc(t.escalao)}. <a class="btn-link" href="#/jogadores/novo">Adiciona ao plantel</a>.</p>`;
+
+  setView("Treino", `
+    <div class="card" style="margin-bottom:16px">
+      <div class="row"><div class="grow"><div style="font-weight:700;font-size:18px">${fmtData(t.data)}</div><div class="muted">${esc(t.escalao)}</div></div>
+        <a class="btn-link" href="#/treinos/${t.id}/editar">Editar</a></div>
+      ${t.notas ? `<p class="muted" style="margin-top:8px">${esc(t.notas)}</p>` : ""}
+    </div>
+    <section style="margin-bottom:24px">
+      <div class="head"><h2>Plano da sessão</h2><span class="total">${total} min</span></div>
+      <p class="muted" style="font-size:12px;margin-bottom:12px">Sugestão: ${FASES.join(" → ")}</p>
+      ${itensHtml}${addHtml}
+    </section>
+    <section>
+      <div class="head"><h2>Presenças</h2>
+        <span class="muted count"><span class="p">${cont.presente}P</span> · <span class="a">${cont.ausente}A</span> · <span class="j">${cont.justificado}J</span></span></div>
+      ${presHtml}
+    </section>
+    <div class="divider"><button class="btn-link red" data-action="apagar-treino" data-id="${t.id}">Apagar treino</button></div>`);
+}
+
+// ---------- DADOS (cópia de segurança) ----------
+async function viewDados() {
+  const c = {};
+  for (const s of ["jogadores", "exercicios", "treinos"]) c[s] = (await DB.listar(s)).length;
+  setView("Dados", `
+    <div class="card" style="margin-bottom:16px">
+      <h2 style="font-weight:700;margin-bottom:8px">Cópia de segurança</h2>
+      <p class="muted" style="margin-bottom:4px">Os dados vivem só neste dispositivo. Exporta com frequência para não perder nada.</p>
+      <dl class="info" style="margin-top:8px">
+        <dt>Jogadores</dt><dd>${c.jogadores}</dd><dt>Exercícios</dt><dd>${c.exercicios}</dd><dt>Treinos</dt><dd>${c.treinos}</dd>
+      </dl>
+    </div>
+    <div class="actions" style="flex-direction:column;gap:10px">
+      <button class="btn" data-action="exportar" style="width:100%">⬇️ Exportar cópia (ficheiro)</button>
+      <label class="btn ghost" style="width:100%;cursor:pointer">⬆️ Importar cópia
+        <input type="file" accept="application/json" data-action="importar" hidden></label>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:12px">Importar substitui todos os dados atuais por os do ficheiro.</p>`);
+}
+
+// ---------- ações (delegação de eventos) ----------
+app.addEventListener("click", async (ev) => {
+  const alvo = ev.target.closest("[data-action]");
+  if (!alvo) return;
+  const a = alvo.dataset.action;
+  if (a === "fj") { ev.preventDefault(); state.fj = alvo.dataset.e || null; return viewJogadores(); }
+  if (a === "apagar-jogador") {
+    if (confirm("Apagar este jogador?")) { await DB.apagar("jogadores", alvo.dataset.id); go("#/jogadores"); }
+  }
+  if (a === "apagar-exercicio") {
+    if (confirm("Apagar este exercício?")) { await DB.apagar("exercicios", alvo.dataset.id); go("#/exercicios"); }
+  }
+  if (a === "apagar-treino") {
+    if (confirm("Apagar este treino?")) { await apagarTreinoCascata(alvo.dataset.id); go("#/treinos"); }
+  }
+  if (a === "apagar-item") {
+    await DB.apagar("treino_itens", alvo.dataset.item); router();
+  }
+  if (a === "mover") { await moverItem(alvo.dataset.item, alvo.dataset.dir); router(); }
+  if (a === "presenca") { await marcarPresenca(alvo.dataset.jog, alvo.dataset.est); router(); }
+  if (a === "exportar") { await exportar(); }
+});
+
+app.addEventListener("change", async (ev) => {
+  const a = ev.target.dataset.action;
+  if (a === "fcat") { state.fcat = ev.target.value || null; viewExercicios(); }
+  if (a === "fesc") { state.fesc = ev.target.value || null; viewExercicios(); }
+  if (a === "importar") { await importar(ev.target.files[0]); }
+});
+
+app.addEventListener("submit", async (ev) => {
+  const form = ev.target.closest("form[data-form]");
+  if (!form) return;
+  ev.preventDefault();
+  const tipo = form.dataset.form;
+  const id = form.dataset.id ? Number(form.dataset.id) : null;
+  const fd = new FormData(form);
+  const num = (v) => (v === "" || v == null ? null : Number(v));
+  const txt = (v) => (v === "" || v == null ? null : v);
+
+  if (tipo === "jogador") {
+    const obj = { nome: fd.get("nome"), data_nasc: fd.get("data_nasc"),
+      posicao: txt(fd.get("posicao")), pe: txt(fd.get("pe")), numero: num(fd.get("numero")), notas: txt(fd.get("notas")) };
+    const novoId = await salvar("jogadores", id, obj);
+    return go("#/jogadores/" + novoId);
+  }
+  if (tipo === "exercicio") {
+    const obj = { titulo: fd.get("titulo"), objetivo: txt(fd.get("objetivo")), categoria: txt(fd.get("categoria")),
+      n_jogadores_min: num(fd.get("n_jogadores_min")), n_jogadores_max: num(fd.get("n_jogadores_max")),
+      duracao_min: num(fd.get("duracao_min")), escaloes: fd.getAll("escaloes"),
+      descricao: txt(fd.get("descricao")), material: txt(fd.get("material")) };
+    const novoId = await salvar("exercicios", id, obj);
+    return go("#/exercicios/" + novoId);
+  }
+  if (tipo === "treino") {
+    const obj = { data: fd.get("data"), escalao: fd.get("escalao"), notas: txt(fd.get("notas")) };
+    const novoId = await salvar("treinos", id, obj);
+    return go("#/treinos/" + novoId);
+  }
+  if (tipo === "add-item") {
+    const treinoId = Number(location.hash.split("/")[2]);
+    const itens = await DB.porIndice("treino_itens", "treino_id", treinoId);
+    const ordem = itens.reduce((m, it) => Math.max(m, it.ordem), -1) + 1;
+    await DB.criar("treino_itens", { treino_id: treinoId, exercicio_id: num(fd.get("exercicio_id")), ordem, duracao_min: num(fd.get("duracao_min")) });
+    return router();
+  }
+});
+
+// ---------- helpers de dados ----------
+async function salvar(store, id, obj) {
+  if (id) { obj.id = id; await DB.atualizar(store, obj); return id; }
+  return await DB.criar(store, obj);
+}
+async function apagarTreinoCascata(id) {
+  id = Number(id);
+  for (const it of await DB.porIndice("treino_itens", "treino_id", id)) await DB.apagar("treino_itens", it.id);
+  for (const p of await DB.porIndice("presencas", "treino_id", id)) await DB.apagar("presencas", p.id);
+  await DB.apagar("treinos", id);
+}
+async function moverItem(itemId, dir) {
+  const item = await DB.obter("treino_itens", itemId);
+  const itens = (await DB.porIndice("treino_itens", "treino_id", item.treino_id)).sort((a, b) => a.ordem - b.ordem);
+  const idx = itens.findIndex((i) => i.id === item.id);
+  const alvo = dir === "cima" ? idx - 1 : idx + 1;
+  if (alvo < 0 || alvo >= itens.length) return;
+  const o = itens[idx].ordem; itens[idx].ordem = itens[alvo].ordem; itens[alvo].ordem = o;
+  await DB.atualizar("treino_itens", itens[idx]);
+  await DB.atualizar("treino_itens", itens[alvo]);
+}
+async function marcarPresenca(jogId, estado) {
+  const treinoId = Number(location.hash.split("/")[2]);
+  jogId = Number(jogId);
+  const existentes = await DB.porIndice("presencas", "treino_id", treinoId);
+  const p = existentes.find((x) => x.jogador_id === jogId);
+  if (p) { p.estado = estado; await DB.atualizar("presencas", p); }
+  else { await DB.criar("presencas", { treino_id: treinoId, jogador_id: jogId, estado }); }
+}
+
+// ---------- backup ----------
+async function exportar() {
+  const payload = await DB.exportarTudo();
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `treinador-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+async function importar(file) {
+  if (!file) return;
+  if (!confirm("Importar substitui todos os dados atuais. Continuar?")) return;
+  try {
+    const payload = JSON.parse(await file.text());
+    if (!payload.dados) throw new Error("Ficheiro inválido.");
+    await DB.importarTudo(payload, true);
+    alert("Dados importados com sucesso.");
+    viewDados();
+  } catch (e) { alert("Erro ao importar: " + e.message); }
+}
+
+// ---------- arranque ----------
+window.addEventListener("hashchange", router);
+window.addEventListener("DOMContentLoaded", router);
+if (document.readyState !== "loading") router();
