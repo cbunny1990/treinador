@@ -10,6 +10,8 @@ const POSICOES = ["Guarda-redes", "Defesa", "Médio", "Avançado"];
 const PES = ["Direito", "Esquerdo", "Ambos"];
 const ESTADOS = [["presente", "P", "p"], ["ausente", "A", "a"]];
 const FASES = ["Aquecimento", "Técnica", "Jogo reduzido", "Jogo final"];
+const MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+const DIAS_SEMANA = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
 
 // ---------- utilidades ----------
 const app = document.getElementById("app");
@@ -59,6 +61,13 @@ async function router() {
       if (p[1]) return viewTreinoDetalhe(p[1]);
       return viewTreinos();
     }
+    if (p[0] === "calendario") return viewCalendario();
+    if (p[0] === "jogos") {
+      if (p[1] === "novo") return viewJogoForm();
+      if (p[1] && p[2] === "editar") return viewJogoForm(p[1]);
+      if (p[1]) return viewJogoDetalhe(p[1]);
+      return viewCalendario();
+    }
     if (p[0] === "dados") return viewDados();
     viewHome();
   } catch (e) {
@@ -79,7 +88,8 @@ function viewHome() {
       <a class="tile" href="#/jogadores"><span class="ic">👦</span><span class="t">Plantel</span><span class="s">Ver e gerir jogadores</span></a>
       <a class="tile" href="#/exercicios"><span class="ic">📋</span><span class="t">Exercícios</span><span class="s">Biblioteca de treino</span></a>
       <a class="tile" href="#/treinos"><span class="ic">🗓️</span><span class="t">Treinos</span><span class="s">Planos e presenças</span></a>
-      <a class="tile" href="#/treinos/novo"><span class="ic">🆕</span><span class="t">Novo treino</span><span class="s">Planear uma sessão</span></a>
+      <a class="tile" href="#/calendario"><span class="ic">📅</span><span class="t">Calendário</span><span class="s">Treinos e jogos</span></a>
+      <a class="tile" href="#/jogos/novo"><span class="ic">⚽</span><span class="t">Novo jogo</span><span class="s">Registar um jogo</span></a>
       <a class="tile" href="#/jogadores/novo"><span class="ic">➕</span><span class="t">Novo jogador</span><span class="s">Adicionar ao plantel</span></a>
       <a class="tile" href="#/dados"><span class="ic">💾</span><span class="t">Dados</span><span class="s">Cópia de segurança</span></a>
     </div>`);
@@ -459,7 +469,10 @@ async function viewTreinoDetalhe(id) {
       <div class="row"><div class="grow"><div style="font-weight:700;font-size:18px">${fmtData(t.data)}</div><div class="muted">${esc(t.escalao)}</div></div>
         <a class="btn-link" href="#/treinos/${t.id}/editar">Editar</a></div>
       ${t.notas ? `<p class="muted" style="margin-top:8px;white-space:pre-line">${esc(t.notas)}</p>` : ""}
-      <button class="btn" data-action="partilhar-treino" data-id="${t.id}" style="width:100%;margin-top:12px">📲 Partilhar treino</button>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn" data-action="partilhar-treino" data-id="${t.id}" style="flex:1">📲 Partilhar</button>
+        <button class="btn ghost" data-action="gcal-treino" data-id="${t.id}" style="flex:1">📅 Google Calendar</button>
+      </div>
     </div>
     <section style="margin-bottom:24px">
       <div class="head"><h2>Plano da sessão</h2><span class="total">${total} min</span></div>
@@ -476,16 +489,117 @@ async function viewTreinoDetalhe(id) {
     <div class="divider"><button class="btn-link red" data-action="apagar-treino" data-id="${t.id}">Apagar treino</button></div>`);
 }
 
+// ---------- CALENDÁRIO / JOGOS ----------
+async function viewCalendario() {
+  const eventos = eventosCalendario(await DB.listar("treinos"), await DB.listar("jogos"));
+  const hoje = new Date().toISOString().slice(0, 10);
+  const proximos = eventos.filter((e) => e.data >= hoje);
+  const passados = eventos.filter((e) => e.data < hoje).reverse(); // mais recente primeiro
+
+  const linhaEvento = (e) => {
+    const [Y, M, D] = e.data.split("-").map(Number);
+    const dow = DIAS_SEMANA[new Date(Y, M - 1, D).getDay()];
+    const cabeca = (bg) => `<span class="avatar" style="border-radius:12px;flex-direction:column;line-height:1;background:${bg};color:#fff">
+      <span style="font-size:18px;font-weight:700">${D}</span><span style="font-size:10px">${dow}</span></span>`;
+    if (e.tipo === "treino") {
+      const t = e.ref;
+      return `<li><a class="row card" href="#/treinos/${t.id}">${cabeca("var(--slate-400)")}
+        <span class="grow"><span class="t">🗓️ Treino · ${esc(t.escalao)}</span>
+        <span class="s">${esc((t.notas || "").split("\n")[0]) || "sessão"}</span></span>
+        <span class="chev">›</span></a></li>`;
+    }
+    const j = e.ref, r = resultadoJogo(j);
+    const badge = r.texto ? `<span class="tag" style="background:${r.cor};color:#fff">${r.texto}</span>` : `<span class="tag">por jogar</span>`;
+    return `<li><a class="row card" href="#/jogos/${j.id}">${cabeca("var(--grama)")}
+      <span class="grow"><span class="t">⚽ ${esc(j.adversario || "Jogo")} <span class="s" style="font-weight:400">(${j.casa_fora === "fora" ? "fora" : "casa"})</span></span>
+      <span class="s">${esc(j.escalao)}${j.hora ? " · " + esc(j.hora) : ""}${j.local ? " · " + esc(j.local) : ""}</span></span>
+      ${badge}<span class="chev">›</span></a></li>`;
+  };
+  const grupos = (lista) => {
+    if (!lista.length) return `<p class="muted" style="margin:8px 0">Nada por aqui.</p>`;
+    let html = "", mes = "";
+    for (const e of lista) {
+      const [Y, M] = e.data.split("-").map(Number);
+      const chave = `${MESES[M - 1]} ${Y}`;
+      if (chave !== mes) { if (mes) html += "</ul>"; mes = chave;
+        html += `<h2 style="text-transform:uppercase;font-size:12px;letter-spacing:.5px;color:var(--slate-400);margin:16px 0 8px">${chave}</h2><ul class="list">`; }
+      html += linhaEvento(e);
+    }
+    return html + "</ul>";
+  };
+  setView("Calendário", `
+    <div class="head"><span class="muted">${eventos.length} evento(s)</span>
+      <span style="display:flex;gap:8px"><a class="btn sm ghost" href="#/treinos">+ Treino</a><a class="btn sm" href="#/jogos/novo">+ Jogo</a></span></div>
+    <h3 style="margin:4px 0 0;font-size:14px">Próximos</h3>${grupos(proximos)}
+    <h3 style="margin:24px 0 0;font-size:14px;color:var(--slate-500)">Passados</h3>${grupos(passados)}`);
+}
+
+async function viewJogoForm(id) {
+  const j = id ? await DB.obter("jogos", id) : null;
+  const hoje = new Date().toISOString().slice(0, 10);
+  setView(id ? "Editar jogo" : "Novo jogo", `
+    <form class="stack" data-form="jogo" data-id="${id || ""}">
+      <div class="grid2">
+        <label class="field"><span>Data *</span><input type="date" name="data" required value="${esc(j?.data) || hoje}"></label>
+        <label class="field"><span>Hora</span><input type="time" name="hora" value="${esc(j?.hora)}"></label>
+      </div>
+      <label class="field"><span>Escalão *</span><select name="escalao" required>
+        ${ESCALOES.map((e) => `<option ${j?.escalao === e ? "selected" : ""}>${e}</option>`).join("")}</select></label>
+      <label class="field"><span>Adversário *</span><input name="adversario" required value="${esc(j?.adversario)}"></label>
+      <label class="field"><span>Local</span><div class="grid2">
+        <select name="casa_fora">
+          <option value="casa" ${j?.casa_fora !== "fora" ? "selected" : ""}>Casa</option>
+          <option value="fora" ${j?.casa_fora === "fora" ? "selected" : ""}>Fora</option>
+        </select>
+        <input name="local" placeholder="campo / recinto" value="${esc(j?.local)}">
+      </div></label>
+      <label class="field"><span>Resultado (golos)</span><div class="grid2">
+        <input type="number" name="golos_favor" min="0" placeholder="a favor" value="${j?.golos_favor ?? ""}">
+        <input type="number" name="golos_contra" min="0" placeholder="contra" value="${j?.golos_contra ?? ""}">
+      </div><div class="hint">Deixa vazio enquanto o jogo não foi jogado.</div></label>
+      <label class="field"><span>Notas</span><textarea name="notas" rows="3">${esc(j?.notas)}</textarea></label>
+      <div class="actions">
+        <button class="btn" type="submit">Guardar</button>
+        <a class="btn ghost" href="${id ? "#/jogos/" + id : "#/calendario"}">Cancelar</a>
+      </div>
+    </form>`);
+}
+
+async function viewJogoDetalhe(id) {
+  const j = await DB.obter("jogos", id);
+  if (!j) return go("#/calendario");
+  const r = resultadoJogo(j);
+  const rotulo = { vitoria: "Vitória", empate: "Empate", derrota: "Derrota", por_jogar: "Por jogar" }[r.estado];
+  setView("Jogo", `
+    <div class="card" style="margin-bottom:16px">
+      <div class="row"><div class="grow">
+        <div style="font-weight:700;font-size:18px">⚽ ${esc(j.adversario)}</div>
+        <div class="muted">${esc(j.escalao)} · ${j.casa_fora === "fora" ? "fora" : "casa"}${j.local ? " · " + esc(j.local) : ""}</div>
+        <div class="muted">${fmtData(j.data)}${j.hora ? " · " + esc(j.hora) : ""}</div>
+      </div><a class="btn-link" href="#/jogos/${j.id}/editar">Editar</a></div>
+      <div style="text-align:center;margin:16px 0">
+        <div style="font-size:32px;font-weight:800;color:${r.cor}">${r.texto || "—"}</div>
+        <div class="muted" style="font-weight:600">${rotulo}</div>
+      </div>
+      ${j.notas ? `<p class="muted" style="white-space:pre-line">${esc(j.notas)}</p>` : ""}
+    </div>
+    <div class="actions" style="flex-direction:column;gap:10px">
+      <button class="btn" data-action="partilhar-jogo" data-id="${j.id}" style="width:100%">📲 Partilhar (WhatsApp)</button>
+      <button class="btn ghost" data-action="gcal-jogo" data-id="${j.id}" style="width:100%">📅 Adicionar ao Google Calendar</button>
+    </div>
+    <div class="divider"><button class="btn-link red" data-action="apagar-jogo" data-id="${j.id}">Apagar jogo</button></div>`);
+}
+
 // ---------- DADOS (cópia de segurança) ----------
 async function viewDados() {
   const c = {};
-  for (const s of ["jogadores", "exercicios", "treinos"]) c[s] = (await DB.listar(s)).length;
+  for (const s of ["jogadores", "exercicios", "treinos", "jogos"]) c[s] = (await DB.listar(s)).length;
   setView("Dados", `
     <div class="card" style="margin-bottom:16px">
       <h2 style="font-weight:700;margin-bottom:8px">Cópia de segurança</h2>
       <p class="muted" style="margin-bottom:4px">Os dados vivem só neste dispositivo. Exporta com frequência para não perder nada.</p>
       <dl class="info" style="margin-top:8px">
-        <dt>Jogadores</dt><dd>${c.jogadores}</dd><dt>Exercícios</dt><dd>${c.exercicios}</dd><dt>Treinos</dt><dd>${c.treinos}</dd>
+        <dt>Jogadores</dt><dd>${c.jogadores}</dd><dt>Exercícios</dt><dd>${c.exercicios}</dd><dt>Treinos</dt><dd>${c.treinos}</dd><dt>Jogos</dt><dd>${c.jogos}</dd>
       </dl>
     </div>
     <div class="actions" style="flex-direction:column;gap:10px">
@@ -536,6 +650,12 @@ app.addEventListener("click", async (ev) => {
   if (a === "presenca") { await marcarPresenca(alvo.dataset.jog, alvo.dataset.est); router(); }
   if (a === "exportar") { await exportar(); }
   if (a === "partilhar-treino") { await partilharTreino(alvo.dataset.id); }
+  if (a === "gcal-treino") { await gcalTreino(alvo.dataset.id); }
+  if (a === "partilhar-jogo") { await partilharJogo(alvo.dataset.id); }
+  if (a === "gcal-jogo") { await gcalJogo(alvo.dataset.id); }
+  if (a === "apagar-jogo") {
+    if (confirm("Apagar este jogo?")) { await DB.apagar("jogos", alvo.dataset.id); go("#/calendario"); }
+  }
   if (a === "carregar-base") {
     const n = (typeof EXERCICIOS_BASE !== "undefined") ? EXERCICIOS_BASE.length : 0;
     if (!confirm(`Adicionar a biblioteca-base de exercícios de formação (${n})? Não apaga nem substitui os teus.`)) return;
@@ -581,6 +701,13 @@ app.addEventListener("submit", async (ev) => {
     const obj = { data: fd.get("data"), escalao: fd.get("escalao"), notas: txt(fd.get("notas")) };
     const novoId = await salvar("treinos", id, obj);
     return go("#/treinos/" + novoId);
+  }
+  if (tipo === "jogo") {
+    const obj = { data: fd.get("data"), hora: txt(fd.get("hora")), escalao: fd.get("escalao"),
+      adversario: fd.get("adversario"), casa_fora: fd.get("casa_fora"), local: txt(fd.get("local")),
+      golos_favor: num(fd.get("golos_favor")), golos_contra: num(fd.get("golos_contra")), notas: txt(fd.get("notas")) };
+    const novoId = await salvar("jogos", id, obj);
+    return go("#/jogos/" + novoId);
   }
   if (tipo === "avaliacao") {
     const jogId = Number(form.dataset.jog);
@@ -709,6 +836,38 @@ async function partilharTreino(id) {
     if (e && e.name === "AbortError") return; // utilizador cancelou a partilha
   }
   window.open("https://wa.me/?text=" + encodeURIComponent(texto), "_blank"); // fallback (ex.: desktop)
+}
+async function gcalTreino(id) {
+  const t = await DB.obter("treinos", id);
+  if (!t) return;
+  window.open(googleCalendarUrl({ titulo: `🗓️ Treino ${t.escalao}`, data: t.data, detalhes: notasLimpas(t.notas) }), "_blank");
+}
+
+// ---------- partilhar jogo (WhatsApp + Google Calendar) ----------
+function textoJogo(j) {
+  const r = resultadoJogo(j);
+  const rotulo = { vitoria: "Vitória", empate: "Empate", derrota: "Derrota", por_jogar: "Por jogar" }[r.estado];
+  const quando = `${fmtData(j.data)}${j.hora ? " " + j.hora : ""}`;
+  const onde = `${j.casa_fora === "fora" ? "fora" : "casa"}${j.local ? " · " + j.local : ""}`;
+  const res = r.texto ? `Resultado: ${r.texto} (${rotulo})` : "Ainda por jogar";
+  return `⚽ ${j.escalao} vs ${j.adversario}\n${quando} · ${onde}\n${res}${j.notas ? "\n" + j.notas : ""}`;
+}
+async function partilharJogo(id) {
+  const j = await DB.obter("jogos", id);
+  if (!j) return;
+  const texto = textoJogo(j);
+  try {
+    if (navigator.share) { await navigator.share({ title: `Jogo vs ${j.adversario}`, text: texto }); return; }
+  } catch (e) { if (e && e.name === "AbortError") return; }
+  window.open("https://wa.me/?text=" + encodeURIComponent(texto), "_blank");
+}
+async function gcalJogo(id) {
+  const j = await DB.obter("jogos", id);
+  if (!j) return;
+  window.open(googleCalendarUrl({
+    titulo: `⚽ ${j.escalao} vs ${j.adversario}`,
+    data: j.data, hora: j.hora, detalhes: textoJogo(j), local: j.local || "", duracaoMin: 120,
+  }), "_blank");
 }
 
 // ---------- backup ----------
