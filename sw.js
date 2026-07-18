@@ -1,6 +1,6 @@
 // Service worker — cache do "app shell" para funcionar offline.
 // Sobe a versão sempre que mudares ficheiros estáticos.
-const CACHE = "treinador-v19";
+const CACHE = "treinador-v20";
 const ASSETS = [
   "./",
   "./index.html",
@@ -30,8 +30,10 @@ self.addEventListener("activate", (e) => {
 // e no campo (sem net) a app continua a funcionar a partir da cache.
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
+  // { cache: "no-store" } ignora o cache HTTP do browser — senão o GitHub Pages devolve JS/CSS velho
+  // mesmo com network-first. Assim, com net há sempre a versão fresca; offline cai na cache.
   e.respondWith(
-    fetch(e.request).then((resp) => {
+    fetch(e.request, { cache: "no-store" }).then((resp) => {
       const copia = resp.clone();
       caches.open(CACHE).then((c) => c.put(e.request, copia));
       return resp;
