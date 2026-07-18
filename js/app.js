@@ -406,8 +406,11 @@ async function viewTreinoDetalhe(id) {
   if (!t) return go("#/treinos");
   const exercicios = (await DB.listar("exercicios")).sort((a, b) => a.titulo.localeCompare(b.titulo));
   const exMap = Object.fromEntries(exercicios.map((e) => [e.id, e]));
-  const itens = (await DB.porIndice("treino_itens", "treino_id", Number(id))).sort((a, b) => a.ordem - b.ordem);
+  const todosItens = (await DB.porIndice("treino_itens", "treino_id", Number(id))).sort((a, b) => a.ordem - b.ordem);
+  const itens = todosItens.filter((it) => it.parte !== "gr");
+  const itensGR = todosItens.filter((it) => it.parte === "gr");
   const total = itens.reduce((s, it) => s + durItem(it, exMap[it.exercicio_id]), 0);
+  const totalGR = itensGR.reduce((s, it) => s + durItem(it, exMap[it.exercicio_id]), 0);
 
   const jogadores = (await DB.listar("jogadores"))
     .filter((j) => escalaoDeJogador(j) === t.escalao)
@@ -417,20 +420,26 @@ async function viewTreinoDetalhe(id) {
   const cont = { presente: 0, ausente: 0 };
   presencas.forEach((p) => { if (cont[p.estado] != null) cont[p.estado]++; });
 
-  const itensHtml = itens.length ? `<ol class="list" style="margin-bottom:12px">${itens.map((it, i) => {
+  const listaItensHtml = (lista) => lista.length ? `<ol class="list" style="margin-bottom:12px">${lista.map((it, i) => {
     const ex = exMap[it.exercicio_id];
     const dur = it.duracao_min != null ? it.duracao_min : (ex && ex.duracao_min != null ? ex.duracao_min : "—");
     return `<li class="card item">
       <span class="num">${i + 1}</span>
-      <span class="grow">${ex ? `<a class="t" href="#/exercicios/${ex.id}" style="text-decoration:none;color:inherit">${esc(ex.titulo)}</a><span class="s">${esc(it.bloco || ex.categoria || "sem categoria")}</span>${it.nota ? `<span class="s" style="color:var(--slate-400);font-style:italic">${esc(it.nota)}</span>` : ""}${it.gr ? `<span class="s" style="color:var(--grama)">🧤 ${esc(it.gr)}</span>` : ""}` : `<span class="t" style="color:var(--slate-400)">(exercício apagado)</span>`}</span>
+      <span class="grow">${ex ? `<a class="t" href="#/exercicios/${ex.id}" style="text-decoration:none;color:inherit">${esc(ex.titulo)}</a><span class="s">${esc(it.bloco || ex.categoria || "sem categoria")}</span>${it.nota ? `<span class="s" style="color:var(--slate-400);font-style:italic">${esc(it.nota)}</span>` : ""}` : `<span class="t" style="color:var(--slate-400)">(exercício apagado)</span>`}</span>
       <span class="dur">${dur}′</span>
       <span class="reorder">
         <button data-action="mover" data-item="${it.id}" data-dir="cima" ${i === 0 ? "disabled" : ""}>▲</button>
-        <button data-action="mover" data-item="${it.id}" data-dir="baixo" ${i === itens.length - 1 ? "disabled" : ""}>▼</button>
+        <button data-action="mover" data-item="${it.id}" data-dir="baixo" ${i === lista.length - 1 ? "disabled" : ""}>▼</button>
       </span>
       <button class="x" data-action="apagar-item" data-item="${it.id}">✕</button>
     </li>`;
   }).join("")}</ol>` : `<p class="muted" style="margin-bottom:12px">Ainda sem exercícios no plano.</p>`;
+  const itensHtml = listaItensHtml(itens);
+  const grHtml = itensGR.length ? `
+    <section style="margin-bottom:24px">
+      <div class="head"><h2>🧤 Guarda-redes (treino individual)</h2><span class="total">${totalGR} min</span></div>
+      ${listaItensHtml(itensGR)}
+    </section>` : "";
 
   const addHtml = exercicios.length ? `
     <form class="card item" data-form="add-item" style="gap:8px;align-items:flex-end">
@@ -460,6 +469,7 @@ async function viewTreinoDetalhe(id) {
       <p class="muted" style="font-size:12px;margin-bottom:12px">Sugestão: ${FASES.join(" → ")}</p>
       ${itensHtml}${addHtml}
     </section>
+    ${grHtml}
     <section>
       <div class="head"><h2>Presenças</h2>
         <span class="muted count"><span class="p">${cont.presente}P</span> · <span class="a">${cont.ausente}A</span></span></div>
@@ -584,9 +594,9 @@ app.addEventListener("submit", async (ev) => {
   }
   if (tipo === "add-item") {
     const treinoId = Number(location.hash.split("/")[2]);
-    const itens = await DB.porIndice("treino_itens", "treino_id", treinoId);
+    const itens = (await DB.porIndice("treino_itens", "treino_id", treinoId)).filter((it) => it.parte !== "gr");
     const ordem = itens.reduce((m, it) => Math.max(m, it.ordem), -1) + 1;
-    await DB.criar("treino_itens", { treino_id: treinoId, exercicio_id: num(fd.get("exercicio_id")), ordem, duracao_min: num(fd.get("duracao_min")) });
+    await DB.criar("treino_itens", { treino_id: treinoId, parte: "equipa", exercicio_id: num(fd.get("exercicio_id")), ordem, duracao_min: num(fd.get("duracao_min")) });
     return router();
   }
   if (tipo === "ia-config") {
@@ -629,7 +639,9 @@ async function apagarTreinoCascata(id) {
 }
 async function moverItem(itemId, dir) {
   const item = await DB.obter("treino_itens", itemId);
-  const itens = (await DB.porIndice("treino_itens", "treino_id", item.treino_id)).sort((a, b) => a.ordem - b.ordem);
+  const parte = item.parte || "equipa";
+  const itens = (await DB.porIndice("treino_itens", "treino_id", item.treino_id))
+    .filter((i) => (i.parte || "equipa") === parte).sort((a, b) => a.ordem - b.ordem);
   const idx = itens.findIndex((i) => i.id === item.id);
   const alvo = dir === "cima" ? idx - 1 : idx + 1;
   if (alvo < 0 || alvo >= itens.length) return;
@@ -665,24 +677,35 @@ async function carregarBibliotecaBase() {
 }
 
 // ---------- partilhar treino (texto -> WhatsApp/outros via Web Share; fallback wa.me) ----------
-function textoTreino(t, itens, exMap, total) {
-  const linhas = itens.map((it, i) => {
-    const ex = exMap[it.exercicio_id];
-    const dur = it.duracao_min != null ? it.duracao_min : (ex && ex.duracao_min != null ? ex.duracao_min : "");
-    let l = `${i + 1}. ${it.bloco ? "[" + it.bloco + "] " : ""}${ex ? ex.titulo : "(exercício apagado)"} — ${dur}′`;
-    if (it.nota) l += `\n   • ${it.nota}`;
-    if (it.gr) l += `\n   🧤 GR: ${it.gr}`;
-    return l;
-  }).join("\n");
-  return `⚽ Treino ${t.escalao} — ${fmtData(t.data)}\n${t.notas ? t.notas + "\n" : ""}\nPlano (${total} min):\n${linhas}\n`;
+// Tira a linha de metadados da IA (🤖) das notas — não vai na mensagem partilhada.
+function notasLimpas(notas) {
+  return (notas || "").split("\n").filter((l) => !l.trimStart().startsWith("🤖")).join("\n").trim();
+}
+function linhaTreino(it, i, exMap) {
+  const ex = exMap[it.exercicio_id];
+  const dur = it.duracao_min != null ? it.duracao_min : (ex && ex.duracao_min != null ? ex.duracao_min : "");
+  let l = `${i + 1}. ${it.bloco ? "[" + it.bloco + "] " : ""}${ex ? ex.titulo : "(exercício apagado)"} — ${dur}′`;
+  if (it.nota) l += `\n   • ${it.nota}`;
+  return l;
+}
+function textoTreino(t, itens, itensGR, exMap, total, totalGR) {
+  const equipa = itens.map((it, i) => linhaTreino(it, i, exMap)).join("\n");
+  const gr = itensGR.length
+    ? `\n\n🧤 Guarda-redes (treino individual) — ${totalGR} min:\n${itensGR.map((it, i) => linhaTreino(it, i, exMap)).join("\n")}`
+    : "";
+  const resumo = notasLimpas(t.notas);
+  return `⚽ Treino ${t.escalao} — ${fmtData(t.data)}\n${resumo ? resumo + "\n" : ""}\nPlano (${total} min):\n${equipa}${gr}\n`;
 }
 async function partilharTreino(id) {
   const t = await DB.obter("treinos", id);
   if (!t) return;
   const exMap = Object.fromEntries((await DB.listar("exercicios")).map((e) => [e.id, e]));
-  const itens = (await DB.porIndice("treino_itens", "treino_id", Number(id))).sort((a, b) => a.ordem - b.ordem);
+  const todos = (await DB.porIndice("treino_itens", "treino_id", Number(id))).sort((a, b) => a.ordem - b.ordem);
+  const itens = todos.filter((it) => it.parte !== "gr");
+  const itensGR = todos.filter((it) => it.parte === "gr");
   const total = itens.reduce((s, it) => s + durItem(it, exMap[it.exercicio_id]), 0);
-  const texto = textoTreino(t, itens, exMap, total);
+  const totalGR = itensGR.reduce((s, it) => s + durItem(it, exMap[it.exercicio_id]), 0);
+  const texto = textoTreino(t, itens, itensGR, exMap, total, totalGR);
   try {
     if (navigator.share) { await navigator.share({ title: `Treino ${t.escalao}`, text: texto }); return; }
   } catch (e) {

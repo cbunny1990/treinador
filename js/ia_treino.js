@@ -84,7 +84,6 @@ function iaValidarItens(itensIA, exercicios) {
       duracao_min: dur,
       bloco: (it.bloco || "").toString().slice(0, 60) || null,
       nota: (it.nota || "").toString().slice(0, 300) || null,
-      gr: (it.gr || "").toString().slice(0, 200) || null, // o que o guarda-redes faz neste bloco
     });
   }
   return out;
@@ -100,10 +99,7 @@ function iaConstruirPrompt(escalao, foco, exercicios, nJogadores, exerciciosGR) 
   const listaGR = (exerciciosGR && exerciciosGR.length)
     ? exerciciosGR.map((e) => `#${e.id} | ${e.titulo} | ${e.duracao_min || "?"}min`).join("\n") : "";
   const blocoGR = listaGR
-    ? `\n\nHÁ 1 GUARDA-REDES nesta sessão. Em cada bloco, preenche o campo "gr":
-- Se o exercício de equipa USA baliza/finalização/jogo (o GR faz falta): o GR PARTICIPA — escreve em "gr" algo como "Participa: defende a baliza".
-- Se o exercício NÃO precisa de GR (coordenação, passe sem baliza, condução): o GR faz trabalho À PARTE — escolhe um exercício da lista de GR abaixo e escreve em "gr" o título dele (ex.: "À parte: GR: pega e posição base").
-Nunca deixes o GR parado. Usa apenas exercícios de GR desta lista, não inventes:
+    ? `\n\nHÁ GUARDA-REDES nesta sessão. Além do treino da equipa (acima), monta À PARTE um TREINO INDIVIDUAL do guarda-redes em "itens_gr": 4 a 6 exercícios de GR numa progressão coerente (aquecimento de mãos e posição → pega e defesa → deslocamentos e bola alta → jogo com os pés). Nalgum momento o GR pode juntar-se ao jogo com a equipa — se assim for, diz na "nota" desse exercício. Usa APENAS exercícios de GR desta lista (pelo #id), não inventes:
 ${listaGR}`
     : "";
   const restricaoJog = nJogadores > 0
@@ -131,8 +127,11 @@ Devolve JSON exatamente com este formato:
 {
   "resumo": "1-2 frases: o conceito pedagógico do treino e como faz evoluir estas crianças",
   "itens": [
-    { "exercicio_id": <id da lista>, "bloco": "<nome do bloco>", "duracao_min": <inteiro>, "nota": "porque este exercício aqui"${listaGR ? `, "gr": "o que o guarda-redes faz neste bloco"` : ""} }
-  ]
+    { "exercicio_id": <id da lista>, "bloco": "<nome do bloco>", "duracao_min": <inteiro>, "nota": "porque este exercício aqui" }
+  ]${listaGR ? `,
+  "itens_gr": [
+    { "exercicio_id": <id da lista de GR>, "bloco": "<fase do GR>", "duracao_min": <inteiro>, "nota": "detalhe ou 'junta-se ao jogo da equipa'" }
+  ]` : ""}
 }`;
   return { system, user };
 }
@@ -202,11 +201,13 @@ async function gerarTreinoIA(escalao, foco, nJogadores, comGR) {
   const parsed = iaExtrairJSON(txt);
   const itens = iaValidarItens(parsed.itens, doEscalao);
   if (!itens.length) throw new Error("A IA não devolveu exercícios válidos. Tenta outra vez.");
+  const itensGR = comGR ? iaValidarItens(parsed.itens_gr, exerciciosGR) : [];
 
   const notas = (parsed.resumo ? parsed.resumo.toString().trim() + "\n\n" : "") +
-    `🤖 Gerado por IA${foco ? " · foco: " + foco : ""}${n > 0 ? " · " + n + " jog." : ""}${comGR ? " · 🧤 com GR" : ""} · ${modelo}`;
+    `🤖 Gerado por IA${foco ? " · foco: " + foco : ""}${n > 0 ? " · " + n + " jog." : ""}${itensGR.length ? " · 🧤 com GR" : ""} · ${modelo}`;
   const treinoId = await DB.criar("treinos", { data: new Date().toISOString().slice(0, 10), escalao, notas });
-  for (const it of itens) await DB.criar("treino_itens", { treino_id: treinoId, ...it });
+  for (const it of itens) await DB.criar("treino_itens", { treino_id: treinoId, parte: "equipa", ...it });
+  for (const it of itensGR) await DB.criar("treino_itens", { treino_id: treinoId, parte: "gr", ...it });
   return treinoId;
 }
 
