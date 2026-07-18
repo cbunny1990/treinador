@@ -489,7 +489,7 @@ async function viewTreinoDetalhe(id) {
       <p class="muted" style="font-size:12px;margin-bottom:8px">P = Presente · A = Ausente</p>
       ${presHtml}
     </section>
-    <div class="divider"><button class="btn-link red" data-action="apagar-treino" data-id="${t.id}">Apagar treino</button></div>`);
+    <div class="divider"><button class="btn danger" data-action="apagar-treino" data-id="${t.id}" style="width:100%">🗑️ Apagar treino</button></div>`);
 }
 
 // ---------- CALENDÁRIO / JOGOS ----------
@@ -590,7 +590,7 @@ async function viewJogoDetalhe(id) {
       <button class="btn" data-action="partilhar-jogo" data-id="${j.id}" style="width:100%">📲 Partilhar (WhatsApp)</button>
       <button class="btn ghost" data-action="gcal-jogo" data-id="${j.id}" style="width:100%">📅 Adicionar ao Google Calendar</button>
     </div>
-    <div class="divider"><button class="btn-link red" data-action="apagar-jogo" data-id="${j.id}">Apagar jogo</button></div>`);
+    <div class="divider"><button class="btn danger" data-action="apagar-jogo" data-id="${j.id}" style="width:100%">🗑️ Apagar jogo</button></div>`);
 }
 
 // ---------- DADOS (cópia de segurança) ----------
