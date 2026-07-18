@@ -369,6 +369,10 @@ async function viewGerarTreino() {
     ${temChave ? "" : `<div class="card" style="margin-bottom:16px;border-color:var(--amber)">
       ⚠️ Falta a chave OpenRouter. Configura em <a href="#/dados">Dados → IA</a> antes de gerar.</div>`}
     <form class="stack" data-form="gerar-treino">
+      <div class="grid2">
+        <label class="field"><span>Data *</span><input type="date" name="data" required value="${new Date().toISOString().slice(0, 10)}"></label>
+        <label class="field"><span>Hora</span><input type="time" name="hora"></label>
+      </div>
       <label class="field"><span>Escalão *</span><select name="escalao" required data-action="escalao-gerar">
         ${ESCALOES.map((e) => `<option>${e}</option>`).join("")}</select></label>
       <label class="field"><span>Foco (opcional)</span>
@@ -765,7 +769,7 @@ app.addEventListener("submit", async (ev) => {
     btn.disabled = true; btn.textContent = "🤖 A gerar… (pode demorar uns segundos)";
     erroEl.style.display = "none";
     try {
-      const treinoId = await gerarTreinoIA(fd.get("escalao"), txt(fd.get("foco")), num(fd.get("n_jogadores")));
+      const treinoId = await gerarTreinoIA(fd.get("escalao"), txt(fd.get("foco")), num(fd.get("n_jogadores")), fd.get("data"), txt(fd.get("hora")));
       return go("#/treinos/" + treinoId);
     } catch (e) {
       erroEl.textContent = "Erro: " + e.message; erroEl.style.display = "block";

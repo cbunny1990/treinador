@@ -178,7 +178,7 @@ async function iaChamarOpenRouter(key, modelo, system, user) {
 }
 
 // ---- orquestração: gera e grava o treino, devolve o id ----
-async function gerarTreinoIA(escalao, foco, nJogadores) {
+async function gerarTreinoIA(escalao, foco, nJogadores, data, hora) {
   if (!IA_ESQUELETO[escalao]) throw new Error("escalão inválido");
   const { key, modelo } = iaConfig();
   if (!key) throw new Error("Falta a chave OpenRouter (Dados → IA).");
@@ -224,7 +224,7 @@ async function gerarTreinoIA(escalao, foco, nJogadores) {
   const itensGR = exerciciosGR.length ? iaValidarItens(parsed.itens_gr, exerciciosGR) : [];
 
   const notas = parsed.resumo ? parsed.resumo.toString().trim() : null; // só o resumo pedagógico (sem marca de IA)
-  const treinoId = await DB.criar("treinos", { data: new Date().toISOString().slice(0, 10), escalao, notas });
+  const treinoId = await DB.criar("treinos", { data: data || new Date().toISOString().slice(0, 10), hora: hora || null, escalao, notas });
   for (const it of itens) await DB.criar("treino_itens", { treino_id: treinoId, parte: "equipa", ...it });
   for (const it of itensGR) await DB.criar("treino_itens", { treino_id: treinoId, parte: "gr", ...it });
   return treinoId;
