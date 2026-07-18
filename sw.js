@@ -1,6 +1,6 @@
 // Service worker — cache do "app shell" para funcionar offline.
 // Sobe a versão sempre que mudares ficheiros estáticos.
-const CACHE = "treinador-v16";
+const CACHE = "treinador-v17";
 const ASSETS = [
   "./",
   "./index.html",
@@ -25,15 +25,16 @@ self.addEventListener("activate", (e) => {
   );
 });
 
-// Cache-first: serve do cache; se não existir, vai à rede e guarda.
+// Network-first: com net, serve sempre a versão fresca (e atualiza a cache);
+// offline, cai na cache. Assim as atualizações aparecem sem "dança de recarregar",
+// e no campo (sem net) a app continua a funcionar a partir da cache.
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
   e.respondWith(
-    caches.match(e.request).then((cached) => cached ||
-      fetch(e.request).then((resp) => {
-        const copia = resp.clone();
-        caches.open(CACHE).then((c) => c.put(e.request, copia));
-        return resp;
-      }).catch(() => cached))
+    fetch(e.request).then((resp) => {
+      const copia = resp.clone();
+      caches.open(CACHE).then((c) => c.put(e.request, copia));
+      return resp;
+    }).catch(() => caches.match(e.request).then((cached) => cached || caches.match("./index.html")))
   );
 });
