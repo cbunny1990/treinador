@@ -84,18 +84,28 @@ function iaValidarItens(itensIA, exercicios) {
       duracao_min: dur,
       bloco: (it.bloco || "").toString().slice(0, 60) || null,
       nota: (it.nota || "").toString().slice(0, 300) || null,
+      gr: (it.gr || "").toString().slice(0, 200) || null, // o que o guarda-redes faz neste bloco
     });
   }
   return out;
 }
 
 // ---- prompt ----
-function iaConstruirPrompt(escalao, foco, exercicios, nJogadores) {
+function iaConstruirPrompt(escalao, foco, exercicios, nJogadores, exerciciosGR) {
   const blocos = IA_ESQUELETO[escalao] || [];
   const lista = exercicios.map((e) =>
     `#${e.id} | ${e.titulo} | ${e.categoria || "sem categoria"} | ${e.duracao_min || "?"}min | ${e.n_jogadores_min || "?"}-${e.n_jogadores_max || "?"} jog.`
   ).join("\n");
   const estrutura = blocos.map((b) => `- ${b.nome} (~${b.min} min) — categorias ideais: ${b.categorias.join(", ")}`).join("\n");
+  const listaGR = (exerciciosGR && exerciciosGR.length)
+    ? exerciciosGR.map((e) => `#${e.id} | ${e.titulo} | ${e.duracao_min || "?"}min`).join("\n") : "";
+  const blocoGR = listaGR
+    ? `\n\nHÁ 1 GUARDA-REDES nesta sessão. Em cada bloco, preenche o campo "gr":
+- Se o exercício de equipa USA baliza/finalização/jogo (o GR faz falta): o GR PARTICIPA — escreve em "gr" algo como "Participa: defende a baliza".
+- Se o exercício NÃO precisa de GR (coordenação, passe sem baliza, condução): o GR faz trabalho À PARTE — escolhe um exercício da lista de GR abaixo e escreve em "gr" o título dele (ex.: "À parte: GR: pega e posição base").
+Nunca deixes o GR parado. Usa apenas exercícios de GR desta lista, não inventes:
+${listaGR}`
+    : "";
   const restricaoJog = nJogadores > 0
     ? `\n\nSÓ TENS ${nJogadores} JOGADOR(ES). A lista de exercícios abaixo JÁ ESTÁ FILTRADA para exercícios reais que funcionam com ${nJogadores}. Regras rígidas:
 - Usa APENAS exercícios da lista (pelo #id). Nunca inventes exercícios nem formatos.
@@ -107,12 +117,12 @@ function iaConstruirPrompt(escalao, foco, exercicios, nJogadores) {
 `És um treinador experiente de futebol de formação em Portugal (metodologia FPF). Planeias sessões de treino que fazem EVOLUIR as crianças: do lúdico e da técnica individual nos mais novos, para os jogos reduzidos e o jogo com intenção tática nos mais velhos. Adaptas sempre à idade: sub-7/8 mais lúdico e técnico, sub-9/10 mais jogos reduzidos e tomada de decisão. Adaptas SEMPRE ao número real de jogadores disponíveis.
 Respondes SEMPRE e APENAS com um objeto JSON válido, sem texto à volta, sem cercas de código.`;
   const user =
-`Monta um treino de ${IA_DURACAO_TOTAL} minutos para o escalão ${escalao}${foco ? `, com FOCO em: ${foco}` : ""}.${restricaoJog}
+`Monta um treino de ${IA_DURACAO_TOTAL} minutos para o escalão ${escalao}${foco ? `, com FOCO em: ${foco}` : ""}.${restricaoJog}${blocoGR}
 
 Estrutura pedagógica (blocos e minutos-alvo, deve somar ~${IA_DURACAO_TOTAL}):
 ${estrutura}
 
-Escolhe exercícios EXCLUSIVAMENTE desta biblioteca (usa o número #id). NÃO inventes exercícios nem uses ids fora da lista. Para cada bloco escolhe 1 exercício adequado à idade, ao foco e ao número de jogadores; ajusta a duração para o total dar ~${IA_DURACAO_TOTAL} min.
+Escolhe exercícios de equipa EXCLUSIVAMENTE desta biblioteca (usa o número #id). NÃO inventes exercícios nem uses ids fora da lista. Para cada bloco escolhe 1 exercício adequado à idade, ao foco e ao número de jogadores; ajusta a duração para o total dar ~${IA_DURACAO_TOTAL} min.
 
 Biblioteca disponível (#id | título | categoria | duração-base | jogadores):
 ${lista}
@@ -121,7 +131,7 @@ Devolve JSON exatamente com este formato:
 {
   "resumo": "1-2 frases: o conceito pedagógico do treino e como faz evoluir estas crianças",
   "itens": [
-    { "exercicio_id": <id da lista>, "bloco": "<nome do bloco>", "duracao_min": <inteiro>, "nota": "porque este exercício aqui" }
+    { "exercicio_id": <id da lista>, "bloco": "<nome do bloco>", "duracao_min": <inteiro>, "nota": "porque este exercício aqui"${listaGR ? `, "gr": "o que o guarda-redes faz neste bloco"` : ""} }
   ]
 }`;
   return { system, user };
@@ -160,7 +170,7 @@ async function iaChamarOpenRouter(key, modelo, system, user) {
 }
 
 // ---- orquestração: gera e grava o treino, devolve o id ----
-async function gerarTreinoIA(escalao, foco, nJogadores) {
+async function gerarTreinoIA(escalao, foco, nJogadores, comGR) {
   if (!IA_ESQUELETO[escalao]) throw new Error("escalão inválido");
   const { key, modelo } = iaConfig();
   if (!key) throw new Error("Falta a chave OpenRouter (Dados → IA).");
@@ -168,7 +178,9 @@ async function gerarTreinoIA(escalao, foco, nJogadores) {
     throw new Error("Sem internet. Gera o treino com net; depois usa-o offline.");
 
   const todos = await DB.listar("exercicios");
-  const doEscalao = todos.filter((e) => (e.escaloes || []).includes(escalao));
+  const noEscalao = todos.filter((e) => (e.escaloes || []).includes(escalao));
+  const doEscalao = noEscalao.filter((e) => e.categoria !== "Guarda-redes"); // pool de equipa (GR à parte)
+  const exerciciosGR = comGR ? noEscalao.filter((e) => e.categoria === "Guarda-redes") : [];
   if (doEscalao.length < 3)
     throw new Error(`Poucos exercícios para ${escalao}. Carrega a biblioteca-base (Dados → biblioteca).`);
 
@@ -185,14 +197,14 @@ async function gerarTreinoIA(escalao, foco, nJogadores) {
   const cabem = n > 0 ? doEscalao.filter((e) => (e.n_jogadores_min || 1) <= n) : doEscalao;
   const listaAI = cabem.length >= 5 ? cabem : doEscalao;
 
-  const { system, user } = iaConstruirPrompt(escalao, foco, listaAI, n);
+  const { system, user } = iaConstruirPrompt(escalao, foco, listaAI, n, exerciciosGR);
   const txt = await iaChamarOpenRouter(key, modelo, system, user);
   const parsed = iaExtrairJSON(txt);
   const itens = iaValidarItens(parsed.itens, doEscalao);
   if (!itens.length) throw new Error("A IA não devolveu exercícios válidos. Tenta outra vez.");
 
   const notas = (parsed.resumo ? parsed.resumo.toString().trim() + "\n\n" : "") +
-    `🤖 Gerado por IA${foco ? " · foco: " + foco : ""}${n > 0 ? " · " + n + " jog." : ""} · ${modelo}`;
+    `🤖 Gerado por IA${foco ? " · foco: " + foco : ""}${n > 0 ? " · " + n + " jog." : ""}${comGR ? " · 🧤 com GR" : ""} · ${modelo}`;
   const treinoId = await DB.criar("treinos", { data: new Date().toISOString().slice(0, 10), escalao, notas });
   for (const it of itens) await DB.criar("treino_itens", { treino_id: treinoId, ...it });
   return treinoId;

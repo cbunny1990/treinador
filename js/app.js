@@ -4,6 +4,7 @@
 const CATEGORIAS = [
   "Coordenação / motricidade", "Domínio e condução de bola", "Passe e receção",
   "Remate / finalização", "Jogos reduzidos (SSG)", "Jogo final", "Jogos lúdicos",
+  "Guarda-redes",
 ];
 const POSICOES = ["Guarda-redes", "Defesa", "Médio", "Avançado"];
 const PES = ["Direito", "Esquerdo", "Ambos"];
@@ -366,6 +367,10 @@ async function viewGerarTreino() {
       <label class="field"><span>Nº de jogadores (opcional)</span>
         <input type="number" name="n_jogadores" min="1" placeholder="automático (conta o plantel do escalão)">
         <div class="hint">A IA adapta os exercícios ao número que tens. Vazio → conta o teu plantel.</div></label>
+      <label class="field" style="flex-direction:row;align-items:center;gap:10px">
+        <input type="checkbox" name="com_gr" value="1" style="width:auto">
+        <span style="margin:0">🧤 Incluir guarda-redes</span></label>
+      <div class="hint" style="margin-top:-8px">O GR participa nos blocos com baliza e faz trabalho à parte nos outros.</div>
       <div class="actions">
         <button class="btn" type="submit" ${temChave ? "" : "disabled"}>🤖 Gerar treino</button>
         <a class="btn ghost" href="#/treinos">Cancelar</a>
@@ -417,7 +422,7 @@ async function viewTreinoDetalhe(id) {
     const dur = it.duracao_min != null ? it.duracao_min : (ex && ex.duracao_min != null ? ex.duracao_min : "—");
     return `<li class="card item">
       <span class="num">${i + 1}</span>
-      <span class="grow">${ex ? `<a class="t" href="#/exercicios/${ex.id}" style="text-decoration:none;color:inherit">${esc(ex.titulo)}</a><span class="s">${esc(it.bloco || ex.categoria || "sem categoria")}</span>${it.nota ? `<span class="s" style="color:var(--slate-400);font-style:italic">${esc(it.nota)}</span>` : ""}` : `<span class="t" style="color:var(--slate-400)">(exercício apagado)</span>`}</span>
+      <span class="grow">${ex ? `<a class="t" href="#/exercicios/${ex.id}" style="text-decoration:none;color:inherit">${esc(ex.titulo)}</a><span class="s">${esc(it.bloco || ex.categoria || "sem categoria")}</span>${it.nota ? `<span class="s" style="color:var(--slate-400);font-style:italic">${esc(it.nota)}</span>` : ""}${it.gr ? `<span class="s" style="color:var(--grama)">🧤 ${esc(it.gr)}</span>` : ""}` : `<span class="t" style="color:var(--slate-400)">(exercício apagado)</span>`}</span>
       <span class="dur">${dur}′</span>
       <span class="reorder">
         <button data-action="mover" data-item="${it.id}" data-dir="cima" ${i === 0 ? "disabled" : ""}>▲</button>
@@ -447,7 +452,8 @@ async function viewTreinoDetalhe(id) {
     <div class="card" style="margin-bottom:16px">
       <div class="row"><div class="grow"><div style="font-weight:700;font-size:18px">${fmtData(t.data)}</div><div class="muted">${esc(t.escalao)}</div></div>
         <a class="btn-link" href="#/treinos/${t.id}/editar">Editar</a></div>
-      ${t.notas ? `<p class="muted" style="margin-top:8px">${esc(t.notas)}</p>` : ""}
+      ${t.notas ? `<p class="muted" style="margin-top:8px;white-space:pre-line">${esc(t.notas)}</p>` : ""}
+      <button class="btn" data-action="partilhar-treino" data-id="${t.id}" style="width:100%;margin-top:12px">📲 Partilhar treino</button>
     </div>
     <section style="margin-bottom:24px">
       <div class="head"><h2>Plano da sessão</h2><span class="total">${total} min</span></div>
@@ -522,6 +528,7 @@ app.addEventListener("click", async (ev) => {
   if (a === "mover") { await moverItem(alvo.dataset.item, alvo.dataset.dir); router(); }
   if (a === "presenca") { await marcarPresenca(alvo.dataset.jog, alvo.dataset.est); router(); }
   if (a === "exportar") { await exportar(); }
+  if (a === "partilhar-treino") { await partilharTreino(alvo.dataset.id); }
   if (a === "carregar-base") {
     const n = (typeof EXERCICIOS_BASE !== "undefined") ? EXERCICIOS_BASE.length : 0;
     if (!confirm(`Adicionar a biblioteca-base de exercícios de formação (${n})? Não apaga nem substitui os teus.`)) return;
@@ -593,7 +600,7 @@ app.addEventListener("submit", async (ev) => {
     btn.disabled = true; btn.textContent = "🤖 A gerar… (pode demorar uns segundos)";
     erroEl.style.display = "none";
     try {
-      const treinoId = await gerarTreinoIA(fd.get("escalao"), txt(fd.get("foco")), num(fd.get("n_jogadores")));
+      const treinoId = await gerarTreinoIA(fd.get("escalao"), txt(fd.get("foco")), num(fd.get("n_jogadores")), fd.get("com_gr") === "1");
       return go("#/treinos/" + treinoId);
     } catch (e) {
       erroEl.textContent = "Erro: " + e.message; erroEl.style.display = "block";
@@ -655,6 +662,33 @@ async function carregarBibliotecaBase() {
     adicionados++;
   }
   return adicionados;
+}
+
+// ---------- partilhar treino (texto -> WhatsApp/outros via Web Share; fallback wa.me) ----------
+function textoTreino(t, itens, exMap, total) {
+  const linhas = itens.map((it, i) => {
+    const ex = exMap[it.exercicio_id];
+    const dur = it.duracao_min != null ? it.duracao_min : (ex && ex.duracao_min != null ? ex.duracao_min : "");
+    let l = `${i + 1}. ${it.bloco ? "[" + it.bloco + "] " : ""}${ex ? ex.titulo : "(exercício apagado)"} — ${dur}′`;
+    if (it.nota) l += `\n   • ${it.nota}`;
+    if (it.gr) l += `\n   🧤 GR: ${it.gr}`;
+    return l;
+  }).join("\n");
+  return `⚽ Treino ${t.escalao} — ${fmtData(t.data)}\n${t.notas ? t.notas + "\n" : ""}\nPlano (${total} min):\n${linhas}\n`;
+}
+async function partilharTreino(id) {
+  const t = await DB.obter("treinos", id);
+  if (!t) return;
+  const exMap = Object.fromEntries((await DB.listar("exercicios")).map((e) => [e.id, e]));
+  const itens = (await DB.porIndice("treino_itens", "treino_id", Number(id))).sort((a, b) => a.ordem - b.ordem);
+  const total = itens.reduce((s, it) => s + durItem(it, exMap[it.exercicio_id]), 0);
+  const texto = textoTreino(t, itens, exMap, total);
+  try {
+    if (navigator.share) { await navigator.share({ title: `Treino ${t.escalao}`, text: texto }); return; }
+  } catch (e) {
+    if (e && e.name === "AbortError") return; // utilizador cancelou a partilha
+  }
+  window.open("https://wa.me/?text=" + encodeURIComponent(texto), "_blank"); // fallback (ex.: desktop)
 }
 
 // ---------- backup ----------
