@@ -367,10 +367,7 @@ async function viewGerarTreino() {
       <label class="field"><span>Nº de jogadores (opcional)</span>
         <input type="number" name="n_jogadores" min="1" placeholder="automático (conta o plantel do escalão)">
         <div class="hint">A IA adapta os exercícios ao número que tens. Vazio → conta o teu plantel.</div></label>
-      <label class="field" style="flex-direction:row;align-items:center;gap:10px">
-        <input type="checkbox" name="com_gr" value="1" style="width:auto">
-        <span style="margin:0">🧤 Incluir guarda-redes</span></label>
-      <div class="hint" style="margin-top:-8px">O GR participa nos blocos com baliza e faz trabalho à parte nos outros.</div>
+      <div class="hint">🧤 O guarda-redes é sempre incluído: participa nos exercícios com baliza e tem um treino individual à parte.</div>
       <div class="actions">
         <button class="btn" type="submit" ${temChave ? "" : "disabled"}>🤖 Gerar treino</button>
         <a class="btn ghost" href="#/treinos">Cancelar</a>
@@ -425,7 +422,7 @@ async function viewTreinoDetalhe(id) {
     const dur = it.duracao_min != null ? it.duracao_min : (ex && ex.duracao_min != null ? ex.duracao_min : "—");
     return `<li class="card item">
       <span class="num">${i + 1}</span>
-      <span class="grow">${ex ? `<a class="t" href="#/exercicios/${ex.id}" style="text-decoration:none;color:inherit">${esc(ex.titulo)}</a><span class="s">${esc(it.bloco || ex.categoria || "sem categoria")}</span>${it.nota ? `<span class="s" style="color:var(--slate-400);font-style:italic">${esc(it.nota)}</span>` : ""}` : `<span class="t" style="color:var(--slate-400)">(exercício apagado)</span>`}</span>
+      <span class="grow">${ex ? `<a class="t" href="#/exercicios/${ex.id}" style="text-decoration:none;color:inherit">${esc(ex.titulo)}</a><span class="s">${esc(it.bloco || ex.categoria || "sem categoria")}</span>${it.nota ? `<span class="s" style="color:var(--slate-400);font-style:italic">${esc(it.nota)}</span>` : ""}${it.com_gr ? `<span class="s" style="color:var(--grama);font-weight:600">🧤 com guarda-redes</span>` : ""}` : `<span class="t" style="color:var(--slate-400)">(exercício apagado)</span>`}</span>
       <span class="dur">${dur}′</span>
       <span class="reorder">
         <button data-action="mover" data-item="${it.id}" data-dir="cima" ${i === 0 ? "disabled" : ""}>▲</button>
@@ -610,7 +607,7 @@ app.addEventListener("submit", async (ev) => {
     btn.disabled = true; btn.textContent = "🤖 A gerar… (pode demorar uns segundos)";
     erroEl.style.display = "none";
     try {
-      const treinoId = await gerarTreinoIA(fd.get("escalao"), txt(fd.get("foco")), num(fd.get("n_jogadores")), fd.get("com_gr") === "1");
+      const treinoId = await gerarTreinoIA(fd.get("escalao"), txt(fd.get("foco")), num(fd.get("n_jogadores")));
       return go("#/treinos/" + treinoId);
     } catch (e) {
       erroEl.textContent = "Erro: " + e.message; erroEl.style.display = "block";
@@ -684,7 +681,7 @@ function notasLimpas(notas) {
 function linhaTreino(it, i, exMap) {
   const ex = exMap[it.exercicio_id];
   const dur = it.duracao_min != null ? it.duracao_min : (ex && ex.duracao_min != null ? ex.duracao_min : "");
-  let l = `${i + 1}. ${it.bloco ? "[" + it.bloco + "] " : ""}${ex ? ex.titulo : "(exercício apagado)"} — ${dur}′`;
+  let l = `${i + 1}. ${it.bloco ? "[" + it.bloco + "] " : ""}${ex ? ex.titulo : "(exercício apagado)"} — ${dur}′${it.com_gr ? " 🧤" : ""}`;
   if (it.nota) l += `\n   • ${it.nota}`;
   return l;
 }

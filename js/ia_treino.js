@@ -84,6 +84,7 @@ function iaValidarItens(itensIA, exercicios) {
       duracao_min: dur,
       bloco: (it.bloco || "").toString().slice(0, 60) || null,
       nota: (it.nota || "").toString().slice(0, 300) || null,
+      com_gr: !!it.com_gr, // exercício de equipa que envolve o guarda-redes
     });
   }
   return out;
@@ -99,7 +100,9 @@ function iaConstruirPrompt(escalao, foco, exercicios, nJogadores, exerciciosGR) 
   const listaGR = (exerciciosGR && exerciciosGR.length)
     ? exerciciosGR.map((e) => `#${e.id} | ${e.titulo} | ${e.duracao_min || "?"}min`).join("\n") : "";
   const blocoGR = listaGR
-    ? `\n\nHÁ GUARDA-REDES nesta sessão. Além do treino da equipa (acima), monta À PARTE um TREINO INDIVIDUAL do guarda-redes em "itens_gr": 4 a 6 exercícios de GR numa progressão coerente (aquecimento de mãos e posição → pega e defesa → deslocamentos e bola alta → jogo com os pés). Nalgum momento o GR pode juntar-se ao jogo com a equipa — se assim for, diz na "nota" desse exercício. Usa APENAS exercícios de GR desta lista (pelo #id), não inventes:
+    ? `\n\nHÁ SEMPRE GUARDA-REDES nesta sessão. Duas coisas:
+1) Em cada exercício de EQUIPA, marca "com_gr": true se o exercício ENVOLVE o guarda-redes (tem baliza, finalização ou jogo), ou false se não precisa de GR (coordenação, passe sem baliza, condução).
+2) Monta À PARTE um TREINO INDIVIDUAL do guarda-redes em "itens_gr": 4 a 6 exercícios de GR numa progressão coerente (aquecimento de mãos e posição → pega e defesa → deslocamentos e bola alta → jogo com os pés), para os momentos em que a equipa NÃO precisa dele. Usa APENAS exercícios de GR desta lista (pelo #id), não inventes:
 ${listaGR}`
     : "";
   const restricaoJog = nJogadores > 0
@@ -127,10 +130,10 @@ Devolve JSON exatamente com este formato:
 {
   "resumo": "1-2 frases: o conceito pedagógico do treino e como faz evoluir estas crianças",
   "itens": [
-    { "exercicio_id": <id da lista>, "bloco": "<nome do bloco>", "duracao_min": <inteiro>, "nota": "porque este exercício aqui" }
+    { "exercicio_id": <id da lista>, "bloco": "<nome do bloco>", "duracao_min": <inteiro>, "nota": "porque este exercício aqui"${listaGR ? `, "com_gr": <true se envolve o guarda-redes, senão false>` : ""} }
   ]${listaGR ? `,
   "itens_gr": [
-    { "exercicio_id": <id da lista de GR>, "bloco": "<fase do GR>", "duracao_min": <inteiro>, "nota": "detalhe ou 'junta-se ao jogo da equipa'" }
+    { "exercicio_id": <id da lista de GR>, "bloco": "<fase do GR>", "duracao_min": <inteiro>, "nota": "detalhe" }
   ]` : ""}
 }`;
   return { system, user };
@@ -169,7 +172,7 @@ async function iaChamarOpenRouter(key, modelo, system, user) {
 }
 
 // ---- orquestração: gera e grava o treino, devolve o id ----
-async function gerarTreinoIA(escalao, foco, nJogadores, comGR) {
+async function gerarTreinoIA(escalao, foco, nJogadores) {
   if (!IA_ESQUELETO[escalao]) throw new Error("escalão inválido");
   const { key, modelo } = iaConfig();
   if (!key) throw new Error("Falta a chave OpenRouter (Dados → IA).");
@@ -179,7 +182,7 @@ async function gerarTreinoIA(escalao, foco, nJogadores, comGR) {
   const todos = await DB.listar("exercicios");
   const noEscalao = todos.filter((e) => (e.escaloes || []).includes(escalao));
   const doEscalao = noEscalao.filter((e) => e.categoria !== "Guarda-redes"); // pool de equipa (GR à parte)
-  const exerciciosGR = comGR ? noEscalao.filter((e) => e.categoria === "Guarda-redes") : [];
+  const exerciciosGR = noEscalao.filter((e) => e.categoria === "Guarda-redes"); // GR sempre incluído
   if (doEscalao.length < 3)
     throw new Error(`Poucos exercícios para ${escalao}. Carrega a biblioteca-base (Dados → biblioteca).`);
 
@@ -201,7 +204,7 @@ async function gerarTreinoIA(escalao, foco, nJogadores, comGR) {
   const parsed = iaExtrairJSON(txt);
   const itens = iaValidarItens(parsed.itens, doEscalao);
   if (!itens.length) throw new Error("A IA não devolveu exercícios válidos. Tenta outra vez.");
-  const itensGR = comGR ? iaValidarItens(parsed.itens_gr, exerciciosGR) : [];
+  const itensGR = exerciciosGR.length ? iaValidarItens(parsed.itens_gr, exerciciosGR) : [];
 
   const notas = (parsed.resumo ? parsed.resumo.toString().trim() + "\n\n" : "") +
     `🤖 Gerado por IA${foco ? " · foco: " + foco : ""}${n > 0 ? " · " + n + " jog." : ""}${itensGR.length ? " · 🧤 com GR" : ""} · ${modelo}`;
