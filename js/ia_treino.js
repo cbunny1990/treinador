@@ -3,7 +3,7 @@
 // A chave vive em localStorage (nunca no backup exportado nem no repo). Gerar precisa de net; o treino
 // gerado grava-se como um treino normal (editável) e usa-se offline.
 
-const IA_MODELO_DEFAULT = "google/gemini-3-flash";
+const IA_MODELO_DEFAULT = "meta-llama/llama-3.3-70b-instruct:free";
 const IA_DURACAO_TOTAL = 90;
 
 // Esqueleto pedagógico por escalão: blocos com minutos-alvo (somam 90) e categorias sugeridas.
