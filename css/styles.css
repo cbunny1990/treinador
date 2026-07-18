@@ -19,7 +19,7 @@ body {
   background: var(--slate-50);
   color: var(--slate-800);
   min-height: 100vh;
-  padding-bottom: 76px;
+  padding-bottom: 88px;
   -webkit-tap-highlight-color: transparent;
 }
 .wrap { max-width: 640px; margin: 0 auto; padding: 16px; }
@@ -41,10 +41,10 @@ nav.tab {
   box-shadow: 0 -2px 8px rgba(0,0,0,.06);
   padding-bottom: env(safe-area-inset-bottom);
 }
-nav.tab .wrap { display: grid; grid-template-columns: repeat(4, 1fr); padding: 0; }
+nav.tab .wrap { display: grid; grid-template-columns: repeat(5, 1fr); padding: 0; }
 nav.tab a {
   padding: 8px 0; text-align: center; text-decoration: none; color: var(--slate-500);
-  font-size: 11px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  font-size: 10px; display: flex; flex-direction: column; align-items: center; gap: 2px;
 }
 nav.tab a .ic { font-size: 20px; }
 nav.tab a.ativo { color: var(--grama); font-weight: 600; }
