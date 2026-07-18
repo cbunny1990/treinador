@@ -97,7 +97,11 @@ function iaConstruirPrompt(escalao, foco, exercicios, nJogadores) {
   ).join("\n");
   const estrutura = blocos.map((b) => `- ${b.nome} (~${b.min} min) — categorias ideais: ${b.categorias.join(", ")}`).join("\n");
   const restricaoJog = nJogadores > 0
-    ? `\n\nIMPORTANTE — TENS APENAS ${nJogadores} JOGADOR(ES) DISPONÍVEIS. Escolhe exercícios viáveis com ${nJogadores} e adapta o formato: com poucos jogadores usa 1v1, 2v1, 2v2, rondos, estações e circuitos individuais; NÃO proponhas jogos que exijam muito mais que ${nJogadores} jogadores. Prefere exercícios cujo mínimo de jogadores seja ≤ ${nJogadores}. Na "nota" de cada exercício diz como o adaptaste a ${nJogadores}.`
+    ? `\n\nSÓ TENS ${nJogadores} JOGADOR(ES). A lista de exercícios abaixo JÁ ESTÁ FILTRADA para exercícios reais que funcionam com ${nJogadores}. Regras rígidas:
+- Usa APENAS exercícios da lista (pelo #id). Nunca inventes exercícios nem formatos.
+- NUNCA sugiras substituir jogadores por cones, bonecos, manequins ou "imaginários".
+- NÃO proponhas jogos que precisem de mais de ${nJogadores} jogadores (ex.: nada de 3v3 se só tens ${nJogadores}).
+- Escolhe o exercício REAL mais adequado da lista para cada bloco; se um bloco não tiver opção ideal, usa o mais próximo que funcione mesmo com ${nJogadores}.`
     : "";
   const system =
 `És um treinador experiente de futebol de formação em Portugal (metodologia FPF). Planeias sessões de treino que fazem EVOLUIR as crianças: do lúdico e da técnica individual nos mais novos, para os jogos reduzidos e o jogo com intenção tática nos mais velhos. Adaptas sempre à idade: sub-7/8 mais lúdico e técnico, sub-9/10 mais jogos reduzidos e tomada de decisão. Adaptas SEMPRE ao número real de jogadores disponíveis.
@@ -175,7 +179,13 @@ async function gerarTreinoIA(escalao, foco, nJogadores) {
     n = jogs.filter((j) => escalaoDeJogador(j) === escalao).length;
   }
 
-  const { system, user } = iaConstruirPrompt(escalao, foco, doEscalao, n);
+  // filtra ao nº de jogadores: a IA só vê exercícios que funcionam mesmo com n.
+  // se sobrar muito pouco, manda tudo (senão o treino ficava vazio) — mas com a biblioteca
+  // de poucos-jogadores isto raramente acontece.
+  const cabem = n > 0 ? doEscalao.filter((e) => (e.n_jogadores_min || 1) <= n) : doEscalao;
+  const listaAI = cabem.length >= 5 ? cabem : doEscalao;
+
+  const { system, user } = iaConstruirPrompt(escalao, foco, listaAI, n);
   const txt = await iaChamarOpenRouter(key, modelo, system, user);
   const parsed = iaExtrairJSON(txt);
   const itens = iaValidarItens(parsed.itens, doEscalao);

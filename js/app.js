@@ -7,7 +7,7 @@ const CATEGORIAS = [
 ];
 const POSICOES = ["Guarda-redes", "Defesa", "Médio", "Avançado"];
 const PES = ["Direito", "Esquerdo", "Ambos"];
-const ESTADOS = [["presente", "P", "p"], ["ausente", "A", "a"], ["justificado", "J", "j"]];
+const ESTADOS = [["presente", "P", "p"], ["ausente", "A", "a"]];
 const FASES = ["Aquecimento", "Técnica", "Jogo reduzido", "Jogo final"];
 
 // ---------- utilidades ----------
@@ -409,7 +409,7 @@ async function viewTreinoDetalhe(id) {
     .sort((a, b) => a.nome.localeCompare(b.nome));
   const presencas = await DB.porIndice("presencas", "treino_id", Number(id));
   const presMap = Object.fromEntries(presencas.map((p) => [p.jogador_id, p.estado]));
-  const cont = { presente: 0, ausente: 0, justificado: 0 };
+  const cont = { presente: 0, ausente: 0 };
   presencas.forEach((p) => { if (cont[p.estado] != null) cont[p.estado]++; });
 
   const itensHtml = itens.length ? `<ol class="list" style="margin-bottom:12px">${itens.map((it, i) => {
@@ -456,8 +456,8 @@ async function viewTreinoDetalhe(id) {
     </section>
     <section>
       <div class="head"><h2>Presenças</h2>
-        <span class="muted count"><span class="p">${cont.presente}P</span> · <span class="a">${cont.ausente}A</span> · <span class="j">${cont.justificado}J</span></span></div>
-      <p class="muted" style="font-size:12px;margin-bottom:8px">P = Presente · A = Ausente · J = Justificado</p>
+        <span class="muted count"><span class="p">${cont.presente}P</span> · <span class="a">${cont.ausente}A</span></span></div>
+      <p class="muted" style="font-size:12px;margin-bottom:8px">P = Presente · A = Ausente</p>
       ${presHtml}
     </section>
     <div class="divider"><button class="btn-link red" data-action="apagar-treino" data-id="${t.id}">Apagar treino</button></div>`);
