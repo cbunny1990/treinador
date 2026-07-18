@@ -363,17 +363,18 @@ async function viewTreinos() {
 // Gerar treino de 90 min por IA (escalão + foco opcional).
 async function viewGerarTreino() {
   const temChave = !!iaConfig().key;
+  const focoSug = dificuldadesRecentes(await DB.listar("treinos"), await DB.listar("jogos"), ESCALOES[0]).top || "";
   setView("Gerar treino (IA)", `
     <p class="muted" style="margin-bottom:16px">A IA monta um treino de 90 min a partir da tua biblioteca de exercícios, adaptado ao escalão. Precisa de internet; depois fica gravado e usável offline.</p>
     ${temChave ? "" : `<div class="card" style="margin-bottom:16px;border-color:var(--amber)">
       ⚠️ Falta a chave OpenRouter. Configura em <a href="#/dados">Dados → IA</a> antes de gerar.</div>`}
     <form class="stack" data-form="gerar-treino">
-      <label class="field"><span>Escalão *</span><select name="escalao" required>
+      <label class="field"><span>Escalão *</span><select name="escalao" required data-action="escalao-gerar">
         ${ESCALOES.map((e) => `<option>${e}</option>`).join("")}</select></label>
       <label class="field"><span>Foco (opcional)</span>
-        <input name="foco" placeholder="ex.: passe, condução, finalização…" list="focos-sugeridos">
-        <datalist id="focos-sugeridos">${CATEGORIAS.map((c) => `<option value="${c}">`).join("")}</datalist>
-        <div class="hint">Vazio → a IA equilibra as categorias.</div></label>
+        <input name="foco" placeholder="ex.: passe, condução, finalização…" list="focos-sugeridos" value="${esc(focoSug)}">
+        <datalist id="focos-sugeridos">${[...DIFICULDADES, ...CATEGORIAS].map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
+        <div class="hint">${focoSug ? "Sugerido pela última dificuldade registada. " : ""}Vazio → a IA equilibra e usa as dificuldades recentes.</div></label>
       <label class="field"><span>Nº de jogadores (opcional)</span>
         <input type="number" name="n_jogadores" min="1" placeholder="automático (conta o plantel do escalão)">
         <div class="hint">A IA adapta os exercícios ao número que tens. Vazio → conta o teu plantel.</div></label>
@@ -409,6 +410,19 @@ function durItem(item, ex) {
   if (item.duracao_min != null) return item.duracao_min;
   if (ex && ex.duracao_min != null) return ex.duracao_min;
   return 0;
+}
+
+// Secção de registo de dificuldades (evolução). store = "treinos" | "jogos".
+function secaoDificuldades(store, registo) {
+  const sel = new Set(registo.dificuldades || []);
+  return `<form class="card" data-form="dificuldades" data-store="${store}" data-id="${registo.id}" style="margin-bottom:16px">
+    <h2 style="font-weight:700;margin-bottom:6px">Dificuldades notadas</h2>
+    <p class="muted" style="font-size:12px;margin-bottom:10px">Marca o que correu pior. Isto passa a ser o foco sugerido no próximo treino gerado.</p>
+    <div class="pills" style="margin-bottom:10px">${DIFICULDADES.map((t) =>
+      `<label class="pill">${sel.has(t) ? "✓ " : ""}<input type="checkbox" name="dif" value="${esc(t)}" ${sel.has(t) ? "checked" : ""} style="width:auto;margin-right:6px">${esc(t)}</label>`).join("")}</div>
+    <textarea name="dif_nota" rows="2" placeholder="nota (opcional): ex. perdem a bola na saída">${esc(registo.dif_nota)}</textarea>
+    <div class="actions" style="margin-top:10px"><button class="btn sm" type="submit">Guardar dificuldades</button></div>
+  </form>`;
 }
 
 async function viewTreinoDetalhe(id) {
@@ -489,6 +503,7 @@ async function viewTreinoDetalhe(id) {
       <p class="muted" style="font-size:12px;margin-bottom:8px">P = Presente · A = Ausente</p>
       ${presHtml}
     </section>
+    ${secaoDificuldades("treinos", t)}
     <div class="divider"><button class="btn danger" data-action="apagar-treino" data-id="${t.id}" style="width:100%">🗑️ Apagar treino</button></div>`);
 }
 
@@ -590,6 +605,7 @@ async function viewJogoDetalhe(id) {
       <button class="btn" data-action="partilhar-jogo" data-id="${j.id}" style="width:100%">📲 Partilhar (WhatsApp)</button>
       <button class="btn ghost" data-action="gcal-jogo" data-id="${j.id}" style="width:100%">📅 Adicionar ao Google Calendar</button>
     </div>
+    ${secaoDificuldades("jogos", j)}
     <div class="divider"><button class="btn danger" data-action="apagar-jogo" data-id="${j.id}" style="width:100%">🗑️ Apagar jogo</button></div>`);
 }
 
@@ -673,6 +689,11 @@ app.addEventListener("change", async (ev) => {
   const a = ev.target.dataset.action;
   if (a === "fcat") { state.fcat = ev.target.value || null; viewExercicios(); }
   if (a === "fesc") { state.fesc = ev.target.value || null; viewExercicios(); }
+  if (a === "escalao-gerar") {
+    const top = dificuldadesRecentes(await DB.listar("treinos"), await DB.listar("jogos"), ev.target.value).top || "";
+    const foco = ev.target.closest("form").querySelector('input[name="foco"]');
+    if (foco) foco.value = top;
+  }
   if (a === "importar") { await importar(ev.target.files[0]); }
 });
 
@@ -704,6 +725,13 @@ app.addEventListener("submit", async (ev) => {
     const obj = { data: fd.get("data"), hora: txt(fd.get("hora")), escalao: fd.get("escalao"), notas: txt(fd.get("notas")) };
     const novoId = await salvar("treinos", id, obj);
     return go("#/treinos/" + novoId);
+  }
+  if (tipo === "dificuldades") {
+    const store = form.dataset.store;
+    const reg = await DB.obter(store, id);
+    if (reg) { reg.dificuldades = fd.getAll("dif"); reg.dif_nota = txt(fd.get("dif_nota")); await DB.atualizar(store, reg); }
+    alert("Dificuldades guardadas.");
+    return router();
   }
   if (tipo === "jogo") {
     const obj = { data: fd.get("data"), hora: txt(fd.get("hora")), escalao: fd.get("escalao"),

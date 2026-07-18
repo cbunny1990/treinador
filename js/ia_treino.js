@@ -91,7 +91,13 @@ function iaValidarItens(itensIA, exercicios) {
 }
 
 // ---- prompt ----
-function iaConstruirPrompt(escalao, foco, exercicios, nJogadores, exerciciosGR) {
+function iaConstruirPrompt(escalao, foco, exercicios, nJogadores, exerciciosGR, dificuldades, exerciciosRecentes) {
+  const dif = dificuldades && dificuldades.tags && dificuldades.tags.length
+    ? `\n\nDIFICULDADES RECENTES a trabalhar (dá-lhes prioridade e distribui-as pelos blocos certos): ${dificuldades.tags.join(", ")}${(dificuldades.notas && dificuldades.notas.length) ? ` (notas do treinador: ${dificuldades.notas.join("; ")})` : ""}.`
+    : "";
+  const rep = (exerciciosRecentes && exerciciosRecentes.length)
+    ? `\n\nJá saíram nos últimos treinos — EVITA repetir a maioria, no máximo mantém 1 para consolidar; procura variar: ${exerciciosRecentes.join(", ")}.`
+    : "";
   const blocos = IA_ESQUELETO[escalao] || [];
   const lista = exercicios.map((e) =>
     `#${e.id} | ${e.titulo} | ${e.categoria || "sem categoria"} | ${e.duracao_min || "?"}min | ${e.n_jogadores_min || "?"}-${e.n_jogadores_max || "?"} jog.`
@@ -116,7 +122,7 @@ ${listaGR}`
 `És um treinador experiente de futebol de formação em Portugal (metodologia FPF). Planeias sessões de treino que fazem EVOLUIR as crianças: do lúdico e da técnica individual nos mais novos, para os jogos reduzidos e o jogo com intenção tática nos mais velhos. Adaptas sempre à idade: sub-7/8 mais lúdico e técnico, sub-9/10 mais jogos reduzidos e tomada de decisão. Adaptas SEMPRE ao número real de jogadores disponíveis.
 Respondes SEMPRE e APENAS com um objeto JSON válido, sem texto à volta, sem cercas de código.`;
   const user =
-`Monta um treino de ${IA_DURACAO_TOTAL} minutos para o escalão ${escalao}${foco ? `, com FOCO em: ${foco}` : ""}.${restricaoJog}${blocoGR}
+`Monta um treino de ${IA_DURACAO_TOTAL} minutos para o escalão ${escalao}${foco ? `, com FOCO em: ${foco}` : ""}.${dif}${rep}${restricaoJog}${blocoGR}
 
 Estrutura pedagógica (blocos e minutos-alvo, deve somar ~${IA_DURACAO_TOTAL}):
 ${estrutura}
@@ -144,7 +150,7 @@ async function iaChamarOpenRouter(key, modelo, system, user) {
   const body = JSON.stringify({
     model: modelo,
     messages: [{ role: "system", content: system }, { role: "user", content: user }],
-    temperature: 0.7,
+    temperature: 0.8, // um pouco mais de variedade entre treinos
   });
   const MAX = 4; // ponytail: 4 tentativas com espera crescente resolve o 429 transitório dos free
   let ultimoErro = "";
@@ -199,7 +205,18 @@ async function gerarTreinoIA(escalao, foco, nJogadores) {
   const cabem = n > 0 ? doEscalao.filter((e) => (e.n_jogadores_min || 1) <= n) : doEscalao;
   const listaAI = cabem.length >= 5 ? cabem : doEscalao;
 
-  const { system, user } = iaConstruirPrompt(escalao, foco, listaAI, n, exerciciosGR);
+  // evolução: dificuldades recentes (foco pré-cheio se vazio) + exercícios dos últimos treinos (anti-repetição)
+  const todosTreinos = await DB.listar("treinos");
+  const dificuldades = dificuldadesRecentes(todosTreinos, await DB.listar("jogos"), escalao);
+  if (!foco) foco = dificuldades.top || null;
+  const treinosEsc = todosTreinos.filter((t) => t.escalao === escalao)
+    .sort((a, b) => (a.data < b.data ? 1 : -1)).slice(0, 4);
+  const idsRecentes = new Set();
+  for (const t of treinosEsc)
+    for (const it of await DB.porIndice("treino_itens", "treino_id", t.id)) idsRecentes.add(it.exercicio_id);
+  const exerciciosRecentes = [...idsRecentes].map((eid) => (todos.find((e) => e.id === eid) || {}).titulo).filter(Boolean);
+
+  const { system, user } = iaConstruirPrompt(escalao, foco, listaAI, n, exerciciosGR, dificuldades, exerciciosRecentes);
   const txt = await iaChamarOpenRouter(key, modelo, system, user);
   const parsed = iaExtrairJSON(txt);
   const itens = iaValidarItens(parsed.itens, doEscalao);

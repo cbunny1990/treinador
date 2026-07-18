@@ -137,6 +137,31 @@ function idadeDeDataNasc(dataNascISO) {
   return idade;
 }
 
+// ------- dificuldades (evolução do treino) -------
+// Tags fixas; servem também de "foco" na geração.
+const DIFICULDADES = [
+  "Passe e receção", "Condução / drible", "Finalização", "Jogos reduzidos / decisão",
+  "Defesa / marcação", "Organização / posição", "Condição física", "Guarda-redes",
+  "Coordenação", "Atenção / comportamento",
+];
+
+// Junta treinos+jogos do escalão com dificuldades registadas, ordena por data desc, usa os últimos nUlt.
+// Devolve { tags (por frequência e recência), notas, top }.
+function dificuldadesRecentes(treinos, jogos, escalao, nUlt = 4) {
+  const eventos = [...(treinos || []), ...(jogos || [])]
+    .filter((e) => e.escalao === escalao && (e.dificuldades || []).length)
+    .sort((a, b) => (a.data < b.data ? 1 : a.data > b.data ? -1 : 0))
+    .slice(0, nUlt);
+  const freq = new Map(); // tag -> {n, ordem} (ordem = índice do 1º aparecimento, mais recente = menor)
+  eventos.forEach((e, i) => (e.dificuldades || []).forEach((t) => {
+    const f = freq.get(t) || { n: 0, ordem: i };
+    f.n++; freq.set(t, f);
+  }));
+  const tags = [...freq.entries()].sort((a, b) => b[1].n - a[1].n || a[1].ordem - b[1].ordem).map(([t]) => t);
+  const notas = eventos.map((e) => e.dif_nota).filter(Boolean);
+  return { tags, notas, top: tags[0] || null };
+}
+
 // ------- jogos: resultado, calendário, Google Calendar -------
 function resultadoJogo(j) {
   const gf = j ? j.golos_favor : null, gc = j ? j.golos_contra : null;
@@ -197,4 +222,20 @@ if (typeof window === "undefined" && typeof process !== "undefined") {
   const u2 = googleCalendarUrl({ titulo: "Treino", data: "2026-07-20" });
   assert(u2.includes("20260720%2F20260721"), "all-day fim exclusivo = dia seguinte: " + u2);
   console.log("ok db jogos: resultado V/E/D, eventos ordenados, googleCalendarUrl (hora + all-day)");
+
+  // dificuldadesRecentes: escalão, recência, frequência, nUlt
+  const dr = dificuldadesRecentes(
+    [
+      { escalao: "sub-8", data: "2026-07-01", dificuldades: ["Finalização"], dif_nota: "n1" },
+      { escalao: "sub-8", data: "2026-07-10", dificuldades: ["Passe e receção", "Finalização"] },
+      { escalao: "sub-9", data: "2026-07-15", dificuldades: ["Defesa / marcação"] }, // outro escalão -> ignorado
+    ],
+    [{ escalao: "sub-8", data: "2026-07-12", dificuldades: ["Finalização"], dif_nota: "n2" }],
+    "sub-8", 4);
+  assert(dr.top === "Finalização", "top = mais frequente (Finalização 3x): " + dr.top);
+  assert(dr.tags.includes("Passe e receção") && !dr.tags.includes("Defesa / marcação"), "só tags do escalão certo");
+  assert(dr.notas.length === 2, "junta as notas dos eventos");
+  const dr0 = dificuldadesRecentes([], [], "sub-7");
+  assert(dr0.top === null && dr0.tags.length === 0, "sem dados -> top null");
+  console.log("ok db dificuldadesRecentes: escalão, frequência, recência, top");
 }
