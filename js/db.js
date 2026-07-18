@@ -162,6 +162,14 @@ function dificuldadesRecentes(treinos, jogos, escalao, nUlt = 4) {
   return { tags, notas, top: tags[0] || null };
 }
 
+// Foco sugerido = a 1ª dificuldade registada no ÚLTIMO treino do escalão (o mais recente).
+function focoDoUltimoTreino(treinos, escalao) {
+  const ult = (treinos || [])
+    .filter((t) => t.escalao === escalao && (t.dificuldades || []).length)
+    .sort((a, b) => (a.data < b.data ? 1 : a.data > b.data ? -1 : (b.id || 0) - (a.id || 0)))[0];
+  return ult ? (ult.dificuldades[0] || null) : null;
+}
+
 // ------- jogos: resultado, calendário, Google Calendar -------
 function resultadoJogo(j) {
   const gf = j ? j.golos_favor : null, gc = j ? j.golos_contra : null;
@@ -238,4 +246,14 @@ if (typeof window === "undefined" && typeof process !== "undefined") {
   const dr0 = dificuldadesRecentes([], [], "sub-7");
   assert(dr0.top === null && dr0.tags.length === 0, "sem dados -> top null");
   console.log("ok db dificuldadesRecentes: escalão, frequência, recência, top");
+
+  // focoDoUltimoTreino: 1ª dificuldade do treino mais recente do escalão
+  assert(focoDoUltimoTreino([
+    { id: 1, escalao: "sub-8", data: "2026-07-10", dificuldades: ["Passe e receção"] },
+    { id: 2, escalao: "sub-8", data: "2026-07-16", dificuldades: ["Finalização", "Defesa / marcação"] },
+    { id: 3, escalao: "sub-9", data: "2026-07-18", dificuldades: ["Coordenação"] },
+  ], "sub-8") === "Finalização", "foco = 1ª dificuldade do último treino do escalão");
+  assert(focoDoUltimoTreino([{ id: 5, escalao: "sub-8", data: "2026-07-20" }], "sub-8") === null, "treino sem dificuldades -> null");
+  assert(focoDoUltimoTreino([], "sub-8") === null, "sem treinos -> null");
+  console.log("ok db focoDoUltimoTreino: dificuldade do último treino");
 }

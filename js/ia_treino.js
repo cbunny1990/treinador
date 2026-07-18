@@ -208,7 +208,7 @@ async function gerarTreinoIA(escalao, foco, nJogadores, data, hora) {
   // evolução: dificuldades recentes (foco pré-cheio se vazio) + exercícios dos últimos treinos (anti-repetição)
   const todosTreinos = await DB.listar("treinos");
   const dificuldades = dificuldadesRecentes(todosTreinos, await DB.listar("jogos"), escalao);
-  if (!foco) foco = dificuldades.top || null;
+  if (!foco) foco = focoDoUltimoTreino(todosTreinos, escalao) || null; // foco sugerido = dificuldade do último treino
   const treinosEsc = todosTreinos.filter((t) => t.escalao === escalao)
     .sort((a, b) => (a.data < b.data ? 1 : -1)).slice(0, 4);
   const idsRecentes = new Set();

@@ -363,7 +363,7 @@ async function viewTreinos() {
 // Gerar treino de 90 min por IA (escalão + foco opcional).
 async function viewGerarTreino() {
   const temChave = !!iaConfig().key;
-  const focoSug = dificuldadesRecentes(await DB.listar("treinos"), await DB.listar("jogos"), ESCALOES[0]).top || "";
+  const focoSug = focoDoUltimoTreino(await DB.listar("treinos"), ESCALOES[0]) || "";
   setView("Gerar treino (IA)", `
     <p class="muted" style="margin-bottom:16px">A IA monta um treino de 90 min a partir da tua biblioteca de exercícios, adaptado ao escalão. Precisa de internet; depois fica gravado e usável offline.</p>
     ${temChave ? "" : `<div class="card" style="margin-bottom:16px;border-color:var(--amber)">
@@ -696,7 +696,7 @@ app.addEventListener("change", async (ev) => {
   if (a === "fcat") { state.fcat = ev.target.value || null; viewExercicios(); }
   if (a === "fesc") { state.fesc = ev.target.value || null; viewExercicios(); }
   if (a === "escalao-gerar") {
-    const top = dificuldadesRecentes(await DB.listar("treinos"), await DB.listar("jogos"), ev.target.value).top || "";
+    const top = focoDoUltimoTreino(await DB.listar("treinos"), ev.target.value) || "";
     const foco = ev.target.closest("form").querySelector('[name="foco"]');
     if (foco) foco.value = top;
   }
