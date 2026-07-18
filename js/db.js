@@ -150,7 +150,7 @@ function resultadoJogo(j) {
 // Junta treinos e jogos numa lista ordenada por data (e hora), ascendente.
 function eventosCalendario(treinos, jogos) {
   const evs = [];
-  for (const t of (treinos || [])) evs.push({ tipo: "treino", data: t.data, hora: null, ref: t });
+  for (const t of (treinos || [])) evs.push({ tipo: "treino", data: t.data, hora: t.hora || null, ref: t });
   for (const j of (jogos || [])) evs.push({ tipo: "jogo", data: j.data, hora: j.hora || null, ref: j });
   return evs.sort((a, b) =>
     a.data !== b.data ? (a.data < b.data ? -1 : 1)

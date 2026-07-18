@@ -391,7 +391,10 @@ async function viewTreinoForm(id) {
   const hoje = new Date().toISOString().slice(0, 10);
   setView(id ? "Editar treino" : "Novo treino", `
     <form class="stack" data-form="treino" data-id="${id || ""}">
-      <label class="field"><span>Data *</span><input type="date" name="data" required value="${esc(t?.data) || hoje}"></label>
+      <div class="grid2">
+        <label class="field"><span>Data *</span><input type="date" name="data" required value="${esc(t?.data) || hoje}"></label>
+        <label class="field"><span>Hora</span><input type="time" name="hora" value="${esc(t?.hora)}"></label>
+      </div>
       <label class="field"><span>Escalão *</span><select name="escalao" required>
         ${ESCALOES.map((e) => `<option ${t?.escalao === e ? "selected" : ""}>${e}</option>`).join("")}</select></label>
       <label class="field"><span>Notas</span><textarea name="notas" rows="3">${esc(t?.notas)}</textarea></label>
@@ -466,9 +469,9 @@ async function viewTreinoDetalhe(id) {
 
   setView("Treino", `
     <div class="card" style="margin-bottom:16px">
-      <div class="row"><div class="grow"><div style="font-weight:700;font-size:18px">${fmtData(t.data)}</div><div class="muted">${esc(t.escalao)}</div></div>
+      <div class="row"><div class="grow"><div style="font-weight:700;font-size:18px">${fmtData(t.data)}${t.hora ? " · " + esc(t.hora) : ""}</div><div class="muted">${esc(t.escalao)}</div></div>
         <a class="btn-link" href="#/treinos/${t.id}/editar">Editar</a></div>
-      ${t.notas ? `<p class="muted" style="margin-top:8px;white-space:pre-line">${esc(t.notas)}</p>` : ""}
+      ${notasLimpas(t.notas) ? `<p class="muted" style="margin-top:8px;white-space:pre-line">${esc(notasLimpas(t.notas))}</p>` : ""}
       <div style="display:flex;gap:8px;margin-top:12px">
         <button class="btn" data-action="partilhar-treino" data-id="${t.id}" style="flex:1">📲 Partilhar</button>
         <button class="btn ghost" data-action="gcal-treino" data-id="${t.id}" style="flex:1">📅 Google Calendar</button>
@@ -505,7 +508,7 @@ async function viewCalendario() {
       const t = e.ref;
       return `<li><a class="row card" href="#/treinos/${t.id}">${cabeca("var(--slate-400)")}
         <span class="grow"><span class="t">🗓️ Treino · ${esc(t.escalao)}</span>
-        <span class="s">${esc((t.notas || "").split("\n")[0]) || "sessão"}</span></span>
+        <span class="s">${t.hora ? esc(t.hora) + " · " : ""}${esc((t.notas || "").split("\n")[0]) || "sessão"}</span></span>
         <span class="chev">›</span></a></li>`;
     }
     const j = e.ref, r = resultadoJogo(j);
@@ -698,7 +701,7 @@ app.addEventListener("submit", async (ev) => {
     return go("#/exercicios/" + novoId);
   }
   if (tipo === "treino") {
-    const obj = { data: fd.get("data"), escalao: fd.get("escalao"), notas: txt(fd.get("notas")) };
+    const obj = { data: fd.get("data"), hora: txt(fd.get("hora")), escalao: fd.get("escalao"), notas: txt(fd.get("notas")) };
     const novoId = await salvar("treinos", id, obj);
     return go("#/treinos/" + novoId);
   }
@@ -818,7 +821,7 @@ function textoTreino(t, itens, itensGR, exMap, total, totalGR) {
     ? `\n\n🧤 Guarda-redes (treino individual) — ${totalGR} min:\n${itensGR.map((it, i) => linhaTreino(it, i, exMap)).join("\n")}`
     : "";
   const resumo = notasLimpas(t.notas);
-  return `⚽ Treino ${t.escalao} — ${fmtData(t.data)}\n${resumo ? resumo + "\n" : ""}\nPlano (${total} min):\n${equipa}${gr}\n`;
+  return `🗓️ Treino ${t.escalao} — ${fmtData(t.data)}${t.hora ? " " + t.hora : ""}\n${resumo ? resumo + "\n" : ""}\nPlano (${total} min):\n${equipa}${gr}\n`;
 }
 async function partilharTreino(id) {
   const t = await DB.obter("treinos", id);
@@ -840,7 +843,7 @@ async function partilharTreino(id) {
 async function gcalTreino(id) {
   const t = await DB.obter("treinos", id);
   if (!t) return;
-  window.open(googleCalendarUrl({ titulo: `🗓️ Treino ${t.escalao}`, data: t.data, detalhes: notasLimpas(t.notas) }), "_blank");
+  window.open(googleCalendarUrl({ titulo: `🗓️ Treino ${t.escalao}`, data: t.data, hora: t.hora, detalhes: notasLimpas(t.notas) }), "_blank");
 }
 
 // ---------- partilhar jogo (WhatsApp + Google Calendar) ----------

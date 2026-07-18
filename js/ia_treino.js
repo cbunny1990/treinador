@@ -206,8 +206,7 @@ async function gerarTreinoIA(escalao, foco, nJogadores) {
   if (!itens.length) throw new Error("A IA não devolveu exercícios válidos. Tenta outra vez.");
   const itensGR = exerciciosGR.length ? iaValidarItens(parsed.itens_gr, exerciciosGR) : [];
 
-  const notas = (parsed.resumo ? parsed.resumo.toString().trim() + "\n\n" : "") +
-    `🤖 Gerado por IA${foco ? " · foco: " + foco : ""}${n > 0 ? " · " + n + " jog." : ""}${itensGR.length ? " · 🧤 com GR" : ""} · ${modelo}`;
+  const notas = parsed.resumo ? parsed.resumo.toString().trim() : null; // só o resumo pedagógico (sem marca de IA)
   const treinoId = await DB.criar("treinos", { data: new Date().toISOString().slice(0, 10), escalao, notas });
   for (const it of itens) await DB.criar("treino_itens", { treino_id: treinoId, parte: "equipa", ...it });
   for (const it of itensGR) await DB.criar("treino_itens", { treino_id: treinoId, parte: "gr", ...it });
