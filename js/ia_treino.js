@@ -3,7 +3,7 @@
 // A chave vive em localStorage (nunca no backup exportado nem no repo). Gerar precisa de net; o treino
 // gerado grava-se como um treino normal (editável) e usa-se offline.
 
-const IA_MODELO_DEFAULT = "meta-llama/llama-3.3-70b-instruct:free";
+const IA_MODELO_DEFAULT = "nvidia/nemotron-3-super-120b-a12b:free";
 const IA_DURACAO_TOTAL = 90;
 
 // Esqueleto pedagógico por escalão: blocos com minutos-alvo (somam 90) e categorias sugeridas.
@@ -90,22 +90,25 @@ function iaValidarItens(itensIA, exercicios) {
 }
 
 // ---- prompt ----
-function iaConstruirPrompt(escalao, foco, exercicios) {
+function iaConstruirPrompt(escalao, foco, exercicios, nJogadores) {
   const blocos = IA_ESQUELETO[escalao] || [];
   const lista = exercicios.map((e) =>
     `#${e.id} | ${e.titulo} | ${e.categoria || "sem categoria"} | ${e.duracao_min || "?"}min | ${e.n_jogadores_min || "?"}-${e.n_jogadores_max || "?"} jog.`
   ).join("\n");
   const estrutura = blocos.map((b) => `- ${b.nome} (~${b.min} min) — categorias ideais: ${b.categorias.join(", ")}`).join("\n");
+  const restricaoJog = nJogadores > 0
+    ? `\n\nIMPORTANTE — TENS APENAS ${nJogadores} JOGADOR(ES) DISPONÍVEIS. Escolhe exercícios viáveis com ${nJogadores} e adapta o formato: com poucos jogadores usa 1v1, 2v1, 2v2, rondos, estações e circuitos individuais; NÃO proponhas jogos que exijam muito mais que ${nJogadores} jogadores. Prefere exercícios cujo mínimo de jogadores seja ≤ ${nJogadores}. Na "nota" de cada exercício diz como o adaptaste a ${nJogadores}.`
+    : "";
   const system =
-`És um treinador experiente de futebol de formação em Portugal (metodologia FPF). Planeias sessões de treino que fazem EVOLUIR as crianças: do lúdico e da técnica individual nos mais novos, para os jogos reduzidos e o jogo com intenção tática nos mais velhos. Adaptas sempre à idade: sub-7/8 mais lúdico e técnico, sub-9/10 mais jogos reduzidos e tomada de decisão.
+`És um treinador experiente de futebol de formação em Portugal (metodologia FPF). Planeias sessões de treino que fazem EVOLUIR as crianças: do lúdico e da técnica individual nos mais novos, para os jogos reduzidos e o jogo com intenção tática nos mais velhos. Adaptas sempre à idade: sub-7/8 mais lúdico e técnico, sub-9/10 mais jogos reduzidos e tomada de decisão. Adaptas SEMPRE ao número real de jogadores disponíveis.
 Respondes SEMPRE e APENAS com um objeto JSON válido, sem texto à volta, sem cercas de código.`;
   const user =
-`Monta um treino de ${IA_DURACAO_TOTAL} minutos para o escalão ${escalao}${foco ? `, com FOCO em: ${foco}` : ""}.
+`Monta um treino de ${IA_DURACAO_TOTAL} minutos para o escalão ${escalao}${foco ? `, com FOCO em: ${foco}` : ""}.${restricaoJog}
 
 Estrutura pedagógica (blocos e minutos-alvo, deve somar ~${IA_DURACAO_TOTAL}):
 ${estrutura}
 
-Escolhe exercícios EXCLUSIVAMENTE desta biblioteca (usa o número #id). NÃO inventes exercícios nem uses ids fora da lista. Para cada bloco escolhe 1 exercício adequado à idade e ao foco; ajusta a duração para o total dar ~${IA_DURACAO_TOTAL} min.
+Escolhe exercícios EXCLUSIVAMENTE desta biblioteca (usa o número #id). NÃO inventes exercícios nem uses ids fora da lista. Para cada bloco escolhe 1 exercício adequado à idade, ao foco e ao número de jogadores; ajusta a duração para o total dar ~${IA_DURACAO_TOTAL} min.
 
 Biblioteca disponível (#id | título | categoria | duração-base | jogadores):
 ${lista}
@@ -153,7 +156,7 @@ async function iaChamarOpenRouter(key, modelo, system, user) {
 }
 
 // ---- orquestração: gera e grava o treino, devolve o id ----
-async function gerarTreinoIA(escalao, foco) {
+async function gerarTreinoIA(escalao, foco, nJogadores) {
   if (!IA_ESQUELETO[escalao]) throw new Error("escalão inválido");
   const { key, modelo } = iaConfig();
   if (!key) throw new Error("Falta a chave OpenRouter (Dados → IA).");
@@ -165,14 +168,21 @@ async function gerarTreinoIA(escalao, foco) {
   if (doEscalao.length < 3)
     throw new Error(`Poucos exercícios para ${escalao}. Carrega a biblioteca-base (Dados → biblioteca).`);
 
-  const { system, user } = iaConstruirPrompt(escalao, foco, doEscalao);
+  // nº de jogadores: usa o indicado; se vazio, conta o plantel do escalão
+  let n = Number(nJogadores);
+  if (!Number.isFinite(n) || n <= 0) {
+    const jogs = await DB.listar("jogadores");
+    n = jogs.filter((j) => escalaoDeJogador(j) === escalao).length;
+  }
+
+  const { system, user } = iaConstruirPrompt(escalao, foco, doEscalao, n);
   const txt = await iaChamarOpenRouter(key, modelo, system, user);
   const parsed = iaExtrairJSON(txt);
   const itens = iaValidarItens(parsed.itens, doEscalao);
   if (!itens.length) throw new Error("A IA não devolveu exercícios válidos. Tenta outra vez.");
 
   const notas = (parsed.resumo ? parsed.resumo.toString().trim() + "\n\n" : "") +
-    `🤖 Gerado por IA${foco ? " · foco: " + foco : ""} · ${modelo}`;
+    `🤖 Gerado por IA${foco ? " · foco: " + foco : ""}${n > 0 ? " · " + n + " jog." : ""} · ${modelo}`;
   const treinoId = await DB.criar("treinos", { data: new Date().toISOString().slice(0, 10), escalao, notas });
   for (const it of itens) await DB.criar("treino_itens", { treino_id: treinoId, ...it });
   return treinoId;

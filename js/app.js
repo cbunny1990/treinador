@@ -363,6 +363,9 @@ async function viewGerarTreino() {
         <input name="foco" placeholder="ex.: passe, condução, finalização…" list="focos-sugeridos">
         <datalist id="focos-sugeridos">${CATEGORIAS.map((c) => `<option value="${c}">`).join("")}</datalist>
         <div class="hint">Vazio → a IA equilibra as categorias.</div></label>
+      <label class="field"><span>Nº de jogadores (opcional)</span>
+        <input type="number" name="n_jogadores" min="1" placeholder="automático (conta o plantel do escalão)">
+        <div class="hint">A IA adapta os exercícios ao número que tens. Vazio → conta o teu plantel.</div></label>
       <div class="actions">
         <button class="btn" type="submit" ${temChave ? "" : "disabled"}>🤖 Gerar treino</button>
         <a class="btn ghost" href="#/treinos">Cancelar</a>
@@ -454,6 +457,7 @@ async function viewTreinoDetalhe(id) {
     <section>
       <div class="head"><h2>Presenças</h2>
         <span class="muted count"><span class="p">${cont.presente}P</span> · <span class="a">${cont.ausente}A</span> · <span class="j">${cont.justificado}J</span></span></div>
+      <p class="muted" style="font-size:12px;margin-bottom:8px">P = Presente · A = Ausente · J = Justificado</p>
       ${presHtml}
     </section>
     <div class="divider"><button class="btn-link red" data-action="apagar-treino" data-id="${t.id}">Apagar treino</button></div>`);
@@ -589,7 +593,7 @@ app.addEventListener("submit", async (ev) => {
     btn.disabled = true; btn.textContent = "🤖 A gerar… (pode demorar uns segundos)";
     erroEl.style.display = "none";
     try {
-      const treinoId = await gerarTreinoIA(fd.get("escalao"), txt(fd.get("foco")));
+      const treinoId = await gerarTreinoIA(fd.get("escalao"), txt(fd.get("foco")), num(fd.get("n_jogadores")));
       return go("#/treinos/" + treinoId);
     } catch (e) {
       erroEl.textContent = "Erro: " + e.message; erroEl.style.display = "block";
