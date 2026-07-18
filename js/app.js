@@ -53,6 +53,7 @@ async function router() {
     }
     if (p[0] === "treinos") {
       if (p[1] === "novo") return viewTreinoForm();
+      if (p[1] === "gerar") return viewGerarTreino();
       if (p[1] && p[2] === "editar") return viewTreinoForm(p[1]);
       if (p[1]) return viewTreinoDetalhe(p[1]);
       return viewTreinos();
@@ -344,7 +345,30 @@ async function viewTreinos() {
   }).join("")}</ul>` : `<div class="empty"><div class="big">🗓️</div>Ainda sem treinos.
       <div><a class="btn-link" href="#/treinos/novo">Planear o primeiro</a></div></div>`;
   setView("Treinos", `
-    <div class="head"><span class="muted">${treinos.length} treino(s)</span><a class="btn sm" href="#/treinos/novo">+ Novo</a></div>${rows}`);
+    <div class="head"><span class="muted">${treinos.length} treino(s)</span>
+      <span style="display:flex;gap:8px"><a class="btn sm ghost" href="#/treinos/gerar">🤖 Gerar</a><a class="btn sm" href="#/treinos/novo">+ Novo</a></span></div>${rows}`);
+}
+
+// Gerar treino de 90 min por IA (escalão + foco opcional).
+async function viewGerarTreino() {
+  const temChave = !!iaConfig().key;
+  setView("Gerar treino (IA)", `
+    <p class="muted" style="margin-bottom:16px">A IA monta um treino de 90 min a partir da tua biblioteca de exercícios, adaptado ao escalão. Precisa de internet; depois fica gravado e usável offline.</p>
+    ${temChave ? "" : `<div class="card" style="margin-bottom:16px;border-color:var(--amber)">
+      ⚠️ Falta a chave OpenRouter. Configura em <a href="#/dados">Dados → IA</a> antes de gerar.</div>`}
+    <form class="stack" data-form="gerar-treino">
+      <label class="field"><span>Escalão *</span><select name="escalao" required>
+        ${ESCALOES.map((e) => `<option>${e}</option>`).join("")}</select></label>
+      <label class="field"><span>Foco (opcional)</span>
+        <input name="foco" placeholder="ex.: passe, condução, finalização…" list="focos-sugeridos">
+        <datalist id="focos-sugeridos">${CATEGORIAS.map((c) => `<option value="${c}">`).join("")}</datalist>
+        <div class="hint">Vazio → a IA equilibra as categorias.</div></label>
+      <div class="actions">
+        <button class="btn" type="submit" ${temChave ? "" : "disabled"}>🤖 Gerar treino</button>
+        <a class="btn ghost" href="#/treinos">Cancelar</a>
+      </div>
+      <p class="muted iaerro" style="color:var(--red);display:none"></p>
+    </form>`);
 }
 
 async function viewTreinoForm(id) {
@@ -390,7 +414,7 @@ async function viewTreinoDetalhe(id) {
     const dur = it.duracao_min != null ? it.duracao_min : (ex && ex.duracao_min != null ? ex.duracao_min : "—");
     return `<li class="card item">
       <span class="num">${i + 1}</span>
-      <span class="grow">${ex ? `<a class="t" href="#/exercicios/${ex.id}" style="text-decoration:none;color:inherit">${esc(ex.titulo)}</a><span class="s">${esc(ex.categoria) || "sem categoria"}</span>` : `<span class="t" style="color:var(--slate-400)">(exercício apagado)</span>`}</span>
+      <span class="grow">${ex ? `<a class="t" href="#/exercicios/${ex.id}" style="text-decoration:none;color:inherit">${esc(ex.titulo)}</a><span class="s">${esc(it.bloco || ex.categoria || "sem categoria")}</span>${it.nota ? `<span class="s" style="color:var(--slate-400);font-style:italic">${esc(it.nota)}</span>` : ""}` : `<span class="t" style="color:var(--slate-400)">(exercício apagado)</span>`}</span>
       <span class="dur">${dur}′</span>
       <span class="reorder">
         <button data-action="mover" data-item="${it.id}" data-dir="cima" ${i === 0 ? "disabled" : ""}>▲</button>
@@ -457,6 +481,16 @@ async function viewDados() {
       <h2 style="font-weight:700;margin-bottom:8px">Biblioteca de formação</h2>
       <p class="muted" style="margin-bottom:12px">Exercícios prontos para os sub-7 a sub-10 (jogos reduzidos, condução, passe, lúdicos…). Adicionar não apaga nem substitui os teus.</p>
       <button class="btn ghost" data-action="carregar-base" style="width:100%">📚 Adicionar biblioteca-base de exercícios</button>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2 style="font-weight:700;margin-bottom:8px">IA — gerar treinos</h2>
+      <p class="muted" style="margin-bottom:12px">A chave fica só neste dispositivo (nunca no backup nem online). Cria uma em <b>openrouter.ai</b>. Cada treino gerado custa cêntimos.</p>
+      <form class="stack" data-form="ia-config">
+        <label class="field"><span>Chave OpenRouter</span>
+          <input type="password" name="key" placeholder="${iaConfig().key ? "•••••••• (guardada)" : "sk-or-..."}" autocomplete="off"></label>
+        <label class="field"><span>Modelo</span><input name="modelo" value="${esc(iaConfig().modelo)}"></label>
+        <button class="btn" type="submit" style="width:100%">Guardar definições de IA</button>
+      </form>
     </div>`);
 }
 
@@ -543,6 +577,25 @@ app.addEventListener("submit", async (ev) => {
     const ordem = itens.reduce((m, it) => Math.max(m, it.ordem), -1) + 1;
     await DB.criar("treino_itens", { treino_id: treinoId, exercicio_id: num(fd.get("exercicio_id")), ordem, duracao_min: num(fd.get("duracao_min")) });
     return router();
+  }
+  if (tipo === "ia-config") {
+    iaGuardarConfig(txt(fd.get("key")), fd.get("modelo")); // key vazia -> não sobrescreve a guardada
+    alert("Definições de IA guardadas.");
+    return viewDados();
+  }
+  if (tipo === "gerar-treino") {
+    const btn = form.querySelector('button[type="submit"]');
+    const erroEl = form.querySelector(".iaerro");
+    btn.disabled = true; btn.textContent = "🤖 A gerar… (pode demorar uns segundos)";
+    erroEl.style.display = "none";
+    try {
+      const treinoId = await gerarTreinoIA(fd.get("escalao"), txt(fd.get("foco")));
+      return go("#/treinos/" + treinoId);
+    } catch (e) {
+      erroEl.textContent = "Erro: " + e.message; erroEl.style.display = "block";
+      btn.disabled = false; btn.textContent = "🤖 Gerar treino";
+    }
+    return;
   }
 });
 
