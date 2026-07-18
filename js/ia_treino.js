@@ -120,25 +120,36 @@ Devolve JSON exatamente com este formato:
   return { system, user };
 }
 
-// ---- chamada OpenRouter ----
+// ---- chamada OpenRouter (com retry no 429: modelos free saturam a segundos) ----
 async function iaChamarOpenRouter(key, modelo, system, user) {
-  const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: modelo,
-      messages: [{ role: "system", content: system }, { role: "user", content: user }],
-      temperature: 0.7,
-    }),
+  const body = JSON.stringify({
+    model: modelo,
+    messages: [{ role: "system", content: system }, { role: "user", content: user }],
+    temperature: 0.7,
   });
-  if (!resp.ok) {
+  const MAX = 4; // ponytail: 4 tentativas com espera crescente resolve o 429 transitório dos free
+  let ultimoErro = "";
+  for (let t = 1; t <= MAX; t++) {
+    const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
+      body,
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      const txt = data?.choices?.[0]?.message?.content;
+      if (!txt) throw new Error("resposta da IA sem conteúdo");
+      return txt;
+    }
     let det = ""; try { det = (await resp.json())?.error?.message || ""; } catch (_) {}
-    throw new Error(`OpenRouter ${resp.status}${det ? ": " + det : ""}`);
+    ultimoErro = `OpenRouter ${resp.status}${det ? ": " + det : ""}`;
+    if (resp.status === 429 && t < MAX) {
+      await new Promise((r) => setTimeout(r, t * 3000)); // 3s, 6s, 9s
+      continue;
+    }
+    break; // erro não-429, ou esgotou as tentativas
   }
-  const data = await resp.json();
-  const txt = data?.choices?.[0]?.message?.content;
-  if (!txt) throw new Error("resposta da IA sem conteúdo");
-  return txt;
+  throw new Error(ultimoErro + (ultimoErro.startsWith("OpenRouter 429") ? " (modelo free ocupado; tenta outra vez ou muda de modelo)" : ""));
 }
 
 // ---- orquestração: gera e grava o treino, devolve o id ----
