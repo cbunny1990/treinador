@@ -33,6 +33,33 @@ function fmtData(iso) {
 }
 const state = { fj: null, fcat: null, fesc: null }; // filtros
 
+// Foto do jogador: reduz a 256px e guarda como dataURL JPEG no próprio registo do jogador
+// (sem store novo, sem migração). ~15 KB cada; entra no backup exportado.
+function fotoRedimensionar(file, max = 256) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const escala = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * escala);
+      c.height = Math.round(img.height * escala);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL("image/jpeg", 0.72));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("imagem inválida")); };
+    img.src = url;
+  });
+}
+// Avatar: foto se existir, senão número/inicial (como era antes).
+function avatarHTML(j, px) {
+  const st = px ? ` style="width:${px}px;height:${px}px;font-size:${Math.round(px * 0.36)}px"` : "";
+  if (j && j.foto) return `<span class="avatar"${st}><img src="${esc(j.foto)}" alt=""></span>`;
+  const ini = j && j.numero != null ? j.numero : ((j && j.nome && j.nome[0]) || "?").toUpperCase();
+  return `<span class="avatar"${st}>${esc(ini)}</span>`;
+}
+
 // ---------- ROUTER ----------
 async function router() {
   const h = (location.hash || "#/").slice(1); // ex: "/jogadores/5/editar"
@@ -102,10 +129,9 @@ async function viewJogadores() {
   const pills = ESCALOES.map((e) =>
     `<button class="pill ${state.fj === e ? "on" : ""}" data-action="fj" data-e="${e}">${e}</button>`).join("");
   const rows = lista.length ? `<ul class="list">${lista.map((j) => {
-    const ini = j.numero != null ? j.numero : (j.nome[0] || "?").toUpperCase();
     const escal = escalaoDeJogador(j) || "sem escalão";
     return `<li><a class="row card" href="#/jogadores/${j.id}">
-      <span class="avatar">${esc(ini)}</span>
+      ${avatarHTML(j)}
       <span class="grow"><span class="t">${esc(j.nome)}</span>
       <span class="s">${escal}${j.posicao ? " · " + esc(j.posicao) : ""}</span></span>
       <span class="chev">›</span></a></li>`;
@@ -122,6 +148,16 @@ async function viewJogadorForm(id) {
   const j = id ? await DB.obter("jogadores", id) : null;
   setView(id ? "Editar jogador" : "Novo jogador", `
     <form class="stack" data-form="jogador" data-id="${id || ""}">
+      <div class="field"><span>Foto</span>
+        <div class="row" style="gap:12px;align-items:center">
+          ${avatarHTML(j, 56)}
+          <input type="file" name="foto" accept="image/*" data-action="foto" style="flex:1;min-width:0">
+        </div>
+        ${j?.foto
+          ? `<label class="hint" style="display:flex;gap:6px;align-items:center;margin-top:6px">
+              <input type="checkbox" name="foto_remover"> Remover a foto atual</label>`
+          : `<div class="hint">Fica só neste dispositivo, dentro do backup que exportas.</div>`}
+      </div>
       <label class="field"><span>Nome *</span><input name="nome" required value="${esc(j?.nome)}"></label>
       <label class="field"><span>Escalão *</span>
         <select name="escalao" required>
@@ -153,11 +189,10 @@ async function viewJogadorDetalhe(id) {
   if (!j) return go("#/jogadores");
   const escal = escalaoDeJogador(j) || "sem escalão";
   const idade = idadeDeDataNasc(j.data_nasc);
-  const ini = j.numero != null ? j.numero : (j.nome[0] || "?").toUpperCase();
   setView(j.nome, `
     <div class="card" style="margin-bottom:16px">
       <div class="row" style="margin-bottom:12px">
-        <span class="avatar" style="width:56px;height:56px;font-size:20px">${esc(ini)}</span>
+        ${avatarHTML(j, 56)}
         <div><div style="font-weight:700;font-size:18px">${esc(j.nome)}</div>
         <div class="muted">${escal}${idade != null ? " · " + idade + " anos" : ""}</div></div>
       </div>
@@ -484,7 +519,7 @@ async function viewTreinoDetalhe(id) {
     const est = presMap[j.id];
     const btns = ESTADOS.map(([e, letra, cls]) =>
       `<button class="pbtn ${est === e ? "on " + cls : ""}" data-action="presenca" data-jog="${j.id}" data-est="${e}">${letra}</button>`).join("");
-    return `<li class="card row"><span class="grow" style="font-weight:500">${esc(j.nome)}</span><span class="pbtns">${btns}</span></li>`;
+    return `<li class="card row">${avatarHTML(j, 32)}<span class="grow" style="font-weight:500">${esc(j.nome)}</span><span class="pbtns">${btns}</span></li>`;
   }).join("")}</ul>` : `<p class="muted">Sem jogadores no escalão ${esc(t.escalao)}. <a class="btn-link" href="#/jogadores/novo">Adiciona ao plantel</a>.</p>`;
 
   setView("Treino", `
@@ -647,6 +682,7 @@ async function viewDados() {
         <label class="field"><span>Modelo</span><input name="modelo" value="${esc(iaConfig().modelo)}"></label>
         <button class="btn" type="submit" style="width:100%">Guardar definições de IA</button>
       </form>
+      <button class="btn ghost" data-action="ia-testar" style="width:100%;margin-top:8px">🔑 Testar chave</button>
     </div>`);
 }
 
@@ -656,6 +692,12 @@ app.addEventListener("click", async (ev) => {
   if (!alvo) return;
   const a = alvo.dataset.action;
   if (a === "fj") { ev.preventDefault(); state.fj = alvo.dataset.e || null; return viewJogadores(); }
+  if (a === "ia-testar") {
+    alvo.disabled = true; alvo.textContent = "🔑 A testar…";
+    try { alert(await iaTestarChave()); } catch (e) { alert("Erro de rede: " + e.message); }
+    alvo.disabled = false; alvo.textContent = "🔑 Testar chave";
+    return;
+  }
   if (a === "apagar-jogador") {
     if (confirm("Apagar este jogador?")) { await apagarJogadorCascata(alvo.dataset.id); go("#/jogadores"); }
   }
@@ -700,6 +742,18 @@ app.addEventListener("change", async (ev) => {
     const foco = ev.target.closest("form").querySelector('[name="foco"]');
     if (foco) foco.value = top;
   }
+  if (a === "foto") {
+    const f = ev.target.files[0];
+    if (!f) return;
+    try {
+      const url = await fotoRedimensionar(f);
+      ev.target.dataset.url = url; // o submit lê daqui (já reduzida)
+      const av = ev.target.closest(".field").querySelector(".avatar");
+      if (av) av.innerHTML = `<img src="${esc(url)}" alt="">`;
+      const rm = ev.target.closest(".field").querySelector('[name="foto_remover"]');
+      if (rm) rm.checked = false;
+    } catch (_) { alert("Não consegui ler essa imagem. Tenta outra."); }
+  }
   if (a === "importar") { await importar(ev.target.files[0]); }
 });
 
@@ -714,8 +768,14 @@ app.addEventListener("submit", async (ev) => {
   const txt = (v) => (v === "" || v == null ? null : v);
 
   if (tipo === "jogador") {
+    // a foto não vem no FormData já reduzida: o handler de change guardou-a em dataset.url.
+    // sem foto nova e sem remoção, preserva a que lá está (senão editar o jogador apagava-a).
+    const atual = id ? await DB.obter("jogadores", id) : null;
+    const inpFoto = form.querySelector('[name="foto"]');
+    const foto = fd.get("foto_remover") ? null : ((inpFoto && inpFoto.dataset.url) || atual?.foto || null);
     const obj = { nome: fd.get("nome"), escalao: fd.get("escalao"), data_nasc: txt(fd.get("data_nasc")),
-      posicao: txt(fd.get("posicao")), pe: txt(fd.get("pe")), numero: num(fd.get("numero")), notas: txt(fd.get("notas")) };
+      posicao: txt(fd.get("posicao")), pe: txt(fd.get("pe")), numero: num(fd.get("numero")), notas: txt(fd.get("notas")),
+      foto };
     const novoId = await salvar("jogadores", id, obj);
     return go("#/jogadores/" + novoId);
   }

@@ -51,6 +51,18 @@ function iaGuardarConfig(key, modelo) {
   localStorage.setItem("ia_modelo", (modelo && modelo.trim()) || IA_MODELO_DEFAULT);
 }
 
+// Testa a chave guardada contra o OpenRouter (endpoint /key: não gasta créditos).
+async function iaTestarChave() {
+  const { key } = iaConfig();
+  if (!key) return "Não há chave guardada. Cola uma e carrega em Guardar primeiro.";
+  const resp = await fetch("https://openrouter.ai/api/v1/key", { headers: { "Authorization": `Bearer ${key}` } });
+  if (resp.status === 401 || resp.status === 403)
+    return `❌ Chave inválida ou revogada (termina em …${key.slice(-4)}).\n\nGera uma nova em openrouter.ai/keys e cola aqui.`;
+  if (!resp.ok) return `❌ OpenRouter ${resp.status}. Tenta outra vez.`;
+  const d = (await resp.json())?.data || {};
+  return `✅ Chave válida (termina em …${key.slice(-4)}).\nUsado: ${d.usage ?? "?"}\nLimite: ${d.limit ?? "sem limite"}`;
+}
+
 // ---- funções puras (testáveis em Node) ----
 function iaSomaEsqueleto(escalao) {
   return (IA_ESQUELETO[escalao] || []).reduce((s, b) => s + b.min, 0);
@@ -168,6 +180,10 @@ async function iaChamarOpenRouter(key, modelo, system, user) {
     }
     let det = ""; try { det = (await resp.json())?.error?.message || ""; } catch (_) {}
     ultimoErro = `OpenRouter ${resp.status}${det ? ": " + det : ""}`;
+    if (resp.status === 401 || resp.status === 403)
+      throw new Error(ultimoErro + " — a chave já não é aceite. Gera uma nova em openrouter.ai/keys e cola em Dados → IA.");
+    if (resp.status === 402)
+      throw new Error(ultimoErro + " — sem créditos/limite diário esgotado no OpenRouter.");
     if (resp.status === 429 && t < MAX) {
       await new Promise((r) => setTimeout(r, t * 3000)); // 3s, 6s, 9s
       continue;
