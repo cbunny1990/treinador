@@ -395,12 +395,12 @@ async function viewTreinos() {
       <span style="display:flex;gap:8px"><a class="btn sm ghost" href="#/treinos/gerar">🤖 Gerar</a><a class="btn sm" href="#/treinos/novo">+ Novo</a></span></div>${rows}`);
 }
 
-// Gerar treino de 90 min por IA (escalão + foco opcional).
+// Gerar treino de 60-75 min por IA (escalão + foco opcional).
 async function viewGerarTreino() {
   const temChave = !!iaConfig().key;
   const focoSug = focoDoUltimoTreino(await DB.listar("treinos"), ESCALOES[0]) || "";
   setView("Gerar treino (IA)", `
-    <p class="muted" style="margin-bottom:16px">A IA monta um treino de 90 min a partir da tua biblioteca de exercícios, adaptado ao escalão. Precisa de internet; depois fica gravado e usável offline.</p>
+    <p class="muted" style="margin-bottom:16px">A IA monta um treino de 60 a 75 min, com no máximo 5 a 6 exercícios (equipa e guarda-redes), a partir da tua biblioteca de exercícios, adaptado ao escalão. Precisa de internet; depois fica gravado e usável offline.</p>
     ${temChave ? "" : `<div class="card" style="margin-bottom:16px;border-color:var(--amber)">
       ⚠️ Falta a chave OpenRouter. Configura em <a href="#/dados">Dados → IA</a> antes de gerar.</div>`}
     <form class="stack" data-form="gerar-treino">
