@@ -71,6 +71,42 @@ function iaSomaEsqueleto(escalao) {
   return (IA_ESQUELETO[escalao] || []).reduce((s, b) => s + b.min, 0);
 }
 
+// Atribui a duração de cada exercício de equipa a partir do esqueleto de blocos, em vez de
+// confiar no valor que a IA propõe (o modelo é pouco fiável a fazer a conta somar certo).
+// No máximo 1 exercício por bloco (corta o excesso); se a IA devolver menos exercícios que
+// blocos, redistribui os minutos em falta pelos que existem para o total continuar a bater
+// certo com o esqueleto (aquecimento continua mais curto, blocos de jogo mais compridos).
+function iaAtribuirDuracoes(itens, blocos) {
+  const n = Math.min(itens.length, blocos.length);
+  itens.length = n; // nunca mais exercícios de equipa que blocos do esqueleto
+  if (n === 0) return itens;
+  const alvoTotal = blocos.reduce((s, b) => s + b.min, 0);
+  const pesos = blocos.slice(0, n).map((b) => b.min);
+  const somaPesos = pesos.reduce((s, w) => s + w, 0);
+  let atribuido = 0;
+  itens.forEach((it, i) => {
+    const dur = i === n - 1
+      ? alvoTotal - atribuido // o último absorve o resto: soma dá sempre exatamente o alvo
+      : Math.max(5, Math.round((pesos[i] / somaPesos) * alvoTotal));
+    it.duracao_min = dur;
+    atribuido += dur;
+  });
+  return itens;
+}
+
+// Treino individual de guarda-redes por defeito, usado quando a IA não devolve "itens_gr"
+// (acontece com modelos free menos obedientes) — garante que o GR nunca fica sem plano.
+function iaFallbackGR(exerciciosGR, max = IA_MAX_EXERCICIOS) {
+  return exerciciosGR.slice(0, max).map((ex, i) => ({
+    exercicio_id: Number(ex.id),
+    ordem: i,
+    duracao_min: ex.duracao_min || 10,
+    bloco: null,
+    nota: null,
+    com_gr: false,
+  }));
+}
+
 // Extrai o objeto JSON da resposta do modelo (tolera cercas ```json e texto à volta).
 function iaExtrairJSON(txt) {
   if (!txt) throw new Error("resposta vazia da IA");
@@ -242,7 +278,9 @@ async function gerarTreinoIA(escalao, foco, nJogadores, data, hora) {
   const parsed = iaExtrairJSON(txt);
   const itens = iaValidarItens(parsed.itens, doEscalao);
   if (!itens.length) throw new Error("A IA não devolveu exercícios válidos. Tenta outra vez.");
-  const itensGR = exerciciosGR.length ? iaValidarItens(parsed.itens_gr, exerciciosGR) : [];
+  iaAtribuirDuracoes(itens, IA_ESQUELETO[escalao]); // duração de cada exercício = minutos-alvo do bloco, não o valor (pouco fiável) da IA
+  let itensGR = exerciciosGR.length ? iaValidarItens(parsed.itens_gr, exerciciosGR) : [];
+  if (!itensGR.length && exerciciosGR.length) itensGR = iaFallbackGR(exerciciosGR); // a IA às vezes não devolve "itens_gr"
 
   const notas = parsed.resumo ? parsed.resumo.toString().trim() : null; // só o resumo pedagógico (sem marca de IA)
   const treinoId = await DB.criar("treinos", { data: data || new Date().toISOString().slice(0, 10), hora: hora || null, escalao, notas });
@@ -279,5 +317,31 @@ if (typeof window === "undefined" && typeof process !== "undefined") {
   const vCap = iaValidarItens(exsMuitos.map((e) => ({ exercicio_id: e.id, duracao_min: 10 })), exsMuitos);
   assert(vCap.length === IA_MAX_EXERCICIOS, `devia cortar no máximo de ${IA_MAX_EXERCICIOS} exercícios, deu ${vCap.length}`);
 
-  console.log(`ok ia_treino: esqueletos=${IA_DURACAO_MIN}-${IA_DURACAO_MAX}min, max=${IA_MAX_EXERCICIOS} exercícios, extrair JSON, validar itens`);
+  // iaAtribuirDuracoes: ignora a duração que a IA propôs (aqui sempre 10, errado de propósito)
+  // e usa os minutos do esqueleto -> soma tem de bater certo com o alvo do escalão.
+  for (const esc of ["sub-7", "sub-8", "sub-9", "sub-10"]) {
+    const blocos = IA_ESQUELETO[esc];
+    const alvo = iaSomaEsqueleto(esc);
+    const itensCompletos = blocos.map((_, i) => ({ exercicio_id: i, duracao_min: 10 }));
+    const r1 = iaAtribuirDuracoes(itensCompletos.map((it) => ({ ...it })), blocos);
+    assert(r1.length === blocos.length, `iaAtribuirDuracoes(${esc}): devia manter ${blocos.length} itens, deu ${r1.length}`);
+    assert(r1.reduce((s, it) => s + it.duracao_min, 0) === alvo, `iaAtribuirDuracoes(${esc}): soma devia ser ${alvo}`);
+    assert(r1[0].duracao_min < r1[2].duracao_min, `iaAtribuirDuracoes(${esc}): aquecimento devia ficar mais curto que o bloco de jogo`);
+
+    const itensAMais = blocos.map((_, i) => ({ exercicio_id: i, duracao_min: 10 })).concat([{ exercicio_id: 99, duracao_min: 10 }]);
+    const r2 = iaAtribuirDuracoes(itensAMais, blocos);
+    assert(r2.length === blocos.length, `iaAtribuirDuracoes(${esc}) com excesso: devia cortar para ${blocos.length}, deu ${r2.length}`);
+
+    const itensAMenos = [{ exercicio_id: 0, duracao_min: 10 }, { exercicio_id: 1, duracao_min: 10 }];
+    const r3 = iaAtribuirDuracoes(itensAMenos, blocos);
+    assert(r3.reduce((s, it) => s + it.duracao_min, 0) === alvo, `iaAtribuirDuracoes(${esc}) com défice: soma devia continuar ${alvo}`);
+  }
+
+  // iaFallbackGR: garante plano de GR mesmo que a IA não devolva "itens_gr"
+  const exsGR = Array.from({ length: 8 }, (_, i) => ({ id: 100 + i, titulo: `GR${i}`, duracao_min: 8 + i }));
+  const fbGR = iaFallbackGR(exsGR);
+  assert(fbGR.length === IA_MAX_EXERCICIOS, `iaFallbackGR devia dar ${IA_MAX_EXERCICIOS} itens, deu ${fbGR.length}`);
+  assert(fbGR[0].exercicio_id === 100 && fbGR[0].duracao_min === 8, "iaFallbackGR usa a duração base do exercício");
+
+  console.log(`ok ia_treino: esqueletos=${IA_DURACAO_MIN}-${IA_DURACAO_MAX}min, max=${IA_MAX_EXERCICIOS} exercícios, duração por bloco, fallback GR, extrair JSON, validar itens`);
 }
