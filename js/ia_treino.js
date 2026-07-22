@@ -199,7 +199,9 @@ Devolve JSON exatamente com este formato:
 }
 
 // ---- chamada OpenRouter (com retry no 429: modelos free saturam a segundos) ----
-async function iaChamarOpenRouter(key, modelo, system, user) {
+// `signal` (opcional): permite cancelar o pedido se o utilizador sair do ecrã antes de a
+// IA responder — evita que uma resposta tardia tente atualizar um formulário já fechado.
+async function iaChamarOpenRouter(key, modelo, system, user, signal) {
   const body = JSON.stringify({
     model: modelo,
     messages: [{ role: "system", content: system }, { role: "user", content: user }],
@@ -212,6 +214,7 @@ async function iaChamarOpenRouter(key, modelo, system, user) {
       method: "POST",
       headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
       body,
+      signal,
     });
     if (resp.ok) {
       const data = await resp.json();
@@ -235,7 +238,9 @@ async function iaChamarOpenRouter(key, modelo, system, user) {
 }
 
 // ---- orquestração: gera e grava o treino, devolve o id ----
-async function gerarTreinoIA(escalao, foco, nJogadores, data, hora) {
+// `signal` (opcional): passa por gerarTreinoIA -> iaChamarOpenRouter para poder cancelar
+// o pedido se o utilizador sair do ecrã de "Gerar treino" antes de a IA responder.
+async function gerarTreinoIA(escalao, foco, nJogadores, data, hora, signal) {
   if (!IA_ESQUELETO[escalao]) throw new Error("escalão inválido");
   const { key, modelo } = iaConfig();
   if (!key) throw new Error("Falta a chave OpenRouter (Dados → IA).");
@@ -274,7 +279,7 @@ async function gerarTreinoIA(escalao, foco, nJogadores, data, hora) {
   const exerciciosRecentes = [...idsRecentes].map((eid) => (todos.find((e) => e.id === eid) || {}).titulo).filter(Boolean);
 
   const { system, user } = iaConstruirPrompt(escalao, foco, listaAI, n, exerciciosGR, dificuldades, exerciciosRecentes);
-  const txt = await iaChamarOpenRouter(key, modelo, system, user);
+  const txt = await iaChamarOpenRouter(key, modelo, system, user, signal);
   const parsed = iaExtrairJSON(txt);
   const itens = iaValidarItens(parsed.itens, doEscalao);
   if (!itens.length) throw new Error("A IA não devolveu exercícios válidos. Tenta outra vez.");

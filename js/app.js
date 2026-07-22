@@ -830,10 +830,18 @@ app.addEventListener("submit", async (ev) => {
     const erroEl = form.querySelector(".iaerro");
     btn.disabled = true; btn.textContent = "🤖 A gerar… (pode demorar uns segundos)";
     erroEl.style.display = "none";
+    // se o utilizador sair deste ecrã antes de a IA responder, cancela o pedido em vez de
+    // deixá-lo terminar mais tarde a apontar para um formulário que já não está visível.
+    const ac = new AbortController();
+    const cancelarAoSair = () => ac.abort();
+    window.addEventListener("hashchange", cancelarAoSair, { once: true });
     try {
-      const treinoId = await gerarTreinoIA(fd.get("escalao"), txt(fd.get("foco")), num(fd.get("n_jogadores")), fd.get("data"), txt(fd.get("hora")));
+      const treinoId = await gerarTreinoIA(fd.get("escalao"), txt(fd.get("foco")), num(fd.get("n_jogadores")), fd.get("data"), txt(fd.get("hora")), ac.signal);
+      window.removeEventListener("hashchange", cancelarAoSair);
       return go("#/treinos/" + treinoId);
     } catch (e) {
+      window.removeEventListener("hashchange", cancelarAoSair);
+      if (e.name === "AbortError") return; // já saiu deste ecrã; nada para mostrar
       erroEl.textContent = "Erro: " + e.message; erroEl.style.display = "block";
       btn.disabled = false; btn.textContent = "🤖 Gerar treino";
     }
