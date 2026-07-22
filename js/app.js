@@ -395,12 +395,13 @@ async function viewTreinos() {
       <span style="display:flex;gap:8px"><a class="btn sm ghost" href="#/treinos/gerar">🤖 Gerar</a><a class="btn sm" href="#/treinos/novo">+ Novo</a></span></div>${rows}`);
 }
 
-// Gerar treino de 60-75 min por IA (escalão + foco opcional).
+// Gerar treino por IA (escalão, duração e foco opcional).
 async function viewGerarTreino() {
   const temChave = !!iaConfig().key;
-  const focoSug = focoDoUltimoTreino(await DB.listar("treinos"), ESCALOES[0]) || "";
+  const escalaoDefeito = ESCALOES.includes("sub-8") ? "sub-8" : ESCALOES[0];
+  const focoSug = focoDoUltimoTreino(await DB.listar("treinos"), escalaoDefeito) || "";
   setView("Gerar treino (IA)", `
-    <p class="muted" style="margin-bottom:16px">A IA monta um treino de 60 a 75 min, com no máximo 5 a 6 exercícios (equipa e guarda-redes), a partir da tua biblioteca de exercícios, adaptado ao escalão. Precisa de internet; depois fica gravado e usável offline.</p>
+    <p class="muted" style="margin-bottom:16px">A IA monta um treino com no máximo 5 a 6 exercícios (equipa e guarda-redes), a partir da tua biblioteca de exercícios, adaptado ao escalão e à duração escolhida. Precisa de internet; depois fica gravado e usável offline.</p>
     ${temChave ? "" : `<div class="card" style="margin-bottom:16px;border-color:var(--amber)">
       ⚠️ Falta a chave OpenRouter. Configura em <a href="#/dados">Dados → IA</a> antes de gerar.</div>`}
     <form class="stack" data-form="gerar-treino">
@@ -408,8 +409,12 @@ async function viewGerarTreino() {
         <label class="field"><span>Data *</span><input type="date" name="data" required value="${new Date().toISOString().slice(0, 10)}"></label>
         <label class="field"><span>Hora</span><input type="time" name="hora"></label>
       </div>
-      <label class="field"><span>Escalão *</span><select name="escalao" required data-action="escalao-gerar">
-        ${ESCALOES.map((e) => `<option>${e}</option>`).join("")}</select></label>
+      <div class="grid2">
+        <label class="field"><span>Escalão *</span><select name="escalao" required data-action="escalao-gerar">
+          ${ESCALOES.map((e) => `<option ${e === escalaoDefeito ? "selected" : ""}>${e}</option>`).join("")}</select></label>
+        <label class="field"><span>Duração (min) *</span><input type="number" name="duracao_min" required min="30" max="120" step="5" value="70">
+          <div class="hint">Normal: 60 a 75. Muda à vontade.</div></label>
+      </div>
       <label class="field"><span>Foco (opcional)</span>
         <select name="foco">
           <option value="">— sem foco específico (a IA equilibra) —</option>
@@ -836,7 +841,7 @@ app.addEventListener("submit", async (ev) => {
     const cancelarAoSair = () => ac.abort();
     window.addEventListener("hashchange", cancelarAoSair, { once: true });
     try {
-      const treinoId = await gerarTreinoIA(fd.get("escalao"), txt(fd.get("foco")), num(fd.get("n_jogadores")), fd.get("data"), txt(fd.get("hora")), ac.signal);
+      const treinoId = await gerarTreinoIA(fd.get("escalao"), txt(fd.get("foco")), num(fd.get("n_jogadores")), fd.get("data"), txt(fd.get("hora")), num(fd.get("duracao_min")), ac.signal);
       window.removeEventListener("hashchange", cancelarAoSair);
       return go("#/treinos/" + treinoId);
     } catch (e) {

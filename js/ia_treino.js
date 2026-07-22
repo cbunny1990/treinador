@@ -94,6 +94,22 @@ function iaAtribuirDuracoes(itens, blocos) {
   return itens;
 }
 
+// Escala o esqueleto de blocos do escalão para a duração escolhida pelo treinador (em vez do
+// total fixo de 60-75), mantendo as proporções (aquecimento continua o mais curto, jogo o mais
+// comprido). O último bloco absorve o arredondamento para a soma bater sempre certo.
+function iaEscalarEsqueleto(blocos, duracaoAlvo) {
+  const somaOriginal = blocos.reduce((s, b) => s + b.min, 0);
+  if (!Number.isFinite(duracaoAlvo) || duracaoAlvo <= 0 || duracaoAlvo === somaOriginal) return blocos;
+  let atribuido = 0;
+  return blocos.map((b, i) => {
+    const min = i === blocos.length - 1
+      ? duracaoAlvo - atribuido
+      : Math.max(5, Math.round((b.min / somaOriginal) * duracaoAlvo));
+    atribuido += min;
+    return { ...b, min };
+  });
+}
+
 // Treino individual de guarda-redes por defeito, usado quando a IA não devolve "itens_gr"
 // (acontece com modelos free menos obedientes) — garante que o GR nunca fica sem plano.
 function iaFallbackGR(exerciciosGR, max = IA_MAX_EXERCICIOS) {
@@ -143,14 +159,16 @@ function iaValidarItens(itensIA, exercicios, maxItens = IA_MAX_EXERCICIOS) {
 }
 
 // ---- prompt ----
-function iaConstruirPrompt(escalao, foco, exercicios, nJogadores, exerciciosGR, dificuldades, exerciciosRecentes) {
+// `blocos`: esqueleto já escalado para a duração escolhida pelo treinador (ver iaEscalarEsqueleto);
+// por omissão usa o esqueleto base do escalão (60-75 min).
+function iaConstruirPrompt(escalao, foco, exercicios, nJogadores, exerciciosGR, dificuldades, exerciciosRecentes, blocos) {
   const dif = dificuldades && dificuldades.tags && dificuldades.tags.length
     ? `\n\nDIFICULDADES RECENTES a trabalhar (dá-lhes prioridade e distribui-as pelos blocos certos): ${dificuldades.tags.join(", ")}${(dificuldades.notas && dificuldades.notas.length) ? ` (notas do treinador: ${dificuldades.notas.join("; ")})` : ""}.`
     : "";
   const rep = (exerciciosRecentes && exerciciosRecentes.length)
     ? `\n\nJá saíram nos últimos treinos — EVITA repetir a maioria, no máximo mantém 1 para consolidar; procura variar: ${exerciciosRecentes.join(", ")}.`
     : "";
-  const blocos = IA_ESQUELETO[escalao] || [];
+  blocos = blocos || IA_ESQUELETO[escalao] || [];
   const duracaoAlvo = blocos.reduce((s, b) => s + b.min, 0);
   const lista = exercicios.map((e) =>
     `#${e.id} | ${e.titulo} | ${e.categoria || "sem categoria"} | ${e.duracao_min || "?"}min | ${e.n_jogadores_min || "?"}-${e.n_jogadores_max || "?"} jog.`
@@ -175,12 +193,12 @@ ${listaGR}`
 `És um treinador experiente de futebol de formação em Portugal (metodologia FPF). Planeias sessões de treino que fazem EVOLUIR as crianças: do lúdico e da técnica individual nos mais novos, para os jogos reduzidos e o jogo com intenção tática nos mais velhos. Adaptas sempre à idade: sub-7/8 mais lúdico e técnico, sub-9/10 mais jogos reduzidos e tomada de decisão. Adaptas SEMPRE ao número real de jogadores disponíveis.
 Respondes SEMPRE e APENAS com um objeto JSON válido, sem texto à volta, sem cercas de código.`;
   const user =
-`Monta um treino entre ${IA_DURACAO_MIN} e ${IA_DURACAO_MAX} minutos (alvo: ~${duracaoAlvo} min) para o escalão ${escalao}${foco ? `, com FOCO em: ${foco}` : ""}.${dif}${rep}${restricaoJog}${blocoGR}
+`Monta um treino de ~${duracaoAlvo} minutos para o escalão ${escalao}${foco ? `, com FOCO em: ${foco}` : ""}.${dif}${rep}${restricaoJog}${blocoGR}
 
-Estrutura pedagógica (blocos e minutos-alvo, deve somar entre ${IA_DURACAO_MIN} e ${IA_DURACAO_MAX}, idealmente ~${duracaoAlvo}):
+Estrutura pedagógica (blocos e minutos-alvo, deve somar ~${duracaoAlvo}):
 ${estrutura}
 
-Escolhe exercícios de equipa EXCLUSIVAMENTE desta biblioteca (usa o número #id). NÃO inventes exercícios nem uses ids fora da lista. Para cada bloco escolhe 1 exercício adequado à idade, ao foco e ao número de jogadores — no MÁXIMO ${IA_MAX_EXERCICIOS} exercícios de equipa no total; ajusta a duração de cada um para o total ficar entre ${IA_DURACAO_MIN} e ${IA_DURACAO_MAX} min.
+Escolhe exercícios de equipa EXCLUSIVAMENTE desta biblioteca (usa o número #id). NÃO inventes exercícios nem uses ids fora da lista. Para cada bloco escolhe 1 exercício adequado à idade, ao foco e ao número de jogadores — no MÁXIMO ${IA_MAX_EXERCICIOS} exercícios de equipa no total; ajusta a duração de cada um para o total ficar o mais próximo possível de ${duracaoAlvo} min.
 
 Biblioteca disponível (#id | título | categoria | duração-base | jogadores):
 ${lista}
@@ -238,14 +256,17 @@ async function iaChamarOpenRouter(key, modelo, system, user, signal) {
 }
 
 // ---- orquestração: gera e grava o treino, devolve o id ----
-// `signal` (opcional): passa por gerarTreinoIA -> iaChamarOpenRouter para poder cancelar
-// o pedido se o utilizador sair do ecrã de "Gerar treino" antes de a IA responder.
-async function gerarTreinoIA(escalao, foco, nJogadores, data, hora, signal) {
+// `duracaoAlvo` (opcional): duração total escolhida pelo treinador; se vazia/inválida usa o
+// esqueleto base do escalão (60-75 min). `signal` (opcional): passa por gerarTreinoIA ->
+// iaChamarOpenRouter para poder cancelar o pedido se o utilizador sair do ecrã antes de a
+// IA responder.
+async function gerarTreinoIA(escalao, foco, nJogadores, data, hora, duracaoAlvo, signal) {
   if (!IA_ESQUELETO[escalao]) throw new Error("escalão inválido");
   const { key, modelo } = iaConfig();
   if (!key) throw new Error("Falta a chave OpenRouter (Dados → IA).");
   if (typeof navigator !== "undefined" && navigator.onLine === false)
     throw new Error("Sem internet. Gera o treino com net; depois usa-o offline.");
+  const blocos = iaEscalarEsqueleto(IA_ESQUELETO[escalao], Number(duracaoAlvo));
 
   const todos = await DB.listar("exercicios");
   const noEscalao = todos.filter((e) => (e.escaloes || []).includes(escalao));
@@ -278,12 +299,12 @@ async function gerarTreinoIA(escalao, foco, nJogadores, data, hora, signal) {
     for (const it of await DB.porIndice("treino_itens", "treino_id", t.id)) idsRecentes.add(it.exercicio_id);
   const exerciciosRecentes = [...idsRecentes].map((eid) => (todos.find((e) => e.id === eid) || {}).titulo).filter(Boolean);
 
-  const { system, user } = iaConstruirPrompt(escalao, foco, listaAI, n, exerciciosGR, dificuldades, exerciciosRecentes);
+  const { system, user } = iaConstruirPrompt(escalao, foco, listaAI, n, exerciciosGR, dificuldades, exerciciosRecentes, blocos);
   const txt = await iaChamarOpenRouter(key, modelo, system, user, signal);
   const parsed = iaExtrairJSON(txt);
   const itens = iaValidarItens(parsed.itens, doEscalao);
   if (!itens.length) throw new Error("A IA não devolveu exercícios válidos. Tenta outra vez.");
-  iaAtribuirDuracoes(itens, IA_ESQUELETO[escalao]); // duração de cada exercício = minutos-alvo do bloco, não o valor (pouco fiável) da IA
+  iaAtribuirDuracoes(itens, blocos); // duração de cada exercício = minutos-alvo do bloco (escalado à duração escolhida), não o valor (pouco fiável) da IA
   let itensGR = exerciciosGR.length ? iaValidarItens(parsed.itens_gr, exerciciosGR) : [];
   if (!itensGR.length && exerciciosGR.length) itensGR = iaFallbackGR(exerciciosGR); // a IA às vezes não devolve "itens_gr"
 
@@ -348,5 +369,16 @@ if (typeof window === "undefined" && typeof process !== "undefined") {
   assert(fbGR.length === IA_MAX_EXERCICIOS, `iaFallbackGR devia dar ${IA_MAX_EXERCICIOS} itens, deu ${fbGR.length}`);
   assert(fbGR[0].exercicio_id === 100 && fbGR[0].duracao_min === 8, "iaFallbackGR usa a duração base do exercício");
 
-  console.log(`ok ia_treino: esqueletos=${IA_DURACAO_MIN}-${IA_DURACAO_MAX}min, max=${IA_MAX_EXERCICIOS} exercícios, duração por bloco, fallback GR, extrair JSON, validar itens`);
+  // iaEscalarEsqueleto: duração escolhida pelo treinador substitui o total fixo do escalão,
+  // mantendo as proporções (aquecimento continua o mais curto).
+  const blocosSub8 = IA_ESQUELETO["sub-8"];
+  const escalado90 = iaEscalarEsqueleto(blocosSub8, 90);
+  assert(escalado90.reduce((s, b) => s + b.min, 0) === 90, `iaEscalarEsqueleto(90): soma devia ser 90, deu ${escalado90.reduce((s, b) => s + b.min, 0)}`);
+  assert(escalado90[0].min < escalado90[2].min, "iaEscalarEsqueleto(90): aquecimento continua mais curto que o bloco de jogo");
+  const escalado45 = iaEscalarEsqueleto(blocosSub8, 45);
+  assert(escalado45.reduce((s, b) => s + b.min, 0) === 45, `iaEscalarEsqueleto(45): soma devia ser 45, deu ${escalado45.reduce((s, b) => s + b.min, 0)}`);
+  const semAlvo = iaEscalarEsqueleto(blocosSub8, NaN);
+  assert(semAlvo === blocosSub8, "iaEscalarEsqueleto sem alvo válido devolve o esqueleto original");
+
+  console.log(`ok ia_treino: esqueletos=${IA_DURACAO_MIN}-${IA_DURACAO_MAX}min, max=${IA_MAX_EXERCICIOS} exercícios, duração por bloco (fixa e escalada), fallback GR, extrair JSON, validar itens`);
 }
