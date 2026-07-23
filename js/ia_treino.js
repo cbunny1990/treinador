@@ -123,14 +123,21 @@ function iaFallbackGR(exerciciosGR, max = IA_MAX_EXERCICIOS) {
   }));
 }
 
-// Extrai o objeto JSON da resposta do modelo (tolera cercas ```json e texto à volta).
+// Extrai o objeto JSON da resposta do modelo (tolera cercas ```json, texto à volta e
+// vírgulas a mais antes de "}"/"]" — erro comum em modelos free: "Expected double-quoted
+// property name in JSON").
 function iaExtrairJSON(txt) {
   if (!txt) throw new Error("resposta vazia da IA");
   let s = String(txt).trim();
   const cerca = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (cerca) s = cerca[1].trim();
   else { const i = s.indexOf("{"), j = s.lastIndexOf("}"); if (i !== -1 && j > i) s = s.slice(i, j + 1); }
-  return JSON.parse(s);
+  s = s.replace(/,(\s*[}\]])/g, "$1"); // remove vírgulas penduradas antes de fechar objeto/array
+  try {
+    return JSON.parse(s);
+  } catch (e) {
+    throw new Error("A IA devolveu um JSON inválido. Tenta outra vez (por vezes o modelo free corta a resposta a meio).");
+  }
 }
 
 // Valida os itens devolvidos pela IA contra os exercícios reais: só ids existentes,
@@ -326,6 +333,11 @@ if (typeof window === "undefined" && typeof process !== "undefined") {
 
   const j1 = iaExtrairJSON('```json\n{"a":1}\n```'); assert(j1.a === 1, "extrair com cerca json");
   const j2 = iaExtrairJSON('lixo antes {"b":2} lixo depois'); assert(j2.b === 2, "extrair com texto à volta");
+  const j3 = iaExtrairJSON('{"itens":[{"a":1,},{"b":2},],}'); // vírgulas penduradas (erro comum em modelos free)
+  assert(j3.itens.length === 2 && j3.itens[0].a === 1 && j3.itens[1].b === 2, "extrair com vírgulas penduradas");
+  let falhouComoEsperado = false;
+  try { iaExtrairJSON('{"itens": [ isto não é json'); } catch (e) { falhouComoEsperado = /JSON inválido/.test(e.message); }
+  assert(falhouComoEsperado, "JSON irrecuperável dá mensagem de erro amigável");
 
   const exs = [{ id: 5, titulo: "X", duracao_min: 10 }, { id: 8, titulo: "Y", duracao_min: 12 }];
   const v = iaValidarItens([
