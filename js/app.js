@@ -436,6 +436,7 @@ async function viewGerarTreino() {
 async function viewTreinoForm(id) {
   const t = id ? await DB.obter("treinos", id) : null;
   const hoje = new Date().toISOString().slice(0, 10);
+  const escalaoDefeito = t?.escalao || (ESCALOES.includes("sub-8") ? "sub-8" : ESCALOES[0]);
   setView(id ? "Editar treino" : "Novo treino", `
     <form class="stack" data-form="treino" data-id="${id || ""}">
       <div class="grid2">
@@ -443,7 +444,7 @@ async function viewTreinoForm(id) {
         <label class="field"><span>Hora</span><input type="time" name="hora" value="${esc(t?.hora)}"></label>
       </div>
       <label class="field"><span>Escalão *</span><select name="escalao" required>
-        ${ESCALOES.map((e) => `<option ${t?.escalao === e ? "selected" : ""}>${e}</option>`).join("")}</select></label>
+        ${ESCALOES.map((e) => `<option ${e === escalaoDefeito ? "selected" : ""}>${e}</option>`).join("")}</select></label>
       <label class="field"><span>Notas</span><textarea name="notas" rows="3">${esc(t?.notas)}</textarea></label>
       <div class="actions">
         <button class="btn" type="submit">Guardar</button>
