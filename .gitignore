@@ -1,0 +1,7 @@
+# Backend FastAPI antigo, mantido localmente para referência mas não publicado
+# (o repo passou a ser a PWA offline na raiz)
+app/
+*.db
+server.log
+__pycache__/
+*.pyc
