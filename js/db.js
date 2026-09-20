@@ -1,11 +1,11 @@
 // Camada de dados offline (IndexedDB). Sem servidor: tudo vive no telemóvel.
 const DB_NOME = "treinador";
-const DB_VERSAO = 5;
+const DB_VERSAO = 7;
 const DEFAULT_TEAM_ID = "default";
 const STORES = [
   "jogadores", "exercicios", "treinos", "treino_itens", "presencas", "avaliacoes", "jogos",
   "teams", "game_models", "memory_items",
-  "head_coach_conversations", "head_coach_messages",
+  "head_coach_conversations", "head_coach_messages", "media_items",
 ];
 
 let _db = null;
@@ -64,6 +64,11 @@ function abrirDB() {
       if (!db.objectStoreNames.contains("head_coach_messages")) {
         const messages = db.createObjectStore("head_coach_messages", { keyPath: "id", autoIncrement: true });
         messages.createIndex("conversation_id", "conversation_id", { unique: false });
+      }
+      if (!db.objectStoreNames.contains("media_items")) {
+        const media = db.createObjectStore("media_items", { keyPath: "id", autoIncrement: true });
+        media.createIndex("team_id", "team_id", { unique: false });
+        media.createIndex("subject_key", "subject_key", { unique: false });
       }
 
       // A migração decorre na própria transação de upgrade: ou fica toda aplicada, ou nada muda.

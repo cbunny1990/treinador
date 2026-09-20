@@ -9,13 +9,15 @@
 - Diagnósticos exigem evidência. Intervenções e resultados exigem ligação à cadeia anterior.
 - Uma correção cria uma revisão e marca a versão anterior como `superseded`. Arquivar não apaga o histórico.
 
-## IndexedDB v4
+## IndexedDB v7
 
 Stores novas:
 
 - `teams`: perfil estável da equipa.
 - `game_models`: modelo de jogo e respetiva vigência.
 - `memory_items`: memória classificada, proveniência, referências e relações.
+- `head_coach_conversations` e `head_coach_messages`: histórico local do chat contextual.
+- `media_items`: fotografias, vídeos por link e ficheiros associados a entidades da equipa.
 
 Na migração, jogadores, treinos e jogos existentes recebem `team_id: "default"`. O upgrade ocorre numa única transação IndexedDB.
 
@@ -54,7 +56,7 @@ npm test
 npm run test:e2e
 ```
 
-Os testes end-to-end cobrem a migração v3→v4, criação/revisão, histórico, funcionamento offline e importação sintética.
+Os testes end-to-end cobrem a migração v3→v7, criação/revisão, histórico, funcionamento offline, importação sintética, ciclo completo de aprendizagem e associação de vídeo a jogo.
 
 ## Dashboard Head Coach (Fase 2)
 
@@ -68,3 +70,29 @@ O dashboard é construído localmente por `HeadCoachDashboard.load()` e apresent
 - resultados medidos e últimas observações.
 
 Uma prioridade só é considerada confirmada quando o treinador seleciona Prioridade 1, 2 ou 3 no registo de memória. Na ausência dessa decisão, o dashboard pode mostrar observações coletivas como sugestões claramente identificadas — nunca como factos ou diagnósticos automáticos.
+
+
+## Ciclo operacional e aprendizagem (Fases 4 e 5)
+
+A memória pode ser percorrida como uma cadeia explícita:
+
+```text
+Observação → Diagnóstico → Decisão → Intervenção → Resultado
+```
+
+Ao avançar para o passo seguinte, a app pré-liga a evidência ou a relação anterior e mantém a associação ao jogador, treino ou jogo quando existe. O treinador continua a poder rever as ligações antes de guardar.
+
+A vista **Ciclos de aprendizagem** reconstrói as cadeias a partir dos IDs persistidos. Intervenções sem resultado ficam em **por medir**. Quando existe um resultado, o ciclo passa a aprendizagem registada e o dashboard mostra essa evolução.
+
+## Media e vídeo (Fase 6)
+
+A store `media_items` permite associar fotografias, vídeos e ficheiros a:
+
+- jogadores;
+- treinos;
+- jogos;
+- qualquer registo da memória, incluindo diagnósticos e intervenções.
+
+Ficheiros locais até 5 MB podem ficar no próprio IndexedDB e, por isso, entram no backup geral. Para vídeos grandes, a V1 guarda um link HTTP/HTTPS, evitando inflacionar a PWA e as cópias de segurança.
+
+A V1 não faz análise automática avançada de vídeo, reconhecimento de jogadores ou tracking corporal. O vídeo funciona como evidência associada ao ciclo de decisão.
