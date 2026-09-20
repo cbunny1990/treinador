@@ -2,7 +2,7 @@
   "name": "treinador-pwa",
   "private": true,
   "scripts": {
-    "check": "node --check js/app.js && node --check js/db.js && node --check js/head_coach_memory.js && node --check js/head_coach_dashboard.js && node --check js/ia_treino.js && node --check js/exercicios_base.js",
+    "check": "node --check js/app.js && node --check js/db.js && node --check js/head_coach_memory.js && node --check js/head_coach_cycle.js && node --check js/head_coach_media.js && node --check js/head_coach_dashboard.js && node --check js/head_coach_chat.js && node --check js/ia_treino.js && node --check js/exercicios_base.js",
     "test": "node --test tests/*.test.js && node js/db.js && node js/ia_treino.js",
     "test:e2e": "playwright test"
   },

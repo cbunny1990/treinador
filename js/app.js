@@ -60,6 +60,31 @@ function avatarHTML(j, px) {
   return `<span class="avatar"${st}>${esc(ini)}</span>`;
 }
 
+function ficheiroDataURL(file, maxBytes = 5 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.size) return resolve(null);
+    if (file.size > maxBytes) return reject(new Error("O ficheiro local excede 5 MB. Para vídeos grandes, usa um link."));
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Não foi possível ler o ficheiro."));
+    reader.readAsDataURL(file);
+  });
+}
+function subjectHref(type, id) {
+  return type === "player" ? "#/jogadores/" + id : type === "training" ? "#/treinos/" + id :
+    type === "match" ? "#/jogos/" + id : type === "memory" ? "#/head-coach/memoria/" + id : "#/head-coach";
+}
+function mediaIcon(type) { return type === "photo" ? "📷" : type === "video" ? "🎥" : "📎"; }
+async function renderMediaSection(subjectType, subjectId) {
+  const items = await HeadCoachMedia.listForSubject(subjectType, subjectId);
+  const rows = items.length ? items.map((m) => {
+    const href = m.data_url || m.url;
+    const preview = m.type === "photo" && href ? `<img src="${esc(href)}" alt="" class="media-thumb">` : `<span class="media-kind">${mediaIcon(m.type)}</span>`;
+    return `<div class="card media-row"><a class="row grow" href="${esc(href)}" ${m.url ? 'target="_blank" rel="noopener"' : `download="${esc(m.file_name || m.title)}"`}>${preview}<span class="grow"><span class="t">${esc(m.title)}</span><span class="s">${esc(m.note || m.file_name || (m.url ? "Link externo" : "Guardado no dispositivo"))}</span></span></a><button class="x" data-action="apagar-media" data-id="${m.id}">✕</button></div>`;
+  }).join("") : `<p class="muted">Ainda sem fotografias, vídeos ou ficheiros associados.</p>`;
+  return `<section class="divider"><div class="head"><h2>Media</h2><a class="btn sm ghost" href="#/media/novo/${subjectType}/${subjectId}">+ Associar</a></div>${rows}</section>`;
+}
+
 // ---------- ROUTER ----------
 async function router() {
   const h = (location.hash || "#/").slice(1); // ex: "/jogadores/5/editar"
@@ -96,11 +121,15 @@ async function router() {
       return viewCalendario();
     }
     if (p[0] === "dados") return viewDados();
+    if (p[0] === "media" && p[1] === "novo") return viewMediaForm(p[2], p[3]);
     if (p[0] === "head-coach") {
       if (p[1] === "equipa") return viewTeamForm();
       if (p[1] === "modelo") return viewGameModelForm();
+      if (p[1] === "chat") return viewHeadCoachChat(p[2]);
+      if (p[1] === "ciclos") return viewLearningCycles();
       if (p[1] === "memoria") {
-        if (p[2] === "novo") return viewMemoryForm(null, p[3], p[4]);
+        if (p[2] === "novo" && p[3] === "from") return viewMemoryForm(null, null, null, p[4], p[5]);
+        if (p[2] === "novo") return viewMemoryForm(null, p[3], p[4], null, p[5]);
         if (p[2] && p[3] === "editar") return viewMemoryForm(p[2]);
         if (p[2]) return viewMemoryDetail(p[2]);
         return viewHeadCoachMemory();
@@ -221,7 +250,7 @@ async function viewJogadorDetalhe(id) {
       <a class="btn ghost" href="#/head-coach/memoria/novo/player/${j.id}">🧠 Observar</a>
       <button class="btn danger" data-action="apagar-jogador" data-id="${j.id}">Apagar</button>
     </div>
-    ${await secaoAvaliacoes(j)}`);
+    ${await secaoAvaliacoes(j)}\n    ${await renderMediaSection("player", j.id)}`);
 }
 
 // ---------- AVALIAÇÕES ----------
@@ -564,6 +593,7 @@ async function viewTreinoDetalhe(id) {
       <p class="muted" style="font-size:12px;margin-bottom:8px">P = Presente · A = Ausente</p>
       ${presHtml}
     </section>
+    ${await renderMediaSection("training", t.id)}
     ${secaoDificuldades("treinos", t)}
     <div class="divider"><button class="btn danger" data-action="apagar-treino" data-id="${t.id}" style="width:100%">🗑️ Apagar treino</button></div>`);
 }
@@ -667,8 +697,59 @@ async function viewJogoDetalhe(id) {
       <button class="btn ghost" data-action="gcal-jogo" data-id="${j.id}" style="width:100%">📅 Adicionar ao Google Calendar</button>
       <a class="btn ghost" href="#/head-coach/memoria/novo/match/${j.id}" style="width:100%">🧠 Registar observação na memória</a>
     </div>
+    ${await renderMediaSection("match", j.id)}
     ${secaoDificuldades("jogos", j)}
     <div class="divider"><button class="btn danger" data-action="apagar-jogo" data-id="${j.id}" style="width:100%">🗑️ Apagar jogo</button></div>`);
+}
+
+async function viewMediaForm(subjectType, subjectId) {
+  if (!HEAD_COACH_MEDIA_SUBJECTS.includes(subjectType) || !subjectId) return go("#/head-coach");
+  let subject = null;
+  if (subjectType === "player") subject = await DB.obter("jogadores", subjectId);
+  if (subjectType === "training") subject = await DB.obter("treinos", subjectId);
+  if (subjectType === "match") subject = await DB.obter("jogos", subjectId);
+  if (subjectType === "memory") subject = await HeadCoachMemory.get(subjectId);
+  if (!subject) return go("#/head-coach");
+  const label = subjectType === "player" ? subject.nome : subjectType === "training" ? "Treino " + fmtData(subject.data) :
+    subjectType === "match" ? "Jogo vs " + subject.adversario : (subject.title || "Memória");
+  setView("Associar media", `
+    <div class="card" style="margin-bottom:16px"><div class="s">Associar a</div><div class="t">${esc(label)}</div></div>
+    <form class="stack" data-form="media" data-subject-type="${esc(subjectType)}" data-subject-id="${esc(subjectId)}">
+      <label class="field"><span>Tipo *</span><select name="type" required>
+        <option value="photo">Fotografia</option><option value="video">Vídeo</option><option value="file">Ficheiro</option>
+      </select></label>
+      <label class="field"><span>Título</span><input name="title" placeholder="Ex.: lance da saída de bola"></label>
+      <label class="field"><span>Link</span><input name="url" type="url" placeholder="https://...">
+        <div class="hint">Recomendado para vídeos grandes (YouTube, Drive, etc.).</div></label>
+      <label class="field"><span>Ou ficheiro local</span><input name="file" type="file">
+        <div class="hint">Até 5 MB fica guardado no dispositivo e entra no backup. Para vídeos maiores, usa um link.</div></label>
+      <label class="field"><span>Nota</span><textarea name="note" rows="3" placeholder="O que deve ser observado neste media?"></textarea></label>
+      <div class="actions"><button class="btn" type="submit">Guardar media</button>
+        <a class="btn ghost" href="${subjectHref(subjectType, subjectId)}">Cancelar</a></div>
+    </form>`);
+}
+
+async function viewLearningCycles() {
+  const memory = await HeadCoachMemory.list(DEFAULT_TEAM_ID, { includeArchived: true });
+  const cycles = construirCiclosAprendizagem(memory);
+  const renderStep = (item) => item ? `<a class="btn-link" href="#/head-coach/memoria/${item.id}">${esc(MEMORY_KIND_LABELS[item.kind])}: ${esc(item.title)}</a>` : `<span class="muted">—</span>`;
+  const completed = cycles.completed.length ? cycles.completed.map((c) => `
+    <div class="card cycle-card">
+      <div class="row"><span class="tag grama">Concluído</span><span class="grow"></span><span class="s">${fmtData((c.result.occurred_at || "").slice(0,10))}</span></div>
+      <div class="cycle-steps">${renderStep(c.observation)}<span>→</span>${renderStep(c.diagnosis)}<span>→</span>${renderStep(c.decision)}<span>→</span>${renderStep(c.intervention)}<span>→</span>${renderStep(c.result)}</div>
+      <div class="divider"><div class="s">Aprendizagem operacional</div><p>${esc(c.result.content)}</p></div>
+      ${c.complete ? "" : '<div class="hint">Cadeia parcial: falta pelo menos um passo estruturado antes do resultado.</div>'}
+    </div>`).join("") : '<div class="empty">Ainda não há ciclos com resultado medido.</div>';
+  const open = cycles.open.length ? cycles.open.map((c) => `
+    <div class="card cycle-card">
+      <div class="row"><span class="tag">A medir</span><span class="grow"></span><a class="btn sm" href="#/head-coach/memoria/novo/from/${c.intervention.id}/result">+ Resultado</a></div>
+      <div class="cycle-steps">${renderStep(c.diagnosis)}<span>→</span>${renderStep(c.decision)}<span>→</span>${renderStep(c.intervention)}</div>
+      <p class="muted" style="margin-top:8px">Regista o efeito observado para fechar o ciclo e transformar a intervenção em aprendizagem.</p>
+    </div>`).join("") : '<p class="muted">Não existem intervenções por medir.</p>';
+  setView("Ciclos de aprendizagem", `
+    <div class="head"><a class="btn-link" href="#/head-coach">← Dashboard</a><a class="btn sm ghost" href="#/head-coach/memoria">Memória</a></div>
+    <section style="margin-bottom:24px"><div class="head"><h2>Intervenções por medir</h2><span class="tag">${cycles.open.length}</span></div>${open}</section>
+    <section><div class="head"><h2>Aprendizagem registada</h2><span class="tag grama">${cycles.completed.length}</span></div>${completed}</section>`);
 }
 
 // ---------- HEAD COACH: MEMÓRIA DA EQUIPA ----------
@@ -703,17 +784,21 @@ async function viewHeadCoachDashboard() {
     : `<div class="empty">Sem jogadores sinalizados pela memória.</div>`;
   const observations = d.latest_observations.length ? `<ul class="list">${d.latest_observations.map((x) => `<li class="card"><div class="s">${fmtData((x.occurred_at || "").slice(0, 10))} · ${esc(x.source?.label || "—")}</div>${dashboardMemoryLink(x)}</li>`).join("")}</ul>` : `<div class="empty">Ainda sem observações.</div>`;
   const results = d.latest_results.length ? d.latest_results.map((x) => `<div class="card" style="margin-bottom:8px">${dashboardMemoryLink(x)}</div>`).join("") : `<p class="muted">Ainda sem resultados medidos. O dashboard mostrará evolução quando uma intervenção tiver resultado.</p>`;
+  const cycles = construirCiclosAprendizagem(await HeadCoachMemory.list(DEFAULT_TEAM_ID, { includeArchived: true }));
+  const learning = cycles.completed.length ? `<div class="card"><div class="row"><span class="media-badge">${cycles.completed.length}</span><span class="grow"><span class="t">ciclo(s) com resultado</span><span class="s">${cycles.open.length} intervenção(ões) ainda por medir</span></span><a class="btn-link" href="#/head-coach/ciclos">Abrir</a></div><p class="muted" style="margin-top:10px">${esc(resumoCiclo(cycles.completed[0]))}</p></div>` :
+    `<div class="card"><p class="muted">${cycles.open.length ? cycles.open.length + " intervenção(ões) aguardam resultado." : "Ainda não existe um ciclo completo de aprendizagem."}</p><a class="btn-link" href="#/head-coach/ciclos">Ver ciclos</a></div>`;
 
   setView("Head Coach", `
     <div class="card" style="margin-bottom:16px"><div class="row"><div class="grow"><div class="t">${esc(team.nome)}</div><div class="s">${esc(team.clube) || "Clube por definir"}${team.escalao ? " · " + esc(team.escalao) : ""}</div></div><a class="btn-link" href="#/head-coach/equipa">Configurar</a></div>
       <div class="divider"><div class="s">Estado atual</div><p style="font-weight:600">${esc(d.state.text)}</p></div>
       <div class="s">Modelo de jogo: ${d.game_model ? esc(d.game_model.name) : "não definido"} · <a class="btn-link" href="#/head-coach/modelo">${d.game_model ? "Editar" : "Criar"}</a></div></div>
-    <div class="actions" style="margin-bottom:20px"><a class="btn" href="#/head-coach/memoria/novo">+ Registar evidência</a><a class="btn ghost" href="#/head-coach/memoria">Ver memória</a></div>
+    <div class="actions" style="margin-bottom:20px"><a class="btn" href="#/head-coach/chat">💬 Perguntar ao Head Coach</a><a class="btn ghost" href="#/head-coach/memoria/novo">+ Evidência</a><a class="btn ghost" href="#/head-coach/memoria">Memória</a></div>
     <section style="margin-bottom:24px"><div class="head"><h2>Prioridades</h2></div><ul class="list">${priorities}</ul></section>
     <section style="margin-bottom:24px"><div class="head"><h2>Próximo treino</h2></div>${nextTrainingHtml}</section>
     <section style="margin-bottom:24px"><div class="head"><h2>Último jogo</h2></div>${lastMatchHtml}</section>
     <section style="margin-bottom:24px"><div class="head"><h2>Jogadores que precisam de atenção</h2></div>${players}</section>
     <section style="margin-bottom:24px"><div class="head"><h2>Evolução</h2></div>${results}</section>
+    <section style="margin-bottom:24px"><div class="head"><h2>Ciclo de aprendizagem</h2><a class="btn-link" href="#/head-coach/ciclos">Todos</a></div>${learning}</section>
     <section><div class="head"><h2>Últimas observações</h2><a class="btn-link" href="#/head-coach/memoria">Todas</a></div>${observations}</section>`);
 }
 
@@ -777,30 +862,48 @@ function memorySubjectLabel(type) {
   return { player: "Jogador", training: "Treino", match: "Jogo", team: "Equipa" }[type] || type;
 }
 
-async function viewMemoryForm(id, subjectType, subjectId) {
+async function viewMemoryForm(id, subjectType, subjectId, seedId, forcedKind) {
   const item = id ? await HeadCoachMemory.get(id) : null;
-  if (id && !item) return go("#/head-coach");
+  const seed = seedId ? await HeadCoachMemory.get(seedId) : null;
+  if ((id && !item) || (seedId && !seed)) return go("#/head-coach");
+  const kindDefault = MEMORY_KINDS.includes(forcedKind) ? forcedKind : (item?.kind || "observation");
+  const seeded = prepararLigacaoSeguinte(seed, kindDefault);
   const active = (await HeadCoachMemory.list()).filter((m) => !item || m.id !== item.id);
-  const selectedEvidence = new Set(item?.evidence_ids || []), selectedRelated = new Set(item?.related_ids || []);
-  const ref = item?.subject_refs?.[0] || (subjectType && subjectId ? { type: subjectType, id: subjectId, relation: "about" } : null);
-  const links = active.length ? active.map((m) => `<label class="pill" style="display:flex"><input type="checkbox" name="evidence_ids" value="${m.id}" ${selectedEvidence.has(m.id) ? "checked" : ""} style="width:auto;margin-right:6px">${MEMORY_KIND_LABELS[m.kind]} · ${esc(m.title)}</label>`).join("") : `<span class="muted">Ainda não existem outros registos.</span>`;
-  const related = active.length ? active.map((m) => `<label class="pill" style="display:flex"><input type="checkbox" name="related_ids" value="${m.id}" ${selectedRelated.has(m.id) ? "checked" : ""} style="width:auto;margin-right:6px">${MEMORY_KIND_LABELS[m.kind]} · ${esc(m.title)}</label>`).join("") : `<span class="muted">Ainda não existem outros registos.</span>`;
+  const selectedEvidence = new Set([...(item?.evidence_ids || []), ...seeded.evidence_ids]);
+  const selectedRelated = new Set([...(item?.related_ids || []), ...seeded.related_ids]);
+  const ref = item?.subject_refs?.[0] || seeded.subject_refs[0] ||
+    (subjectType && subjectId ? { type: subjectType, id: subjectId, relation: "about" } : null);
+  const [players, trainings, matches] = await Promise.all([
+    DB.porIndice("jogadores", "team_id", DEFAULT_TEAM_ID),
+    DB.porIndice("treinos", "team_id", DEFAULT_TEAM_ID),
+    DB.porIndice("jogos", "team_id", DEFAULT_TEAM_ID),
+  ]);
+  const currentSubject = ref ? ref.type + ":" + ref.id : "";
+  const subjectOptions = [
+    '<option value="">Equipa (geral)</option>',
+    ...players.sort((a,b) => a.nome.localeCompare(b.nome)).map((p) => `<option value="player:${p.id}">Jogador · ${esc(p.nome)}</option>`),
+    ...trainings.sort((a,b) => String(b.data).localeCompare(String(a.data))).map((t) => `<option value="training:${t.id}">Treino · ${fmtData(t.data)} · ${esc(t.escalao)}</option>`),
+    ...matches.sort((a,b) => String(b.data).localeCompare(String(a.data))).map((m) => `<option value="match:${m.id}">Jogo · ${fmtData(m.data)} vs ${esc(m.adversario)}</option>`),
+  ].join("").replace(`value="${esc(currentSubject)}"`, `value="${esc(currentSubject)}" selected`);
+  const links = active.length ? active.map((m) => `<label class="pill memory-choice"><input type="checkbox" name="evidence_ids" value="${m.id}" ${selectedEvidence.has(m.id) ? "checked" : ""}>${MEMORY_KIND_LABELS[m.kind]} · ${esc(m.title)}</label>`).join("") : '<span class="muted">Ainda não existem outros registos.</span>';
+  const related = active.length ? active.map((m) => `<label class="pill memory-choice"><input type="checkbox" name="related_ids" value="${m.id}" ${selectedRelated.has(m.id) ? "checked" : ""}>${MEMORY_KIND_LABELS[m.kind]} · ${esc(m.title)}</label>`).join("") : '<span class="muted">Ainda não existem outros registos.</span>';
+  const chainRoot = item?.metadata?.chain_root_id || seeded.chain_root_id || "";
   setView(id ? "Rever memória" : "Novo registo", `<form class="stack" data-form="memory" data-id="${id || ""}">
-    <label class="field"><span>Classificação *</span><select name="kind" required>${MEMORY_KINDS.map((k) => `<option value="${k}" ${(item?.kind || "observation") === k ? "selected" : ""}>${MEMORY_KIND_LABELS[k]}</option>`).join("")}</select>
-      <div class="hint">Texto do treinador começa como Observação. Só escolhe Facto quando a fonte o confirmar.</div></label>
-    <label class="field"><span>Título</span><input name="title" value="${esc(item?.title)}"></label>
-    <label class="field"><span>Conteúdo *</span><textarea name="content" rows="5" required>${esc(item?.content)}</textarea></label>
+    ${seed ? `<div class="card"><div class="s">Continuação do ciclo</div><a class="btn-link" href="#/head-coach/memoria/${seed.id}">${esc(MEMORY_KIND_LABELS[seed.kind])} · ${esc(seed.title)}</a></div>` : ""}
+    <label class="field"><span>Classificação *</span><select name="kind" required>${MEMORY_KINDS.map((k) => `<option value="${k}" ${kindDefault === k ? "selected" : ""}>${MEMORY_KIND_LABELS[k]}</option>`).join("")}</select>
+      <div class="hint">Observação → Diagnóstico → Decisão → Intervenção → Resultado. Um facto exige fonte confirmável.</div></label>
+    <label class="field"><span>Associado a</span><select name="subject_key">${subjectOptions}</select></label>
+    <label class="field"><span>Título</span><input name="title" value="${esc(item?.title || "")}"></label>
+    <label class="field"><span>Conteúdo *</span><textarea name="content" rows="5" required>${esc(item?.content || "")}</textarea></label>
     <div class="grid2"><label class="field"><span>Data *</span><input type="date" name="occurred_at" required value="${esc((item?.occurred_at || new Date().toISOString()).slice(0, 10))}"></label>
       <label class="field"><span>Fonte *</span><input name="source_label" required value="${esc(item?.source?.label || "Treinador")}"></label></div>
-    <label class="field"><span>Prioridade do Head Coach</span><select name="priority"><option value="">— ainda não definida —</option>${[1, 2, 3].map((n) => `<option value="${n}" ${Number(item?.metadata?.priority) === n ? "selected" : ""}>Prioridade ${n}</option>`).join("")}</select>
-      <div class="hint">Define apenas quando o treinador confirmar que este problema deve orientar o próximo treino.</div></label>
-    <input type="hidden" name="source_type" value="${esc(item?.source?.type || (ref?.type === "match" ? "match" : ref?.type === "training" ? "training" : ref?.type === "player" ? "player" : "coach"))}">
-    <input type="hidden" name="subject_type" value="${esc(ref?.type)}"><input type="hidden" name="subject_id" value="${esc(ref?.id)}">
-    ${ref ? `<div class="card"><span class="s">Associado a</span><div class="t">${esc(memorySubjectLabel(ref.type))} #${esc(ref.id)}</div></div>` : ""}
-    <div class="field"><span>Evidência</span><div class="pills" style="flex-direction:column;align-items:stretch">${links}</div>
-      <div class="hint">Obrigatória para Diagnóstico.</div></div>
-    <div class="field"><span>Cadeia anterior</span><div class="pills" style="flex-direction:column;align-items:stretch">${related}</div>
-      <div class="hint">Obrigatória para Intervenção e Resultado.</div></div>
+    <label class="field"><span>Prioridade do Head Coach</span><select name="priority"><option value="">— ainda não definida —</option>${[1,2,3].map((n) => `<option value="${n}" ${Number(item?.metadata?.priority) === n ? "selected" : ""}>Prioridade ${n}</option>`).join("")}</select></label>
+    <input type="hidden" name="source_type" value="${esc(item?.source?.type || "coach")}">
+    <input type="hidden" name="chain_root_id" value="${esc(chainRoot)}">
+    <div class="field"><span>Evidência</span><div class="pills memory-options">${links}</div>
+      <div class="hint">Diagnóstico exige pelo menos uma evidência. O sistema preserva a origem e os IDs usados.</div></div>
+    <div class="field"><span>Cadeia anterior</span><div class="pills memory-options">${related}</div>
+      <div class="hint">Usa para ligar Decisão, Intervenção e Resultado aos passos anteriores.</div></div>
     <div class="actions"><button class="btn" type="submit">${id ? "Guardar revisão" : "Guardar"}</button><a class="btn ghost" href="${id ? "#/head-coach/memoria/" + id : "#/head-coach"}">Cancelar</a></div>
   </form>`);
 }
@@ -811,6 +914,9 @@ async function viewMemoryDetail(id) {
   const loadLinks = async (ids) => (await Promise.all((ids || []).map((x) => HeadCoachMemory.get(x)))).filter(Boolean);
   const [evidence, related] = await Promise.all([loadLinks(m.evidence_ids), loadLinks(m.related_ids)]);
   const linkList = (title, xs) => xs.length ? `<div class="divider"><div class="s" style="margin-bottom:6px">${title}</div>${xs.map((x) => `<a class="btn-link" style="display:block;margin:5px 0" href="#/head-coach/memoria/${x.id}">${esc(MEMORY_KIND_LABELS[x.kind])} · ${esc(x.title)}</a>`).join("")}</div>` : "";
+  const next = proximoPassoMemoria(m.kind);
+  const nextLabel = next ? MEMORY_KIND_LABELS[next] : null;
+  const media = await renderMediaSection("memory", m.id);
   setView(MEMORY_KIND_LABELS[m.kind], `<div class="card" style="margin-bottom:16px">
     <div class="row"><span class="tag grama">${esc(MEMORY_KIND_LABELS[m.kind])}</span><span class="grow"></span><span class="s">${fmtData((m.occurred_at || "").slice(0, 10))}</span></div>
     <h2 style="font-weight:700;margin-top:12px">${esc(m.title)}</h2><p style="white-space:pre-line;margin-top:8px">${esc(m.content)}</p>
@@ -818,19 +924,64 @@ async function viewMemoryDetail(id) {
     ${(m.subject_refs || []).map((r) => `<div class="s">${esc(memorySubjectLabel(r.type))} #${esc(r.id)}</div>`).join("")}
     ${linkList("Evidência", evidence)}${linkList("Cadeia relacionada", related)}
   </div>
-  ${m.status === "active" ? `<div class="actions"><a class="btn" href="#/head-coach/memoria/${m.id}/editar">Criar revisão</a><button class="btn danger" data-action="arquivar-memoria" data-id="${m.id}">Arquivar</button></div>` : ""}`);
+  ${m.status === "active" ? `<div class="actions">${next ? `<a class="btn" href="#/head-coach/memoria/novo/from/${m.id}/${next}">→ ${esc(nextLabel)}</a>` : ""}<a class="btn ghost" href="#/head-coach/memoria/${m.id}/editar">Rever</a><button class="btn danger" data-action="arquivar-memoria" data-id="${m.id}">Arquivar</button></div>` : ""}
+  ${media}`);
+}
+
+function chatClaimLabel(kind) {
+  return { fact: "Facto", observation: "Observação", hypothesis: "Hipótese", diagnosis: "Diagnóstico" }[kind] || kind;
+}
+
+function chatMessageHTML(message) {
+  if (message.role === "user") return `<div class="card" style="margin:0 0 12px 28px;background:var(--slate-100)"><div class="s">Treinador</div><p style="white-space:pre-line">${esc(message.text)}</p></div>`;
+  const r = message.response || { summary: message.text, claims: [], uncertainties: [], questions: [], recommendations: [] };
+  const claims = (r.claims || []).map((c) => `<div class="card" style="margin-top:8px"><span class="tag grama">${esc(chatClaimLabel(c.kind))}</span><p style="margin-top:6px">${esc(c.text)}</p>${c.evidence_ids?.length ? `<div class="s">Evidência: ${c.evidence_ids.map((id) => `<a class="btn-link" href="#/head-coach/memoria/${id}">#${id}</a>`).join(", ")}</div>` : ""}</div>`).join("");
+  const uncertainties = r.uncertainties?.length ? `<div class="divider"><div class="s">O que ainda não sabemos</div><ul style="padding-left:20px">${r.uncertainties.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : "";
+  const questions = r.questions?.length ? `<div class="divider"><div class="s">Perguntas úteis</div><ul style="padding-left:20px">${r.questions.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : "";
+  const recs = (r.recommendations || []).map((rec) => {
+    const done = rec.status !== "proposed";
+    const status = { accepted: "Aceite", changed: "Alterada e aceite", rejected: "Rejeitada" }[rec.status] || "Proposta";
+    return `<div class="card" style="margin-top:10px;border-color:var(--grama)"><div class="row"><span class="t grow">${esc(rec.title)}</span><span class="tag">${status}</span></div>
+      <p style="margin-top:6px">${esc(rec.action)}</p>${rec.rationale ? `<p class="muted" style="margin-top:5px">${esc(rec.rationale)}</p>` : ""}
+      ${rec.measurement ? `<div class="divider"><div class="s">Como medir</div><p>${esc(rec.measurement)}</p></div>` : ""}
+      ${done ? (rec.memory_id ? `<a class="btn-link" href="#/head-coach/memoria/${rec.memory_id}">Ver decisão na memória</a>` : "") : `<div class="actions" style="margin-top:10px"><button class="btn sm" data-action="chat-rec" data-message="${message.id}" data-rec="${esc(rec.id)}" data-decision="accept">Aceitar</button><button class="btn sm ghost" data-action="chat-rec" data-message="${message.id}" data-rec="${esc(rec.id)}" data-decision="change" data-text="${esc(rec.action)}">Alterar</button><button class="btn sm danger" data-action="chat-rec" data-message="${message.id}" data-rec="${esc(rec.id)}" data-decision="reject">Rejeitar</button></div>`}
+    </div>`;
+  }).join("");
+  return `<div class="card" style="margin:0 28px 16px 0"><div class="s">Head Coach IA</div><p style="white-space:pre-line;font-weight:600;margin-top:5px">${esc(r.summary)}</p>${claims}${uncertainties}${questions}${recs}</div>`;
+}
+
+async function viewHeadCoachChat(conversationId) {
+  const conversations = await HeadCoachEngine.listConversations();
+  const conversation = conversationId ? await HeadCoachEngine.getConversation(conversationId) : null;
+  if (conversationId && !conversation) return go("#/head-coach/chat");
+  const messages = conversation ? await HeadCoachEngine.getMessages(conversation.id) : [];
+  const configured = !!iaConfig().key;
+  const consented = localStorage.getItem("head_coach_context_consent") === "1";
+  const history = conversations.length ? `<div class="pills" style="margin-bottom:14px"><a class="pill ${!conversation ? "on" : ""}" href="#/head-coach/chat">Nova</a>${conversations.slice(0, 8).map((c) => `<a class="pill ${conversation?.id === c.id ? "on" : ""}" href="#/head-coach/chat/${c.id}">${esc(c.title)}</a>`).join("")}</div>` : "";
+  const consent = consented ? `<div class="hint">🔒 O contexto relevante será enviado ao provider configurado. As conversas ficam guardadas neste dispositivo.</div>` : `<label class="card" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="consent" value="1" required style="width:auto;margin-top:3px"><span><b>Autorizar envio de contexto</b><br><span class="s">A pergunta, nomes e observações relevantes podem ser enviados ao OpenRouter. Fotografias e o backup completo não são enviados.</span></span></label>`;
+  setView("Perguntar ao Head Coach", `
+    <div class="head"><a class="btn-link" href="#/head-coach">← Dashboard</a><a class="btn-link" href="#/dados">Configurar IA</a></div>
+    ${history}
+    ${configured ? "" : `<div class="card" style="margin-bottom:14px;border-color:var(--amber)">Falta a chave OpenRouter. <a class="btn-link" href="#/dados">Configurar em Dados → IA</a>.</div>`}
+    <div class="chat-history">${messages.length ? messages.map(chatMessageHTML).join("") : `<div class="empty"><div class="big">💬</div>Pergunta sobre a equipa, um jogo, um treino ou um jogador. O contexto relevante é escolhido automaticamente.</div>`}</div>
+    <form class="stack" data-form="head-coach-chat" data-conversation="${conversation?.id || ""}" style="margin-top:16px">
+      <label class="field"><span>Pergunta</span><textarea name="question" rows="3" required placeholder="Ex.: O que devo trabalhar no próximo treino?"></textarea></label>
+      ${consent}
+      <button class="btn" type="submit" ${configured ? "" : "disabled"}>Enviar ao Head Coach</button>
+      <p class="muted chat-error" style="color:var(--red);display:none"></p>
+    </form>`);
 }
 
 // ---------- DADOS (cópia de segurança) ----------
 async function viewDados() {
   const c = {};
-  for (const s of ["jogadores", "exercicios", "treinos", "jogos"]) c[s] = (await DB.listar(s)).length;
+  for (const s of ["jogadores", "exercicios", "treinos", "jogos", "memory_items", "media_items"]) c[s] = (await DB.listar(s)).length;
   setView("Dados", `
     <div class="card" style="margin-bottom:16px">
       <h2 style="font-weight:700;margin-bottom:8px">Cópia de segurança</h2>
       <p class="muted" style="margin-bottom:4px">Os dados vivem só neste dispositivo. Exporta com frequência para não perder nada.</p>
       <dl class="info" style="margin-top:8px">
-        <dt>Jogadores</dt><dd>${c.jogadores}</dd><dt>Exercícios</dt><dd>${c.exercicios}</dd><dt>Treinos</dt><dd>${c.treinos}</dd><dt>Jogos</dt><dd>${c.jogos}</dd>
+        <dt>Jogadores</dt><dd>${c.jogadores}</dd><dt>Exercícios</dt><dd>${c.exercicios}</dd><dt>Treinos</dt><dd>${c.treinos}</dd><dt>Jogos</dt><dd>${c.jogos}</dd><dt>Memória</dt><dd>${c.memory_items}</dd><dt>Media</dt><dd>${c.media_items}</dd>
       </dl>
     </div>
     <div class="actions" style="flex-direction:column;gap:10px">
@@ -897,6 +1048,19 @@ app.addEventListener("click", async (ev) => {
   }
   if (a === "arquivar-memoria") {
     if (confirm("Arquivar este registo? O histórico será preservado.")) { await HeadCoachMemory.archive(alvo.dataset.id); go("#/head-coach"); }
+  }
+  if (a === "apagar-media") {
+    if (confirm("Remover este media associado?")) { await HeadCoachMedia.remove(alvo.dataset.id); return router(); }
+  }
+  if (a === "chat-rec") {
+    const decision = alvo.dataset.decision;
+    let changed = null;
+    if (decision === "change") {
+      changed = prompt("Altera a recomendação antes de a guardar como decisão:", alvo.dataset.text || "");
+      if (changed == null) return;
+    }
+    await HeadCoachEngine.actOnRecommendation(alvo.dataset.message, alvo.dataset.rec, decision, changed);
+    return router();
   }
   if (a === "carregar-base") {
     const n = (typeof EXERCICIOS_BASE !== "undefined") ? EXERCICIOS_BASE.length : 0;
@@ -967,18 +1131,67 @@ app.addEventListener("submit", async (ev) => {
       principles: String(fd.get("principles") || "").split(/\r?\n/).map((x) => x.trim()).filter(Boolean) });
     return go("#/head-coach");
   }
+  if (tipo === "media") {
+    const subjectType = form.dataset.subjectType, subjectId = form.dataset.subjectId;
+    const f = fd.get("file");
+    try {
+      const dataUrl = f && f.size ? await ficheiroDataURL(f) : null;
+      await HeadCoachMedia.create({
+        team_id: DEFAULT_TEAM_ID, subject_type: subjectType, subject_id: subjectId,
+        type: fd.get("type"), title: txt(fd.get("title")), url: txt(fd.get("url")), data_url: dataUrl,
+        file_name: f && f.size ? f.name : null, mime_type: f && f.size ? f.type : null,
+        size: f && f.size ? f.size : null, note: txt(fd.get("note")),
+      });
+      return go(subjectHref(subjectType, subjectId));
+    } catch (e) { alert(e.message); return; }
+  }
   if (tipo === "memory") {
-    const subjectType = txt(fd.get("subject_type")), subjectId = txt(fd.get("subject_id"));
-    const obj = { team_id: DEFAULT_TEAM_ID, kind: fd.get("kind"), title: txt(fd.get("title")), content: fd.get("content"),
-      occurred_at: fd.get("occurred_at"), source: { type: fd.get("source_type"), label: fd.get("source_label"),
+    const subjectKey = txt(fd.get("subject_key"));
+    let subjectType = null, subjectId = null;
+    if (subjectKey && subjectKey.includes(":")) {
+      const cut = subjectKey.indexOf(":");
+      subjectType = subjectKey.slice(0, cut);
+      subjectId = subjectKey.slice(cut + 1);
+    }
+    const atual = id ? await HeadCoachMemory.get(id) : null;
+    const metadata = { ...(atual?.metadata || {}) };
+    const priority = num(fd.get("priority")), chainRoot = num(fd.get("chain_root_id"));
+    if (priority) metadata.priority = priority; else delete metadata.priority;
+    if (chainRoot) metadata.chain_root_id = chainRoot;
+    const obj = {
+      team_id: DEFAULT_TEAM_ID, kind: fd.get("kind"), title: txt(fd.get("title")), content: fd.get("content"),
+      occurred_at: fd.get("occurred_at"),
+      source: { type: fd.get("source_type") || "coach", label: fd.get("source_label"),
         ref_type: subjectType, ref_id: subjectId },
       subject_refs: subjectType && subjectId ? [{ type: subjectType, id: subjectId, relation: "about" }] : [],
-      evidence_ids: fd.getAll("evidence_ids"), related_ids: fd.getAll("related_ids"),
-      metadata: num(fd.get("priority")) ? { ...(id ? (await HeadCoachMemory.get(id))?.metadata : {}), priority: num(fd.get("priority")) } : {} };
+      evidence_ids: fd.getAll("evidence_ids"), related_ids: fd.getAll("related_ids"), metadata,
+    };
     try {
       const novoId = id ? await HeadCoachMemory.revise(id, obj) : await HeadCoachMemory.create(obj);
       return go("#/head-coach/memoria/" + novoId);
     } catch (e) { alert(e.message); return; }
+  }
+  if (tipo === "head-coach-chat") {
+    const question = fd.get("question"), alreadyConsented = localStorage.getItem("head_coach_context_consent") === "1";
+    const consent = alreadyConsented || fd.get("consent") === "1";
+    const btn = form.querySelector('button[type="submit"]'), erro = form.querySelector(".chat-error");
+    btn.disabled = true; btn.textContent = "A analisar contexto…"; erro.style.display = "none";
+    const ac = new AbortController();
+    const cancel = () => ac.abort(); window.addEventListener("hashchange", cancel, { once: true });
+    try {
+      const out = await HeadCoachEngine.ask({ conversationId: num(form.dataset.conversation), question, consent, signal: ac.signal });
+      if (!alreadyConsented && consent) localStorage.setItem("head_coach_context_consent", "1");
+      window.removeEventListener("hashchange", cancel);
+      const target = "#/head-coach/chat/" + out.conversationId;
+      if (location.hash === target) return viewHeadCoachChat(out.conversationId);
+      return go(target);
+    } catch (e) {
+      window.removeEventListener("hashchange", cancel);
+      if (e.name === "AbortError") return;
+      erro.textContent = "Erro: " + e.message; erro.style.display = "block";
+      btn.disabled = false; btn.textContent = "Enviar ao Head Coach";
+    }
+    return;
   }
   if (tipo === "exercicio") {
     const obj = { titulo: fd.get("titulo"), objetivo: txt(fd.get("objetivo")), categoria: txt(fd.get("categoria")),

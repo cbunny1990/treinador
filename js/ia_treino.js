@@ -226,11 +226,11 @@ Devolve JSON exatamente com este formato:
 // ---- chamada OpenRouter (com retry no 429: modelos free saturam a segundos) ----
 // `signal` (opcional): permite cancelar o pedido se o utilizador sair do ecrã antes de a
 // IA responder — evita que uma resposta tardia tente atualizar um formulário já fechado.
-async function iaChamarOpenRouter(key, modelo, system, user, signal) {
+async function iaChamarOpenRouter(key, modelo, system, user, signal, temperature = 0.8) {
   const body = JSON.stringify({
     model: modelo,
     messages: [{ role: "system", content: system }, { role: "user", content: user }],
-    temperature: 0.8, // um pouco mais de variedade entre treinos
+    temperature,
   });
   const MAX = 4; // ponytail: 4 tentativas com espera crescente resolve o 429 transitório dos free
   let ultimoErro = "";

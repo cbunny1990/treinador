@@ -170,6 +170,17 @@ dl.info dt { color: var(--slate-500); }
 .nivel input:checked ~ .n-v { background: var(--grama); border-color: var(--grama); color: #fff; }
 .nivel input:checked ~ .n-l { border-color: var(--grama); color: var(--grama); font-weight: 600; }
 
+/* head coach: cadeia, aprendizagem e media */
+.memory-options { flex-direction: column; align-items: stretch; max-height: 260px; overflow: auto; }
+.memory-choice { display: flex; align-items: flex-start; gap: 7px; border-radius: 12px; }
+.memory-choice input { margin-top: 2px; }
+.media-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.media-row > .grow { flex: 1; min-width: 0; }
+.media-thumb { width: 56px; height: 56px; object-fit: cover; border-radius: 10px; flex-shrink: 0; }
+.media-kind { width: 44px; height: 44px; display: grid; place-items: center; font-size: 24px; background: var(--slate-100); border-radius: 10px; flex-shrink: 0; }
+.cycle-card { margin-bottom: 10px; }
+.cycle-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; }
+
 /* toast / offline */
 .badge-off { font-size: 11px; background: #fff3; padding: 2px 8px; border-radius: 999px; margin-left: auto; }
 
