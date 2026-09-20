@@ -36,10 +36,13 @@ test("migra v3, gere memória e continua offline", async ({ page, context }) => 
   expect(migrated).toEqual({ version: 4, teamId: "default" });
 
   await page.getByRole("link", { name: /Memória da equipa/ }).click();
+  await expect(page.getByRole("heading", { name: "Head Coach" })).toBeVisible();
+  await page.getByRole("link", { name: "Ver memória" }).click();
   await expect(page.getByRole("heading", { name: "Memória da equipa" })).toBeVisible();
   await page.getByRole("link", { name: "+ Registar" }).click();
   await page.getByLabel("Título").fill("Saída da zona defensiva");
   await page.getByLabel("Conteúdo *").fill("A equipa acumulou jogadores junto do guarda-redes.");
+  await page.getByLabel("Prioridade do Head Coach").selectOption("1");
   await page.getByRole("button", { name: "Guardar", exact: true }).click();
   await expect(page.getByText("A equipa acumulou jogadores junto do guarda-redes.")).toBeVisible();
   await expect(page.getByText("Observação", { exact: true }).first()).toBeVisible();
@@ -55,13 +58,15 @@ test("migra v3, gere memória e continua offline", async ({ page, context }) => 
   await page.evaluate(() => navigator.serviceWorker.ready);
   await context.setOffline(true);
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Memória da equipa" })).toBeVisible();
-  await expect(page.getByText("Saída da zona defensiva")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Head Coach" })).toBeVisible();
+  await expect(page.getByText("Saída da zona defensiva").first()).toBeVisible();
+  await expect(page.getByText("Prioridade definida")).toBeVisible();
 });
 
 test("importa pacote privado sintético por merge", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("link", { name: /Memória da equipa/ }).click();
+  await page.getByRole("link", { name: "Ver memória" }).click();
   await expect(page.getByRole("heading", { name: "Memória da equipa" })).toBeVisible();
   page.on("dialog", (dialog) => dialog.accept());
   const pack = {
@@ -75,4 +80,8 @@ test("importa pacote privado sintético por merge", async ({ page }) => {
   });
   await expect(page.getByText("Equipa sintética")).toBeVisible();
   await expect(page.getByText("Observação sintética.")).toBeVisible();
+  await page.goto("/#/head-coach");
+  await expect(page.getByRole("heading", { name: "Head Coach" })).toBeVisible();
+  await expect(page.getByText("Equipa sintética")).toBeVisible();
+  await expect(page.getByText("Jogador sintético")).toBeVisible();
 });
