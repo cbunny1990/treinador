@@ -31,7 +31,7 @@ function fmtData(iso) {
   const [a, m, d] = iso.split("-");
   return `${d}/${m}/${a}`;
 }
-const state = { fj: null, fcat: null, fesc: null }; // filtros
+const state = { fj: null, fcat: null, fesc: null, fmem: null }; // filtros
 
 // Foto do jogador: reduz a 256px e guarda como dataURL JPEG no próprio registo do jogador
 // (sem store novo, sem migração). ~15 KB cada; entra no backup exportado.
@@ -96,6 +96,16 @@ async function router() {
       return viewCalendario();
     }
     if (p[0] === "dados") return viewDados();
+    if (p[0] === "head-coach") {
+      if (p[1] === "equipa") return viewTeamForm();
+      if (p[1] === "modelo") return viewGameModelForm();
+      if (p[1] === "memoria") {
+        if (p[2] === "novo") return viewMemoryForm(null, p[3], p[4]);
+        if (p[2] && p[3] === "editar") return viewMemoryForm(p[2]);
+        if (p[2]) return viewMemoryDetail(p[2]);
+      }
+      return viewHeadCoachMemory();
+    }
     viewHome();
   } catch (e) {
     app.innerHTML = `<div class="card">Erro: ${esc(e.message)}</div>`;
@@ -119,6 +129,7 @@ function viewHome() {
       <a class="tile" href="#/jogos/novo"><span class="ic">⚽</span><span class="t">Novo jogo</span><span class="s">Registar um jogo</span></a>
       <a class="tile" href="#/jogadores/novo"><span class="ic">➕</span><span class="t">Novo jogador</span><span class="s">Adicionar ao plantel</span></a>
       <a class="tile" href="#/dados"><span class="ic">💾</span><span class="t">Dados</span><span class="s">Cópia de segurança</span></a>
+      <a class="tile" href="#/head-coach"><span class="ic">🧠</span><span class="t">Memória da equipa</span><span class="s">Evidência e decisões do Head Coach</span></a>
     </div>`);
 }
 
@@ -206,6 +217,7 @@ async function viewJogadorDetalhe(id) {
     </div>
     <div class="actions">
       <a class="btn" href="#/jogadores/${j.id}/editar">Editar</a>
+      <a class="btn ghost" href="#/head-coach/memoria/novo/player/${j.id}">🧠 Observar</a>
       <button class="btn danger" data-action="apagar-jogador" data-id="${j.id}">Apagar</button>
     </div>
     ${await secaoAvaliacoes(j)}`);
@@ -537,6 +549,7 @@ async function viewTreinoDetalhe(id) {
         <button class="btn" data-action="partilhar-treino" data-id="${t.id}" style="flex:1">📲 Partilhar</button>
         <button class="btn ghost" data-action="gcal-treino" data-id="${t.id}" style="flex:1">📅 Google Calendar</button>
       </div>
+      <a class="btn ghost" href="#/head-coach/memoria/novo/training/${t.id}" style="width:100%;margin-top:8px">🧠 Registar observação</a>
     </div>
     <section style="margin-bottom:24px">
       <div class="head"><h2>Plano da sessão</h2><span class="total">${total} min</span></div>
@@ -651,9 +664,112 @@ async function viewJogoDetalhe(id) {
     <div class="actions" style="flex-direction:column;gap:10px">
       <button class="btn" data-action="partilhar-jogo" data-id="${j.id}" style="width:100%">📲 Partilhar (WhatsApp)</button>
       <button class="btn ghost" data-action="gcal-jogo" data-id="${j.id}" style="width:100%">📅 Adicionar ao Google Calendar</button>
+      <a class="btn ghost" href="#/head-coach/memoria/novo/match/${j.id}" style="width:100%">🧠 Registar observação na memória</a>
     </div>
     ${secaoDificuldades("jogos", j)}
     <div class="divider"><button class="btn danger" data-action="apagar-jogo" data-id="${j.id}" style="width:100%">🗑️ Apagar jogo</button></div>`);
+}
+
+// ---------- HEAD COACH: MEMÓRIA DA EQUIPA ----------
+async function viewHeadCoachMemory() {
+  const team = await HeadCoachMemory.ensureTeam();
+  const gameModel = await HeadCoachMemory.currentGameModel(team.id);
+  const items = await HeadCoachMemory.list(team.id, { kind: state.fmem });
+  const pills = MEMORY_KINDS.map((k) => `<button class="pill ${state.fmem === k ? "on" : ""}" data-action="fmem" data-kind="${k}">${MEMORY_KIND_LABELS[k]}</button>`).join("");
+  const rows = items.length ? `<ul class="list">${items.map((m) => `
+    <li><a class="card" style="display:block" href="#/head-coach/memoria/${m.id}">
+      <div class="row"><span class="tag grama">${esc(MEMORY_KIND_LABELS[m.kind])}</span><span class="grow"></span><span class="s">${fmtData((m.occurred_at || "").slice(0, 10))}</span></div>
+      <div class="t" style="margin-top:8px">${esc(m.title)}</div>
+      <div class="s" style="margin-top:3px">Fonte: ${esc(m.source?.label || m.source?.type || "—")}</div>
+    </a></li>`).join("")}</ul>` : `<div class="empty"><div class="big">🧠</div>Ainda sem registos${state.fmem ? " desta classificação" : ""}.</div>`;
+  setView("Memória da equipa", `
+    <div class="card" style="margin-bottom:16px">
+      <div class="row"><div class="grow"><div class="t">${esc(team.nome)}</div><div class="s">${esc(team.clube) || "Clube por definir"}${team.escalao ? " · " + esc(team.escalao) : ""}</div></div>
+        <a class="btn-link" href="#/head-coach/equipa">Configurar</a></div>
+      <div class="divider"><div class="s">Modelo de jogo</div><div>${gameModel ? esc(gameModel.name) : "Ainda não definido"} · <a class="btn-link" href="#/head-coach/modelo">${gameModel ? "Editar" : "Criar"}</a></div></div>
+    </div>
+    <div class="head"><span class="muted">${items.length} registo(s)</span><a class="btn sm" href="#/head-coach/memoria/novo">+ Registar</a></div>
+    <div class="pills" style="margin-bottom:16px"><button class="pill ${!state.fmem ? "on" : ""}" data-action="fmem" data-kind="">Todos</button>${pills}</div>
+    ${rows}
+    <div class="card" style="margin-top:16px">
+      <h2 style="font-weight:700;margin-bottom:6px">Importação privada</h2>
+      <p class="muted" style="font-size:12px;margin-bottom:10px">Faz merge de um pacote ${HEAD_COACH_MEMORY_SCHEMA}; não substitui o backup atual.</p>
+      <label class="btn ghost" style="width:100%;cursor:pointer">Importar dados da equipa
+        <input type="file" accept="application/json" data-action="importar-equipa" hidden></label>
+    </div>`);
+}
+
+async function viewTeamForm() {
+  const t = await HeadCoachMemory.ensureTeam();
+  setView("Configurar equipa", `<form class="stack" data-form="team" data-id="${esc(t.id)}">
+    <label class="field"><span>Nome da equipa *</span><input name="nome" required value="${esc(t.nome)}"></label>
+    <label class="field"><span>Clube</span><input name="clube" value="${esc(t.clube)}"></label>
+    <div class="grid2"><label class="field"><span>Escalão</span><input name="escalao" value="${esc(t.escalao)}"></label>
+      <label class="field"><span>Época</span><input name="epoca" placeholder="2026/27" value="${esc(t.epoca)}"></label></div>
+    <div class="grid2"><label class="field"><span>Competição</span><input name="competicao" value="${esc(t.competicao)}"></label>
+      <label class="field"><span>Formato</span><input name="formato" placeholder="5v5" value="${esc(t.formato)}"></label></div>
+    <label class="field"><span>Horários</span><textarea name="horarios" rows="3" placeholder="Segunda e quinta, 19:15–20:30">${esc(t.horarios?.texto)}</textarea></label>
+    <div class="actions"><button class="btn" type="submit">Guardar</button><a class="btn ghost" href="#/head-coach">Cancelar</a></div>
+  </form>`);
+}
+
+async function viewGameModelForm() {
+  const team = await HeadCoachMemory.ensureTeam();
+  const m = await HeadCoachMemory.currentGameModel(team.id);
+  setView("Modelo de jogo", `<form class="stack" data-form="game-model" data-id="${m?.id || ""}">
+    <label class="field"><span>Nome *</span><input name="name" required value="${esc(m?.name || "Modelo de jogo")}"></label>
+    <label class="field"><span>Em vigor desde</span><input type="date" name="effective_from" value="${esc(m?.effective_from || new Date().toISOString().slice(0, 10))}"></label>
+    <label class="field"><span>Com bola</span><textarea name="with_ball" rows="6" placeholder="Um princípio concreto por linha">${esc(m?.with_ball)}</textarea></label>
+    <label class="field"><span>Sem bola</span><textarea name="without_ball" rows="6" placeholder="Um princípio concreto por linha">${esc(m?.without_ball)}</textarea></label>
+    <label class="field"><span>Princípios gerais</span><textarea name="principles" rows="4" placeholder="Um princípio por linha">${esc((m?.principles || []).join("\n"))}</textarea></label>
+    <div class="actions"><button class="btn" type="submit">Guardar</button><a class="btn ghost" href="#/head-coach">Cancelar</a></div>
+  </form>`);
+}
+
+function memorySubjectLabel(type) {
+  return { player: "Jogador", training: "Treino", match: "Jogo", team: "Equipa" }[type] || type;
+}
+
+async function viewMemoryForm(id, subjectType, subjectId) {
+  const item = id ? await HeadCoachMemory.get(id) : null;
+  if (id && !item) return go("#/head-coach");
+  const active = (await HeadCoachMemory.list()).filter((m) => !item || m.id !== item.id);
+  const selectedEvidence = new Set(item?.evidence_ids || []), selectedRelated = new Set(item?.related_ids || []);
+  const ref = item?.subject_refs?.[0] || (subjectType && subjectId ? { type: subjectType, id: subjectId, relation: "about" } : null);
+  const links = active.length ? active.map((m) => `<label class="pill" style="display:flex"><input type="checkbox" name="evidence_ids" value="${m.id}" ${selectedEvidence.has(m.id) ? "checked" : ""} style="width:auto;margin-right:6px">${MEMORY_KIND_LABELS[m.kind]} · ${esc(m.title)}</label>`).join("") : `<span class="muted">Ainda não existem outros registos.</span>`;
+  const related = active.length ? active.map((m) => `<label class="pill" style="display:flex"><input type="checkbox" name="related_ids" value="${m.id}" ${selectedRelated.has(m.id) ? "checked" : ""} style="width:auto;margin-right:6px">${MEMORY_KIND_LABELS[m.kind]} · ${esc(m.title)}</label>`).join("") : `<span class="muted">Ainda não existem outros registos.</span>`;
+  setView(id ? "Rever memória" : "Novo registo", `<form class="stack" data-form="memory" data-id="${id || ""}">
+    <label class="field"><span>Classificação *</span><select name="kind" required>${MEMORY_KINDS.map((k) => `<option value="${k}" ${(item?.kind || "observation") === k ? "selected" : ""}>${MEMORY_KIND_LABELS[k]}</option>`).join("")}</select>
+      <div class="hint">Texto do treinador começa como Observação. Só escolhe Facto quando a fonte o confirmar.</div></label>
+    <label class="field"><span>Título</span><input name="title" value="${esc(item?.title)}"></label>
+    <label class="field"><span>Conteúdo *</span><textarea name="content" rows="5" required>${esc(item?.content)}</textarea></label>
+    <div class="grid2"><label class="field"><span>Data *</span><input type="date" name="occurred_at" required value="${esc((item?.occurred_at || new Date().toISOString()).slice(0, 10))}"></label>
+      <label class="field"><span>Fonte *</span><input name="source_label" required value="${esc(item?.source?.label || "Treinador")}"></label></div>
+    <input type="hidden" name="source_type" value="${esc(item?.source?.type || (ref?.type === "match" ? "match" : ref?.type === "training" ? "training" : ref?.type === "player" ? "player" : "coach"))}">
+    <input type="hidden" name="subject_type" value="${esc(ref?.type)}"><input type="hidden" name="subject_id" value="${esc(ref?.id)}">
+    ${ref ? `<div class="card"><span class="s">Associado a</span><div class="t">${esc(memorySubjectLabel(ref.type))} #${esc(ref.id)}</div></div>` : ""}
+    <div class="field"><span>Evidência</span><div class="pills" style="flex-direction:column;align-items:stretch">${links}</div>
+      <div class="hint">Obrigatória para Diagnóstico.</div></div>
+    <div class="field"><span>Cadeia anterior</span><div class="pills" style="flex-direction:column;align-items:stretch">${related}</div>
+      <div class="hint">Obrigatória para Intervenção e Resultado.</div></div>
+    <div class="actions"><button class="btn" type="submit">${id ? "Guardar revisão" : "Guardar"}</button><a class="btn ghost" href="${id ? "#/head-coach/memoria/" + id : "#/head-coach"}">Cancelar</a></div>
+  </form>`);
+}
+
+async function viewMemoryDetail(id) {
+  const m = await HeadCoachMemory.get(id);
+  if (!m) return go("#/head-coach");
+  const loadLinks = async (ids) => (await Promise.all((ids || []).map((x) => HeadCoachMemory.get(x)))).filter(Boolean);
+  const [evidence, related] = await Promise.all([loadLinks(m.evidence_ids), loadLinks(m.related_ids)]);
+  const linkList = (title, xs) => xs.length ? `<div class="divider"><div class="s" style="margin-bottom:6px">${title}</div>${xs.map((x) => `<a class="btn-link" style="display:block;margin:5px 0" href="#/head-coach/memoria/${x.id}">${esc(MEMORY_KIND_LABELS[x.kind])} · ${esc(x.title)}</a>`).join("")}</div>` : "";
+  setView(MEMORY_KIND_LABELS[m.kind], `<div class="card" style="margin-bottom:16px">
+    <div class="row"><span class="tag grama">${esc(MEMORY_KIND_LABELS[m.kind])}</span><span class="grow"></span><span class="s">${fmtData((m.occurred_at || "").slice(0, 10))}</span></div>
+    <h2 style="font-weight:700;margin-top:12px">${esc(m.title)}</h2><p style="white-space:pre-line;margin-top:8px">${esc(m.content)}</p>
+    <div class="divider"><dl class="info"><dt>Fonte</dt><dd>${esc(m.source?.label || "—")}</dd><dt>Estado</dt><dd>${esc(m.status)}</dd></dl></div>
+    ${(m.subject_refs || []).map((r) => `<div class="s">${esc(memorySubjectLabel(r.type))} #${esc(r.id)}</div>`).join("")}
+    ${linkList("Evidência", evidence)}${linkList("Cadeia relacionada", related)}
+  </div>
+  ${m.status === "active" ? `<div class="actions"><a class="btn" href="#/head-coach/memoria/${m.id}/editar">Criar revisão</a><button class="btn danger" data-action="arquivar-memoria" data-id="${m.id}">Arquivar</button></div>` : ""}`);
 }
 
 // ---------- DADOS (cópia de segurança) ----------
@@ -698,6 +814,7 @@ app.addEventListener("click", async (ev) => {
   if (!alvo) return;
   const a = alvo.dataset.action;
   if (a === "fj") { ev.preventDefault(); state.fj = alvo.dataset.e || null; return viewJogadores(); }
+  if (a === "fmem") { ev.preventDefault(); state.fmem = alvo.dataset.kind || null; return viewHeadCoachMemory(); }
   if (a === "ia-testar") {
     alvo.disabled = true; alvo.textContent = "🔑 A testar…";
     try { alert(await iaTestarChave()); } catch (e) { alert("Erro de rede: " + e.message); }
@@ -728,6 +845,9 @@ app.addEventListener("click", async (ev) => {
   if (a === "gcal-jogo") { await gcalJogo(alvo.dataset.id); }
   if (a === "apagar-jogo") {
     if (confirm("Apagar este jogo?")) { await DB.apagar("jogos", alvo.dataset.id); go("#/calendario"); }
+  }
+  if (a === "arquivar-memoria") {
+    if (confirm("Arquivar este registo? O histórico será preservado.")) { await HeadCoachMemory.archive(alvo.dataset.id); go("#/head-coach"); }
   }
   if (a === "carregar-base") {
     const n = (typeof EXERCICIOS_BASE !== "undefined") ? EXERCICIOS_BASE.length : 0;
@@ -761,6 +881,7 @@ app.addEventListener("change", async (ev) => {
     } catch (_) { alert("Não consegui ler essa imagem. Tenta outra."); }
   }
   if (a === "importar") { await importar(ev.target.files[0]); }
+  if (a === "importar-equipa") { await importarPacoteEquipa(ev.target.files[0]); }
 });
 
 app.addEventListener("submit", async (ev) => {
@@ -784,6 +905,30 @@ app.addEventListener("submit", async (ev) => {
       foto };
     const novoId = await salvar("jogadores", id, obj);
     return go("#/jogadores/" + novoId);
+  }
+  if (tipo === "team") {
+    await HeadCoachMemory.saveTeam({ id: form.dataset.id || DEFAULT_TEAM_ID, nome: fd.get("nome"), clube: txt(fd.get("clube")),
+      escalao: txt(fd.get("escalao")), epoca: txt(fd.get("epoca")), competicao: txt(fd.get("competicao")),
+      formato: txt(fd.get("formato")), horarios: txt(fd.get("horarios")) ? { texto: fd.get("horarios") } : null });
+    return go("#/head-coach");
+  }
+  if (tipo === "game-model") {
+    await HeadCoachMemory.saveGameModel({ id, team_id: DEFAULT_TEAM_ID, name: fd.get("name"), effective_from: fd.get("effective_from"),
+      with_ball: txt(fd.get("with_ball")), without_ball: txt(fd.get("without_ball")),
+      principles: String(fd.get("principles") || "").split(/\r?\n/).map((x) => x.trim()).filter(Boolean) });
+    return go("#/head-coach");
+  }
+  if (tipo === "memory") {
+    const subjectType = txt(fd.get("subject_type")), subjectId = txt(fd.get("subject_id"));
+    const obj = { team_id: DEFAULT_TEAM_ID, kind: fd.get("kind"), title: txt(fd.get("title")), content: fd.get("content"),
+      occurred_at: fd.get("occurred_at"), source: { type: fd.get("source_type"), label: fd.get("source_label"),
+        ref_type: subjectType, ref_id: subjectId },
+      subject_refs: subjectType && subjectId ? [{ type: subjectType, id: subjectId, relation: "about" }] : [],
+      evidence_ids: fd.getAll("evidence_ids"), related_ids: fd.getAll("related_ids") };
+    try {
+      const novoId = id ? await HeadCoachMemory.revise(id, obj) : await HeadCoachMemory.create(obj);
+      return go("#/head-coach/memoria/" + novoId);
+    } catch (e) { alert(e.message); return; }
   }
   if (tipo === "exercicio") {
     const obj = { titulo: fd.get("titulo"), objetivo: txt(fd.get("objetivo")), categoria: txt(fd.get("categoria")),
@@ -1002,6 +1147,20 @@ async function importar(file) {
     alert("Dados importados com sucesso.");
     viewDados();
   } catch (e) { alert("Erro ao importar: " + e.message); }
+}
+
+async function importarPacoteEquipa(file) {
+  if (!file) return;
+  try {
+    const payload = JSON.parse(await file.text());
+    const p = HeadCoachMemory.previewPackage(payload);
+    const resumo = `${p.players} jogador(es), ${p.game_models} modelo(s) de jogo e ${p.memory_items} registo(s) de memória`;
+    if (!confirm(`Importar por merge ${resumo}? Os dados atuais não serão apagados.`)) return;
+    const c = await HeadCoachMemory.importPackage(payload);
+    alert(`Importação concluída: ${c.players} jogador(es), ${c.game_models} modelo(s) e ${c.memory_items} memória(s).`);
+    state.fmem = null;
+    await viewHeadCoachMemory();
+  } catch (e) { alert("Erro ao importar equipa: " + e.message); }
 }
 
 // ---------- arranque ----------

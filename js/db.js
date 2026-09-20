@@ -1,7 +1,11 @@
 // Camada de dados offline (IndexedDB). Sem servidor: tudo vive no telemóvel.
 const DB_NOME = "treinador";
-const DB_VERSAO = 3;
-const STORES = ["jogadores", "exercicios", "treinos", "treino_itens", "presencas", "avaliacoes", "jogos"];
+const DB_VERSAO = 4;
+const DEFAULT_TEAM_ID = "default";
+const STORES = [
+  "jogadores", "exercicios", "treinos", "treino_itens", "presencas", "avaliacoes", "jogos",
+  "teams", "game_models", "memory_items",
+];
 
 let _db = null;
 
@@ -31,6 +35,44 @@ function abrirDB() {
       }
       if (!db.objectStoreNames.contains("jogos"))
         db.createObjectStore("jogos", { keyPath: "id", autoIncrement: true });
+
+      let teams;
+      if (!db.objectStoreNames.contains("teams")) {
+        teams = db.createObjectStore("teams", { keyPath: "id" });
+      } else teams = e.target.transaction.objectStore("teams");
+
+      let gameModels;
+      if (!db.objectStoreNames.contains("game_models")) {
+        gameModels = db.createObjectStore("game_models", { keyPath: "id", autoIncrement: true });
+        gameModels.createIndex("team_id", "team_id", { unique: false });
+        gameModels.createIndex("external_key", "external_key", { unique: false });
+      } else gameModels = e.target.transaction.objectStore("game_models");
+
+      let memoryItems;
+      if (!db.objectStoreNames.contains("memory_items")) {
+        memoryItems = db.createObjectStore("memory_items", { keyPath: "id", autoIncrement: true });
+        memoryItems.createIndex("team_id", "team_id", { unique: false });
+        memoryItems.createIndex("team_kind", ["team_id", "kind"], { unique: false });
+        memoryItems.createIndex("external_key", "external_key", { unique: false });
+      } else memoryItems = e.target.transaction.objectStore("memory_items");
+
+      // A migração decorre na própria transação de upgrade: ou fica toda aplicada, ou nada muda.
+      teams.put({
+        id: DEFAULT_TEAM_ID, nome: "Equipa principal", clube: null, escalao: "sub-8",
+        epoca: null, formato: null, competicao: null, horarios: null,
+        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      });
+      for (const nome of ["jogadores", "treinos", "jogos"]) {
+        const os = e.target.transaction.objectStore(nome);
+        if (!os.indexNames.contains("team_id")) os.createIndex("team_id", "team_id", { unique: false });
+        os.openCursor().onsuccess = (ev) => {
+          const cursor = ev.target.result;
+          if (!cursor) return;
+          const registo = cursor.value;
+          if (!registo.team_id) { registo.team_id = DEFAULT_TEAM_ID; cursor.update(registo); }
+          cursor.continue();
+        };
+      }
     };
     req.onsuccess = () => { _db = req.result; resolve(_db); };
     req.onerror = () => reject(req.error);
@@ -54,7 +96,7 @@ const DB = {
   },
   async obter(store, id) {
     const os = await _tx(store, "readonly");
-    return _prom(os.get(Number(id)));
+    return _prom(os.get(store === "teams" ? String(id) : Number(id)));
   },
   async criar(store, obj) {
     const os = await _tx(store, "readwrite");
@@ -67,7 +109,7 @@ const DB = {
   },
   async apagar(store, id) {
     const os = await _tx(store, "readwrite");
-    return _prom(os.delete(Number(id)));
+    return _prom(os.delete(store === "teams" ? String(id) : Number(id)));
   },
   async porIndice(store, indice, valor) {
     const os = await _tx(store, "readonly");
@@ -80,16 +122,61 @@ const DB = {
     return { versao: DB_VERSAO, exportado_em: new Date().toISOString(), dados };
   },
   async importarTudo(payload, substituir = true) {
+    if (!payload || !payload.dados) throw new Error("Ficheiro de backup inválido.");
     const db = await abrirDB();
     const tx = db.transaction(STORES, "readwrite");
     for (const s of STORES) {
       const os = tx.objectStore(s);
       if (substituir) os.clear();
-      for (const registo of (payload.dados[s] || [])) os.put(registo);
+      for (const registo of (payload.dados[s] || [])) {
+        const normalizado = (["jogadores", "treinos", "jogos"].includes(s) && !registo.team_id)
+          ? { ...registo, team_id: DEFAULT_TEAM_ID } : registo;
+        os.put(normalizado);
+      }
     }
     return new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve(true);
+      tx.oncomplete = async () => {
+        // Backups v1-v3 não tinham equipa; backups parciais também podem omiti-la.
+        if (!(await this.obter("teams", DEFAULT_TEAM_ID))) {
+          const agora = new Date().toISOString();
+          await this.atualizar("teams", { id: DEFAULT_TEAM_ID, nome: "Equipa principal", escalao: "sub-8", created_at: agora, updated_at: agora });
+        }
+        resolve(true);
+      };
       tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Importação cancelada."));
+    });
+  },
+  async gravarRevisaoMemoria(anterior, nova) {
+    const db = await abrirDB();
+    const tx = db.transaction("memory_items", "readwrite");
+    const os = tx.objectStore("memory_items");
+    return new Promise((resolve, reject) => {
+      let novoId;
+      const req = os.add(nova);
+      req.onsuccess = () => {
+        novoId = req.result;
+        os.put({ ...anterior, status: "superseded", superseded_by_id: novoId, updated_at: nova.updated_at });
+      };
+      tx.oncomplete = () => resolve(novoId);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Revisão cancelada."));
+    });
+  },
+  async gravarRevisaoModelo(anterior, novo) {
+    const db = await abrirDB();
+    const tx = db.transaction("game_models", "readwrite");
+    const os = tx.objectStore("game_models");
+    return new Promise((resolve, reject) => {
+      let novoId;
+      const req = os.add(novo);
+      req.onsuccess = () => {
+        novoId = req.result;
+        os.put({ ...anterior, status: "superseded", superseded_by_id: novoId, updated_at: novo.updated_at });
+      };
+      tx.oncomplete = () => resolve(novoId);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error("Revisão do modelo cancelada."));
     });
   },
 };

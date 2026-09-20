@@ -5,3 +5,9 @@ app/
 server.log
 __pycache__/
 *.pyc
+
+# Dados reais de equipas/jogadores: ficam apenas no dispositivo do treinador.
+*.private.json
+node_modules/
+test-results/
+playwright-report/
