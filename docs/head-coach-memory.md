@@ -47,3 +47,16 @@ npm run test:e2e
 ```
 
 Os testes end-to-end cobrem a migração v3→v4, criação/revisão, histórico, funcionamento offline e importação sintética.
+
+## Dashboard Head Coach (Fase 2)
+
+O dashboard é construído localmente por `HeadCoachDashboard.load()` e apresenta:
+
+- estado atual e modelo de jogo;
+- três prioridades, distinguindo prioridades confirmadas de sugestões baseadas em evidência;
+- próximo treino, exercícios, aspetos a observar e forma de medição;
+- último jogo e comparação simples com o anterior;
+- jogadores com observações, hipóteses ou diagnósticos recentes;
+- resultados medidos e últimas observações.
+
+Uma prioridade só é considerada confirmada quando o treinador seleciona Prioridade 1, 2 ou 3 no registo de memória. Na ausência dessa decisão, o dashboard pode mostrar observações coletivas como sugestões claramente identificadas — nunca como factos ou diagnósticos automáticos.

@@ -103,8 +103,9 @@ async function router() {
         if (p[2] === "novo") return viewMemoryForm(null, p[3], p[4]);
         if (p[2] && p[3] === "editar") return viewMemoryForm(p[2]);
         if (p[2]) return viewMemoryDetail(p[2]);
+        return viewHeadCoachMemory();
       }
-      return viewHeadCoachMemory();
+      return viewHeadCoachDashboard();
     }
     viewHome();
   } catch (e) {
@@ -671,6 +672,51 @@ async function viewJogoDetalhe(id) {
 }
 
 // ---------- HEAD COACH: MEMÓRIA DA EQUIPA ----------
+function dashboardMemoryLink(item, prefix = "") {
+  if (!item) return "";
+  return `<a class="btn-link" href="#/head-coach/memoria/${item.id}">${prefix}${esc(item.title)}</a>`;
+}
+
+async function viewHeadCoachDashboard() {
+  const d = await HeadCoachDashboard.load();
+  const team = d.team || { nome: "Equipa principal" };
+  const priorities = d.priorities.length ? d.priorities.map((p) => `<li class="card row">
+    <span class="avatar" style="width:34px;height:34px">${p.rank}</span><span class="grow"><span class="t">${esc(p.title)}</span>
+    <span class="s">${p.explicit ? "Prioridade definida" : "Sugestão baseada na evidência — confirmar"} · ${esc(MEMORY_KIND_LABELS[p.kind])}</span></span>
+    <a class="chev" href="#/head-coach/memoria/${p.id}">›</a></li>`).join("")
+    : `<li class="empty">Ainda sem problemas ou prioridades registados.</li>`;
+  const next = d.next_training;
+  const nextExercises = next.exercises.length ? `<ol style="padding-left:20px;margin-top:8px">${next.exercises.map((x) => `<li style="margin:5px 0">${esc(x.exercise?.titulo || "Exercício removido")} ${x.duracao_min ? `· ${x.duracao_min} min` : ""}</li>`).join("")}</ol>` : `<p class="muted" style="margin-top:8px">Ainda sem exercícios associados.</p>`;
+  const nextTrainingHtml = next.event ? `<div class="card">
+      <div class="row"><div class="grow"><div class="t">${fmtData(next.event.data)}${next.event.hora ? " · " + esc(next.event.hora) : ""}</div><div class="s">${esc(next.event.escalao)}</div></div><a class="btn-link" href="#/treinos/${next.event.id}">Abrir treino</a></div>
+      <div class="divider"><div class="s">Objetivo recomendado</div><p>${esc(next.objective) || "Definir a partir da prioridade principal."}</p>${next.source_id ? dashboardMemoryLink({ id: next.source_id, title: "Ver evidência" }) : ""}</div>
+      ${nextExercises}
+      ${next.observe ? `<div class="divider"><div class="s">O que observar</div><p>${esc(next.observe)}</p></div>` : ""}
+      ${next.measure ? `<div class="divider"><div class="s">Como medir</div><p>${esc(next.measure)}</p></div>` : ""}
+    </div>` : `<div class="card"><p class="muted">Ainda não existe um próximo treino no calendário.</p><div class="actions" style="margin-top:10px"><a class="btn" href="#/treinos/novo">Planear treino</a><a class="btn ghost" href="#/treinos/gerar">Gerar com IA</a></div></div>`;
+  const last = d.last_match;
+  const lastMatchHtml = last ? `<div class="card"><div class="row"><div class="grow"><div class="t">${esc(last.adversario)}</div><div class="s">${fmtData(last.data)} · ${last.casa_fora === "fora" ? "fora" : "casa"}</div></div><span class="media-badge">${last.golos_favor}-${last.golos_contra}</span></div>
+      ${last.dificuldades?.length ? `<div class="pills" style="margin-top:10px">${last.dificuldades.map((x) => `<span class="tag">${esc(x)}</span>`).join("")}</div>` : ""}
+      ${d.match_change ? `<p class="muted" style="margin-top:10px">${esc(d.match_change)}</p>` : ""}<a class="btn-link" href="#/jogos/${last.id}">Abrir jogo</a></div>`
+    : `<div class="card"><p class="muted">Ainda não existe um jogo concluído no calendário.</p><a class="btn-link" href="#/jogos/novo">Registar jogo</a></div>`;
+  const players = d.players_attention.length ? `<ul class="list">${d.players_attention.map((x) => `<li class="card row">${avatarHTML(x.player, 34)}<span class="grow"><span class="t">${esc(x.player.nome)}</span><span class="s">${x.count} registo(s) recente(s) · ${esc(x.latest.title)}</span></span><a class="chev" href="#/jogadores/${x.player.id}">›</a></li>`).join("")}</ul>`
+    : `<div class="empty">Sem jogadores sinalizados pela memória.</div>`;
+  const observations = d.latest_observations.length ? `<ul class="list">${d.latest_observations.map((x) => `<li class="card"><div class="s">${fmtData((x.occurred_at || "").slice(0, 10))} · ${esc(x.source?.label || "—")}</div>${dashboardMemoryLink(x)}</li>`).join("")}</ul>` : `<div class="empty">Ainda sem observações.</div>`;
+  const results = d.latest_results.length ? d.latest_results.map((x) => `<div class="card" style="margin-bottom:8px">${dashboardMemoryLink(x)}</div>`).join("") : `<p class="muted">Ainda sem resultados medidos. O dashboard mostrará evolução quando uma intervenção tiver resultado.</p>`;
+
+  setView("Head Coach", `
+    <div class="card" style="margin-bottom:16px"><div class="row"><div class="grow"><div class="t">${esc(team.nome)}</div><div class="s">${esc(team.clube) || "Clube por definir"}${team.escalao ? " · " + esc(team.escalao) : ""}</div></div><a class="btn-link" href="#/head-coach/equipa">Configurar</a></div>
+      <div class="divider"><div class="s">Estado atual</div><p style="font-weight:600">${esc(d.state.text)}</p></div>
+      <div class="s">Modelo de jogo: ${d.game_model ? esc(d.game_model.name) : "não definido"} · <a class="btn-link" href="#/head-coach/modelo">${d.game_model ? "Editar" : "Criar"}</a></div></div>
+    <div class="actions" style="margin-bottom:20px"><a class="btn" href="#/head-coach/memoria/novo">+ Registar evidência</a><a class="btn ghost" href="#/head-coach/memoria">Ver memória</a></div>
+    <section style="margin-bottom:24px"><div class="head"><h2>Prioridades</h2></div><ul class="list">${priorities}</ul></section>
+    <section style="margin-bottom:24px"><div class="head"><h2>Próximo treino</h2></div>${nextTrainingHtml}</section>
+    <section style="margin-bottom:24px"><div class="head"><h2>Último jogo</h2></div>${lastMatchHtml}</section>
+    <section style="margin-bottom:24px"><div class="head"><h2>Jogadores que precisam de atenção</h2></div>${players}</section>
+    <section style="margin-bottom:24px"><div class="head"><h2>Evolução</h2></div>${results}</section>
+    <section><div class="head"><h2>Últimas observações</h2><a class="btn-link" href="#/head-coach/memoria">Todas</a></div>${observations}</section>`);
+}
+
 async function viewHeadCoachMemory() {
   const team = await HeadCoachMemory.ensureTeam();
   const gameModel = await HeadCoachMemory.currentGameModel(team.id);
@@ -688,7 +734,8 @@ async function viewHeadCoachMemory() {
         <a class="btn-link" href="#/head-coach/equipa">Configurar</a></div>
       <div class="divider"><div class="s">Modelo de jogo</div><div>${gameModel ? esc(gameModel.name) : "Ainda não definido"} · <a class="btn-link" href="#/head-coach/modelo">${gameModel ? "Editar" : "Criar"}</a></div></div>
     </div>
-    <div class="head"><span class="muted">${items.length} registo(s)</span><a class="btn sm" href="#/head-coach/memoria/novo">+ Registar</a></div>
+    <div class="head"><a class="btn-link" href="#/head-coach">← Dashboard</a><a class="btn sm" href="#/head-coach/memoria/novo">+ Registar</a></div>
+    <div class="muted" style="margin-bottom:10px">${items.length} registo(s)</div>
     <div class="pills" style="margin-bottom:16px"><button class="pill ${!state.fmem ? "on" : ""}" data-action="fmem" data-kind="">Todos</button>${pills}</div>
     ${rows}
     <div class="card" style="margin-top:16px">
@@ -745,6 +792,8 @@ async function viewMemoryForm(id, subjectType, subjectId) {
     <label class="field"><span>Conteúdo *</span><textarea name="content" rows="5" required>${esc(item?.content)}</textarea></label>
     <div class="grid2"><label class="field"><span>Data *</span><input type="date" name="occurred_at" required value="${esc((item?.occurred_at || new Date().toISOString()).slice(0, 10))}"></label>
       <label class="field"><span>Fonte *</span><input name="source_label" required value="${esc(item?.source?.label || "Treinador")}"></label></div>
+    <label class="field"><span>Prioridade do Head Coach</span><select name="priority"><option value="">— ainda não definida —</option>${[1, 2, 3].map((n) => `<option value="${n}" ${Number(item?.metadata?.priority) === n ? "selected" : ""}>Prioridade ${n}</option>`).join("")}</select>
+      <div class="hint">Define apenas quando o treinador confirmar que este problema deve orientar o próximo treino.</div></label>
     <input type="hidden" name="source_type" value="${esc(item?.source?.type || (ref?.type === "match" ? "match" : ref?.type === "training" ? "training" : ref?.type === "player" ? "player" : "coach"))}">
     <input type="hidden" name="subject_type" value="${esc(ref?.type)}"><input type="hidden" name="subject_id" value="${esc(ref?.id)}">
     ${ref ? `<div class="card"><span class="s">Associado a</span><div class="t">${esc(memorySubjectLabel(ref.type))} #${esc(ref.id)}</div></div>` : ""}
@@ -924,7 +973,8 @@ app.addEventListener("submit", async (ev) => {
       occurred_at: fd.get("occurred_at"), source: { type: fd.get("source_type"), label: fd.get("source_label"),
         ref_type: subjectType, ref_id: subjectId },
       subject_refs: subjectType && subjectId ? [{ type: subjectType, id: subjectId, relation: "about" }] : [],
-      evidence_ids: fd.getAll("evidence_ids"), related_ids: fd.getAll("related_ids") };
+      evidence_ids: fd.getAll("evidence_ids"), related_ids: fd.getAll("related_ids"),
+      metadata: num(fd.get("priority")) ? { ...(id ? (await HeadCoachMemory.get(id))?.metadata : {}), priority: num(fd.get("priority")) } : {} };
     try {
       const novoId = id ? await HeadCoachMemory.revise(id, obj) : await HeadCoachMemory.create(obj);
       return go("#/head-coach/memoria/" + novoId);
