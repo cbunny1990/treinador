@@ -99,6 +99,7 @@ async function router() {
     if (p[0] === "head-coach") {
       if (p[1] === "equipa") return viewTeamForm();
       if (p[1] === "modelo") return viewGameModelForm();
+      if (p[1] === "chat") return viewHeadCoachChat(p[2]);
       if (p[1] === "memoria") {
         if (p[2] === "novo") return viewMemoryForm(null, p[3], p[4]);
         if (p[2] && p[3] === "editar") return viewMemoryForm(p[2]);
@@ -708,7 +709,7 @@ async function viewHeadCoachDashboard() {
     <div class="card" style="margin-bottom:16px"><div class="row"><div class="grow"><div class="t">${esc(team.nome)}</div><div class="s">${esc(team.clube) || "Clube por definir"}${team.escalao ? " · " + esc(team.escalao) : ""}</div></div><a class="btn-link" href="#/head-coach/equipa">Configurar</a></div>
       <div class="divider"><div class="s">Estado atual</div><p style="font-weight:600">${esc(d.state.text)}</p></div>
       <div class="s">Modelo de jogo: ${d.game_model ? esc(d.game_model.name) : "não definido"} · <a class="btn-link" href="#/head-coach/modelo">${d.game_model ? "Editar" : "Criar"}</a></div></div>
-    <div class="actions" style="margin-bottom:20px"><a class="btn" href="#/head-coach/memoria/novo">+ Registar evidência</a><a class="btn ghost" href="#/head-coach/memoria">Ver memória</a></div>
+    <div class="actions" style="margin-bottom:20px"><a class="btn" href="#/head-coach/chat">💬 Perguntar ao Head Coach</a><a class="btn ghost" href="#/head-coach/memoria/novo">+ Evidência</a><a class="btn ghost" href="#/head-coach/memoria">Memória</a></div>
     <section style="margin-bottom:24px"><div class="head"><h2>Prioridades</h2></div><ul class="list">${priorities}</ul></section>
     <section style="margin-bottom:24px"><div class="head"><h2>Próximo treino</h2></div>${nextTrainingHtml}</section>
     <section style="margin-bottom:24px"><div class="head"><h2>Último jogo</h2></div>${lastMatchHtml}</section>
@@ -821,6 +822,50 @@ async function viewMemoryDetail(id) {
   ${m.status === "active" ? `<div class="actions"><a class="btn" href="#/head-coach/memoria/${m.id}/editar">Criar revisão</a><button class="btn danger" data-action="arquivar-memoria" data-id="${m.id}">Arquivar</button></div>` : ""}`);
 }
 
+function chatClaimLabel(kind) {
+  return { fact: "Facto", observation: "Observação", hypothesis: "Hipótese", diagnosis: "Diagnóstico" }[kind] || kind;
+}
+
+function chatMessageHTML(message) {
+  if (message.role === "user") return `<div class="card" style="margin:0 0 12px 28px;background:var(--slate-100)"><div class="s">Treinador</div><p style="white-space:pre-line">${esc(message.text)}</p></div>`;
+  const r = message.response || { summary: message.text, claims: [], uncertainties: [], questions: [], recommendations: [] };
+  const claims = (r.claims || []).map((c) => `<div class="card" style="margin-top:8px"><span class="tag grama">${esc(chatClaimLabel(c.kind))}</span><p style="margin-top:6px">${esc(c.text)}</p>${c.evidence_ids?.length ? `<div class="s">Evidência: ${c.evidence_ids.map((id) => `<a class="btn-link" href="#/head-coach/memoria/${id}">#${id}</a>`).join(", ")}</div>` : ""}</div>`).join("");
+  const uncertainties = r.uncertainties?.length ? `<div class="divider"><div class="s">O que ainda não sabemos</div><ul style="padding-left:20px">${r.uncertainties.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : "";
+  const questions = r.questions?.length ? `<div class="divider"><div class="s">Perguntas úteis</div><ul style="padding-left:20px">${r.questions.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : "";
+  const recs = (r.recommendations || []).map((rec) => {
+    const done = rec.status !== "proposed";
+    const status = { accepted: "Aceite", changed: "Alterada e aceite", rejected: "Rejeitada" }[rec.status] || "Proposta";
+    return `<div class="card" style="margin-top:10px;border-color:var(--grama)"><div class="row"><span class="t grow">${esc(rec.title)}</span><span class="tag">${status}</span></div>
+      <p style="margin-top:6px">${esc(rec.action)}</p>${rec.rationale ? `<p class="muted" style="margin-top:5px">${esc(rec.rationale)}</p>` : ""}
+      ${rec.measurement ? `<div class="divider"><div class="s">Como medir</div><p>${esc(rec.measurement)}</p></div>` : ""}
+      ${done ? (rec.memory_id ? `<a class="btn-link" href="#/head-coach/memoria/${rec.memory_id}">Ver decisão na memória</a>` : "") : `<div class="actions" style="margin-top:10px"><button class="btn sm" data-action="chat-rec" data-message="${message.id}" data-rec="${esc(rec.id)}" data-decision="accept">Aceitar</button><button class="btn sm ghost" data-action="chat-rec" data-message="${message.id}" data-rec="${esc(rec.id)}" data-decision="change" data-text="${esc(rec.action)}">Alterar</button><button class="btn sm danger" data-action="chat-rec" data-message="${message.id}" data-rec="${esc(rec.id)}" data-decision="reject">Rejeitar</button></div>`}
+    </div>`;
+  }).join("");
+  return `<div class="card" style="margin:0 28px 16px 0"><div class="s">Head Coach IA</div><p style="white-space:pre-line;font-weight:600;margin-top:5px">${esc(r.summary)}</p>${claims}${uncertainties}${questions}${recs}</div>`;
+}
+
+async function viewHeadCoachChat(conversationId) {
+  const conversations = await HeadCoachEngine.listConversations();
+  const conversation = conversationId ? await HeadCoachEngine.getConversation(conversationId) : null;
+  if (conversationId && !conversation) return go("#/head-coach/chat");
+  const messages = conversation ? await HeadCoachEngine.getMessages(conversation.id) : [];
+  const configured = !!iaConfig().key;
+  const consented = localStorage.getItem("head_coach_context_consent") === "1";
+  const history = conversations.length ? `<div class="pills" style="margin-bottom:14px"><a class="pill ${!conversation ? "on" : ""}" href="#/head-coach/chat">Nova</a>${conversations.slice(0, 8).map((c) => `<a class="pill ${conversation?.id === c.id ? "on" : ""}" href="#/head-coach/chat/${c.id}">${esc(c.title)}</a>`).join("")}</div>` : "";
+  const consent = consented ? `<div class="hint">🔒 O contexto relevante será enviado ao provider configurado. As conversas ficam guardadas neste dispositivo.</div>` : `<label class="card" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="consent" value="1" required style="width:auto;margin-top:3px"><span><b>Autorizar envio de contexto</b><br><span class="s">A pergunta, nomes e observações relevantes podem ser enviados ao OpenRouter. Fotografias e o backup completo não são enviados.</span></span></label>`;
+  setView("Perguntar ao Head Coach", `
+    <div class="head"><a class="btn-link" href="#/head-coach">← Dashboard</a><a class="btn-link" href="#/dados">Configurar IA</a></div>
+    ${history}
+    ${configured ? "" : `<div class="card" style="margin-bottom:14px;border-color:var(--amber)">Falta a chave OpenRouter. <a class="btn-link" href="#/dados">Configurar em Dados → IA</a>.</div>`}
+    <div class="chat-history">${messages.length ? messages.map(chatMessageHTML).join("") : `<div class="empty"><div class="big">💬</div>Pergunta sobre a equipa, um jogo, um treino ou um jogador. O contexto relevante é escolhido automaticamente.</div>`}</div>
+    <form class="stack" data-form="head-coach-chat" data-conversation="${conversation?.id || ""}" style="margin-top:16px">
+      <label class="field"><span>Pergunta</span><textarea name="question" rows="3" required placeholder="Ex.: O que devo trabalhar no próximo treino?"></textarea></label>
+      ${consent}
+      <button class="btn" type="submit" ${configured ? "" : "disabled"}>Enviar ao Head Coach</button>
+      <p class="muted chat-error" style="color:var(--red);display:none"></p>
+    </form>`);
+}
+
 // ---------- DADOS (cópia de segurança) ----------
 async function viewDados() {
   const c = {};
@@ -897,6 +942,16 @@ app.addEventListener("click", async (ev) => {
   }
   if (a === "arquivar-memoria") {
     if (confirm("Arquivar este registo? O histórico será preservado.")) { await HeadCoachMemory.archive(alvo.dataset.id); go("#/head-coach"); }
+  }
+  if (a === "chat-rec") {
+    const decision = alvo.dataset.decision;
+    let changed = null;
+    if (decision === "change") {
+      changed = prompt("Altera a recomendação antes de a guardar como decisão:", alvo.dataset.text || "");
+      if (changed == null) return;
+    }
+    await HeadCoachEngine.actOnRecommendation(alvo.dataset.message, alvo.dataset.rec, decision, changed);
+    return router();
   }
   if (a === "carregar-base") {
     const n = (typeof EXERCICIOS_BASE !== "undefined") ? EXERCICIOS_BASE.length : 0;
@@ -979,6 +1034,28 @@ app.addEventListener("submit", async (ev) => {
       const novoId = id ? await HeadCoachMemory.revise(id, obj) : await HeadCoachMemory.create(obj);
       return go("#/head-coach/memoria/" + novoId);
     } catch (e) { alert(e.message); return; }
+  }
+  if (tipo === "head-coach-chat") {
+    const question = fd.get("question"), alreadyConsented = localStorage.getItem("head_coach_context_consent") === "1";
+    const consent = alreadyConsented || fd.get("consent") === "1";
+    const btn = form.querySelector('button[type="submit"]'), erro = form.querySelector(".chat-error");
+    btn.disabled = true; btn.textContent = "A analisar contexto…"; erro.style.display = "none";
+    const ac = new AbortController();
+    const cancel = () => ac.abort(); window.addEventListener("hashchange", cancel, { once: true });
+    try {
+      const out = await HeadCoachEngine.ask({ conversationId: num(form.dataset.conversation), question, consent, signal: ac.signal });
+      if (!alreadyConsented && consent) localStorage.setItem("head_coach_context_consent", "1");
+      window.removeEventListener("hashchange", cancel);
+      const target = "#/head-coach/chat/" + out.conversationId;
+      if (location.hash === target) return viewHeadCoachChat(out.conversationId);
+      return go(target);
+    } catch (e) {
+      window.removeEventListener("hashchange", cancel);
+      if (e.name === "AbortError") return;
+      erro.textContent = "Erro: " + e.message; erro.style.display = "block";
+      btn.disabled = false; btn.textContent = "Enviar ao Head Coach";
+    }
+    return;
   }
   if (tipo === "exercicio") {
     const obj = { titulo: fd.get("titulo"), objetivo: txt(fd.get("objetivo")), categoria: txt(fd.get("categoria")),

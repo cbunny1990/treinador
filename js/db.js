@@ -1,10 +1,11 @@
 // Camada de dados offline (IndexedDB). Sem servidor: tudo vive no telemóvel.
 const DB_NOME = "treinador";
-const DB_VERSAO = 4;
+const DB_VERSAO = 5;
 const DEFAULT_TEAM_ID = "default";
 const STORES = [
   "jogadores", "exercicios", "treinos", "treino_itens", "presencas", "avaliacoes", "jogos",
   "teams", "game_models", "memory_items",
+  "head_coach_conversations", "head_coach_messages",
 ];
 
 let _db = null;
@@ -56,12 +57,23 @@ function abrirDB() {
         memoryItems.createIndex("external_key", "external_key", { unique: false });
       } else memoryItems = e.target.transaction.objectStore("memory_items");
 
+      if (!db.objectStoreNames.contains("head_coach_conversations")) {
+        const conversations = db.createObjectStore("head_coach_conversations", { keyPath: "id", autoIncrement: true });
+        conversations.createIndex("team_id", "team_id", { unique: false });
+      }
+      if (!db.objectStoreNames.contains("head_coach_messages")) {
+        const messages = db.createObjectStore("head_coach_messages", { keyPath: "id", autoIncrement: true });
+        messages.createIndex("conversation_id", "conversation_id", { unique: false });
+      }
+
       // A migração decorre na própria transação de upgrade: ou fica toda aplicada, ou nada muda.
-      teams.put({
-        id: DEFAULT_TEAM_ID, nome: "Equipa principal", clube: null, escalao: "sub-8",
-        epoca: null, formato: null, competicao: null, horarios: null,
-        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
-      });
+      if (e.oldVersion < 4) {
+        teams.put({
+          id: DEFAULT_TEAM_ID, nome: "Equipa principal", clube: null, escalao: "sub-8",
+          epoca: null, formato: null, competicao: null, horarios: null,
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        });
+      }
       for (const nome of ["jogadores", "treinos", "jogos"]) {
         const os = e.target.transaction.objectStore(nome);
         if (!os.indexNames.contains("team_id")) os.createIndex("team_id", "team_id", { unique: false });

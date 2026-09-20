@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 const { test, expect } = require("@playwright/test");
 
@@ -33,11 +33,11 @@ test("migra v3, gere memória e continua offline", async ({ page, context }) => 
     const players = await DB.listar("jogadores");
     return { version: (await abrirDB()).version, teamId: players[0].team_id };
   });
-  expect(migrated).toEqual({ version: 4, teamId: "default" });
+  expect(migrated).toEqual({ version: 5, teamId: "default" });
 
   await page.getByRole("link", { name: /Memória da equipa/ }).click();
   await expect(page.getByRole("heading", { name: "Head Coach" })).toBeVisible();
-  await page.getByRole("link", { name: "Ver memória" }).click();
+  await page.getByRole("link", { name: "Memória", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Memória da equipa" })).toBeVisible();
   await page.getByRole("link", { name: "+ Registar" }).click();
   await page.getByLabel("Título").fill("Saída da zona defensiva");
@@ -66,7 +66,7 @@ test("migra v3, gere memória e continua offline", async ({ page, context }) => 
 test("importa pacote privado sintético por merge", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("link", { name: /Memória da equipa/ }).click();
-  await page.getByRole("link", { name: "Ver memória" }).click();
+  await page.getByRole("link", { name: "Memória", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Memória da equipa" })).toBeVisible();
   page.on("dialog", (dialog) => dialog.accept());
   const pack = {

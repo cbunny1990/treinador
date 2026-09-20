@@ -32,6 +32,14 @@ HeadCoachMemory.buildContext(teamId, options)
 
 `buildContext()` devolve `head-coach-context@1`, com equipa, modelo de jogo, memória ativa e eventos recentes. Não inclui chaves de API.
 
+## Chat contextual (Fase 3)
+
+O chat usa uma abstração de provider, atualmente ligada ao OpenRouter, e só envia o contexto relevante depois de consentimento explícito no formulário. Fotografias, cópias de segurança completas e a chave da API não fazem parte do contexto enviado.
+
+As respostas têm uma estrutura validada: factos, observações, hipóteses, diagnósticos, incertezas, perguntas e recomendações. IDs de evidência que não existam no contexto são removidos; factos ou diagnósticos sem evidência válida passam a hipóteses. Uma recomendação aceite ou alterada torna-se uma decisão na memória. Uma recomendação rejeitada fica apenas registada no histórico da conversa.
+
+Conversas e mensagens são guardadas localmente em IndexedDB e continuam legíveis offline. Fazer uma nova pergunta exige internet e uma chave OpenRouter configurada em **Dados → IA**.
+
 ## Importação privada
 
 O formato é `treinador-team-memory@1`. A importação valida o pacote antes da primeira escrita e faz merge por `external_key`; não substitui o backup atual.
