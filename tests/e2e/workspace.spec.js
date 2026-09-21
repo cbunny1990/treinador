@@ -379,3 +379,49 @@ test("definições expõem gestão MCP sem guardar token no browser", async ({ p
   await expect(page.locator('script[src="js/mcp_connectors.js"]')).toHaveCount(1);
   await expect(page.locator('input[value^="vcmcp_"]')).toHaveCount(0);
 });
+
+
+test("Planos sincroniza documentos remotos antes de renderizar", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(async () => {
+    window.__remoteSyncCalls = 0;
+    RemoteWorkspace.status = async () => ({
+      configured: true,
+      signedIn: true,
+      remoteTeamId: "845aceb7-3350-4e52-9b5e-5279132d3ae9",
+      lastSyncAt: null,
+      conflicts: [],
+    });
+    RemoteWorkspace.syncNow = async () => {
+      window.__remoteSyncCalls += 1;
+      const docs = await DB.listar("workspace_documents");
+      if (!docs.some((doc) => doc.title === "Relatório remoto de teste")) {
+        const now = new Date().toISOString();
+        await DB.criar("workspace_documents", {
+          team_id: "default",
+          type: "match_analysis",
+          title: "Relatório remoto de teste",
+          body: "Documento recebido do Head Coach.",
+          status: "ready",
+          target_date: null,
+          refs: [],
+          created_by: "agent",
+          created_by_label: "Head Coach IA",
+          updated_by: "agent",
+          updated_by_label: "Head Coach IA",
+          created_at: now,
+          updated_at: now,
+          sync_id: "11111111-1111-4111-8111-111111111111",
+          sync_dirty: false,
+          remote_updated_at: now,
+        }, { remote: true });
+      }
+      return { pushed: 0, pulled: 1, conflicts: [], deleted: 0 };
+    };
+    location.hash = "#/planos";
+    await router();
+  });
+
+  await expect(page.getByText("Relatório remoto de teste")).toBeVisible();
+  expect(await page.evaluate(() => window.__remoteSyncCalls)).toBeGreaterThan(0);
+});
