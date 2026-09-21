@@ -11,7 +11,7 @@ function cors(req: Request) {
   const origin = req.headers.get("origin") || "";
   return {
     "access-control-allow-origin": ALLOWED_ORIGINS.has(origin) ? origin : "https://cbunny1990.github.io",
-    "access-control-allow-headers": "authorization, apikey, content-type",
+    "access-control-allow-headers": "authorization, x-client-info, apikey, content-type",
     "access-control-allow-methods": "POST, OPTIONS",
     "vary": "Origin",
   };

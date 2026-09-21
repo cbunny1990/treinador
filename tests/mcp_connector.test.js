@@ -62,3 +62,8 @@ test("Edge Functions não contêm credenciais privadas hardcoded", () => {
   assert.match(manager, /Deno\.env\.get\("SUPABASE_SERVICE_ROLE_KEY"\)/);
   assert.match(mcp, /Deno\.env\.get\("SUPABASE_SERVICE_ROLE_KEY"\)/);
 });
+
+
+test("gestor MCP aceita todos os headers CORS usados pelo supabase-js", () => {
+  assert.match(manager, /authorization, x-client-info, apikey, content-type/i);
+});
