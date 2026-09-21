@@ -148,7 +148,7 @@ test("agente e humano escrevem no mesmo workspace com autoria separada", async (
 
 test("nova navegação não expõe chatbot nem gerador IA antigos", async ({ page }) => {
   await page.goto("/");
-  for (const href of ["#/", "#/equipa", "#/planos", "#/media", "#/timeline"]) {
+  for (const href of ["#/", "#/equipa", "#/calendario", "#/planos", "#/media", "#/timeline"]) {
     await expect(page.locator('.bottom-nav a[href="' + href + '"]')).toBeVisible();
   }
   await expect(page.getByText("Gerar treino por IA")).toHaveCount(0);
@@ -246,4 +246,40 @@ test("editar documento remoto preserva identidade e versão de sincronização",
   expect(state.remote_updated_at).toBe("2026-09-21T12:00:00.000Z");
   expect(state.sync_dirty).toBe(true);
   expect(state.body).toBe("Versão humana");
+});
+
+
+test("calendário e página de jogo preservam preparação estruturada", async ({ page }) => {
+  await page.goto("/#/equipa/jogo/novo");
+  await page.getByLabel("Data").fill("2026-09-26");
+  await page.getByLabel("Hora do jogo").fill("10:00");
+  await page.getByLabel("Adversário").fill("Teste E2E");
+  await page.getByLabel("Casa / Fora").selectOption("fora");
+  await page.getByLabel("Local").fill("Campo Teste");
+  await page.getByLabel("Hora de saída").fill("08:30");
+  await page.getByLabel("Competição").fill("AF Porto");
+  await page.getByRole("button", { name: "Guardar jogo" }).click();
+
+  await expect(page.getByRole("heading", { name: "Antes do jogo" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Alinhamento 5v5" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Durante" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Depois" })).toBeVisible();
+
+  await page.getByLabel("Objetivo principal").fill("Circular rápido e abrir o campo");
+  await page.getByRole("button", { name: "Guardar plano" }).click();
+  await page.getByRole("link", { name: "Editar dados" }).click();
+  await page.getByLabel("Local").fill("Campo Teste 2");
+  await page.getByRole("button", { name: "Guardar jogo" }).click();
+
+  const stored = await page.evaluate(async () => {
+    const games = await DB.listar("jogos");
+    return games.find((x) => x.adversario === "Teste E2E");
+  });
+  expect(stored.pre_game.objetivo_principal).toBe("Circular rápido e abrir o campo");
+  expect(stored.hora_saida).toBe("08:30");
+  expect(stored.external_key).toContain("2026-09-26");
+
+  await page.goto("/#/calendario");
+  await expect(page.getByText("Jogo vs Teste E2E")).toBeVisible();
+  await expect(page.getByText(/saída 08:30/)).toBeVisible();
 });
