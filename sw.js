@@ -1,10 +1,11 @@
 // Service worker - app shell offline.
-const CACHE = "vision-coach-v39";
+const CACHE = "vision-coach-v40";
 const ASSETS = [
   "./",
   "./index.html",
   "./css/styles.css",
   "./vendor/supabase.min.js",
+  "./vendor/tus.min.js",
   "./js/db.js",
   "./js/head_coach_memory.js",
   "./js/head_coach_media.js",

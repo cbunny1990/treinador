@@ -5,13 +5,15 @@
     "check": "node --check js/app.js && node --check js/db.js && node --check js/head_coach_memory.js && node --check js/head_coach_media.js && node --check js/workspace.js && node --check js/remote_workspace.js && node --check js/agent_contract.js",
     "test": "node --test tests/*.test.js && node js/db.js",
     "test:e2e": "playwright test",
-    "vendor:supabase": "esbuild node_modules/@supabase/supabase-js/dist/index.mjs --bundle --platform=browser --format=iife --global-name=SupabaseLib --minify --outfile=vendor/supabase.min.js"
+    "vendor:supabase": "esbuild node_modules/@supabase/supabase-js/dist/index.mjs --bundle --platform=browser --format=iife --global-name=SupabaseLib --minify --outfile=vendor/supabase.min.js",
+    "vendor:tus": "esbuild node_modules/tus-js-client/lib.es5/browser/index.js --bundle --platform=browser --format=iife --global-name=TusClient --minify --outfile=vendor/tus.min.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.0",
     "esbuild": "0.25.10"
   },
   "dependencies": {
-    "@supabase/supabase-js": "2.116.0"
+    "@supabase/supabase-js": "2.116.0",
+    "tus-js-client": "4.3.1"
   }
 }
