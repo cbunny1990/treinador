@@ -338,3 +338,44 @@ test("biblioteca cria exercício e planeador reutiliza-o em blocos", async ({ pa
   expect(training.blocos[0].exercise_ref).toBe(exercise.sync_id);
   expect(training.duracao_min).toBe(12);
 });
+
+
+test("definições expõem gestão MCP sem guardar token no browser", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(async () => {
+    const teamId = "845aceb7-3350-4e52-9b5e-5279132d3ae9";
+    RemoteWorkspace.status = async () => ({
+      configured: true,
+      signedIn: true,
+      email: "treinador@example.test",
+      remoteTeamId: teamId,
+      lastSyncAt: null,
+      conflicts: [],
+    });
+    RemoteWorkspace.listTeams = async () => [{ id: teamId, name: "Sub-8 Teste" }];
+    MCPConnectors.list = async () => ({
+      ok: true,
+      mcp_url: "https://example.test/functions/v1/vision-coach-mcp",
+      connectors: [{
+        id: "11111111-1111-4111-8111-111111111111",
+        label: "Claude portátil",
+        scopes: ["read", "write"],
+        token_prefix: "vcmcp_abcd1234",
+        enabled: true,
+        created_at: "2026-09-21T20:00:00Z",
+        last_used_at: null,
+        expires_at: "2027-09-21T20:00:00Z",
+        revoked_at: null,
+      }],
+    });
+    location.hash = "#/definicoes";
+    await router();
+  });
+
+  await expect(page.getByRole("heading", { name: "Vision Coach MCP" })).toBeVisible();
+  await expect(page.getByLabel("Nome da ligação")).toBeVisible();
+  await expect(page.getByText("Claude portátil")).toBeVisible();
+  await expect(page.getByText(/vcmcp_abcd1234/)).toBeVisible();
+  await expect(page.locator('script[src="js/mcp_connectors.js"]')).toHaveCount(1);
+  await expect(page.locator('input[value^="vcmcp_"]')).toHaveCount(0);
+});
