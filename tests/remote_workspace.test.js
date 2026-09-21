@@ -8,6 +8,7 @@ const {
   remoteConfigValid,
   remoteActorFor,
   remotePayload,
+  remoteFreshLocalRecord,
   remoteSafeFilename,
   remoteIdentityKey,
   remoteNeedsConflict,
@@ -37,6 +38,16 @@ test("payload remoto remove chaves locais e data_url", () => {
     nome: "Jogador",
   });
   assert.deepEqual(payload, { nome: "Jogador" });
+});
+
+test("registo remoto novo remove por completo o id local", () => {
+  const fresh = remoteFreshLocalRecord({
+    id: undefined,
+    sync_id: "11111111-1111-4111-8111-111111111111",
+    title: "Relatório",
+  });
+  assert.equal(Object.prototype.hasOwnProperty.call(fresh, "id"), false);
+  assert.equal(fresh.sync_id, "11111111-1111-4111-8111-111111111111");
 });
 
 test("documento usa autoria da última alteração", () => {

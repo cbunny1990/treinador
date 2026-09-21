@@ -87,6 +87,11 @@ function remotePayload(row) {
   }
   return payload;
 }
+function remoteFreshLocalRecord(row) {
+  const fresh = { ...row };
+  delete fresh.id;
+  return fresh;
+}
 
 function remoteIdentityKey(kind, payload) {
   const externalKey = remoteText(payload?.external_key, 500).toLocaleLowerCase();
@@ -671,8 +676,7 @@ const RemoteWorkspace = {
         if (local.remote_updated_at === remote.updated_at) continue;
         await DB.atualizar(store, merged, { remote: true });
       } else {
-        delete merged.id;
-        await DB.criar(store, merged, { remote: true });
+        await DB.criar(store, remoteFreshLocalRecord(merged), { remote: true });
       }
       result.pulled++;
     }
@@ -930,8 +934,7 @@ const RemoteWorkspace = {
         merged.id = local.id;
         await DB.atualizar("media_items", merged, { remote: true });
       } else {
-        const fresh = { ...merged, id: undefined };
-        await DB.criar("media_items", fresh, { remote: true });
+        await DB.criar("media_items", remoteFreshLocalRecord(merged), { remote: true });
       }
       result.pulled++;
     }
@@ -1105,6 +1108,7 @@ if (typeof module !== "undefined" && module.exports) {
     remoteConfigValid,
     remoteActorFor,
     remotePayload,
+    remoteFreshLocalRecord,
     remoteSafeFilename,
     remoteIdentityKey,
     remoteNeedsConflict,
