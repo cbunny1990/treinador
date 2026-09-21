@@ -283,3 +283,15 @@ test("calendário e página de jogo preservam preparação estruturada", async (
   await expect(page.getByText("Jogo vs Teste E2E")).toBeVisible();
   await expect(page.getByText(/saída 08:30/)).toBeVisible();
 });
+
+
+test("telemóvel expõe acesso à ligação remota", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const settings = page.getByRole("link", { name: "Definições e ligação" });
+  await expect(settings).toBeVisible();
+  await settings.click();
+  await expect(page.getByRole("heading", { name: "Supabase" })).toBeVisible();
+  await expect(page.getByLabel("Project URL")).toBeVisible();
+  await expect(page.getByLabel("Publishable key")).toBeVisible();
+});
