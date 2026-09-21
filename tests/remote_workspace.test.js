@@ -96,6 +96,8 @@ test("registo remoto preserva UUID e separa payload", () => {
   assert.equal(row.kind, "player");
   assert.equal(row.payload.nome, "A");
   assert.equal(row.payload.team_id, undefined);
+  assert.equal(row.actor_type, "human");
+  assert.equal(row.actor_label, "Treinador");
 });
 
 test("atividade remota mantém autoria e entidade", () => {
