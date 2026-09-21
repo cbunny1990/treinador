@@ -200,6 +200,20 @@ function priorityHTML(items){
 function documentCard(doc){
   return '<a class="card doc-card" href="#/planos/'+doc.id+'"><span class="doc-type">'+docTypeShort(doc.type)+'</span><span class="grow"><span class="row"><span class="title grow">'+esc(doc.title)+'</span>'+docStatusBadge(doc.status)+'</span><span class="meta">'+esc(docTypeLabel(doc.type))+(doc.target_date?' · '+fmtDate(doc.target_date):'')+'</span><span class="meta">'+esc(doc.created_by_label||HUMAN_LABEL)+'</span></span></a>';
 }
+async function refreshRemoteWorkspace(){
+  try{
+    var status=await RemoteWorkspace.status();
+    if(navigator.onLine && status.signedIn && status.remoteTeamId){
+      await RemoteWorkspace.syncNow();
+      return await RemoteWorkspace.status();
+    }
+    return status;
+  }catch(error){
+    console.warn("Sincronização automática adiada:",error.message);
+    try{return await RemoteWorkspace.status();}catch(_){return {signedIn:false,remoteTeamId:null};}
+  }
+}
+
 function activityHTML(rows,limit){
   limit=limit||6;
   var items=rows.slice(0,limit);
@@ -210,8 +224,8 @@ function activityHTML(rows,limit){
 }
 
 async function viewWorkspace(){
+  var remoteStatus=await refreshRemoteWorkspace();
   var s=await WorkspaceStore.buildSnapshot();
-  var remoteStatus=await RemoteWorkspace.status();
   var teamName=(s.team&&s.team.nome)||"Equipa";
   var context=[s.team&&s.team.clube,s.team&&s.team.escalao,s.team&&s.team.epoca].filter(Boolean).join(" · ");
   var recentDocs=s.recent_documents.length?s.recent_documents.map(documentCard).join(""):'<div class="empty">Ainda não existem planos ou análises partilhadas.</div>';
@@ -361,6 +375,7 @@ async function viewMatch(id){
   setView("Jogo vs "+match.adversario,html,"Jogo");
 }
 async function viewDocuments(){
+  await refreshRemoteWorkspace();
   var docs=await WorkspaceStore.listDocuments();
   var cards=docs.length?docs.map(documentCard).join(""):'<div class="empty">Ainda não existem planos ou análises. Cria o primeiro documento partilhado.</div>';
   var hub='<div class="grid cols-2"><a class="panel planner-hub-card" href="#/treinos"><div class="kicker">Sessões</div><h2>Planeador de treino</h2><p>Constrói treinos por blocos e reutiliza exercícios.</p></a><a class="panel planner-hub-card" href="#/exercicios"><div class="kicker">Biblioteca</div><h2>Exercícios</h2><p>Pesquisa, favoritos e exercícios partilhados com o Head Coach.</p></a></div>';
