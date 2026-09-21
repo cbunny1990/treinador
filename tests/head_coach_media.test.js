@@ -34,3 +34,17 @@ test("exige associação e origem de media", () => {
   assert.throws(() => normalizarMediaItem({ type: "file", subject_type: "match", subject_id: 1 }), /link|ficheiro/i);
   assert.throws(() => normalizarMediaItem({ type: "file", url: "https://example.com/a" }), /entidade/i);
 });
+
+
+test("media pode ser associado a exercício Vision Coach", () => {
+  const item = normalizarMediaItem({
+    team_id: "default",
+    subject_type: "exercise",
+    subject_id: "7",
+    type: "video",
+    title: "Demonstração",
+    url: "https://example.com/exercise.mp4",
+  }, { now: "2026-09-21T21:00:00.000Z" });
+  assert.equal(item.subject_type, "exercise");
+  assert.equal(item.subject_key, "default|exercise|7");
+});

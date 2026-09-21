@@ -10,6 +10,7 @@ const REMOTE_STORE_KINDS = {
   jogadores: "player",
   jogos: "match",
   treinos: "training",
+  exercicios: "exercise",
   memory_items: "memory",
   workspace_documents: "document",
   game_models: "game_model",
@@ -21,6 +22,7 @@ const REMOTE_SUBJECT_STORES = {
   player: "jogadores",
   match: "jogos",
   training: "treinos",
+  exercise: "exercicios",
   memory: "memory_items",
   document: "workspace_documents",
   game_model: "game_models",
@@ -515,7 +517,8 @@ const RemoteWorkspace = {
           .map((row) => [remoteIdentityKey(row.kind, row.payload), row]).filter(([key]) => key)
       );
       let rows = (await DB.listar(store))
-        .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID);
+        .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID)
+        .filter((x) => store !== "exercicios" || x.workspace_v2 || x.sync_id);
       let localBySyncId = new Map(rows.filter((x) => x.sync_id).map((x) => [x.sync_id, x]));
 
       for (const remote of remoteRows.filter((row) => row.deleted_at)) {
@@ -530,7 +533,8 @@ const RemoteWorkspace = {
       }
 
       rows = (await DB.listar(store))
-        .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID);
+        .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID)
+        .filter((x) => store !== "exercicios" || x.workspace_v2 || x.sync_id);
       for (const original of rows) {
         let local = await this._ensureSyncId(store, original);
         let remote = remoteMap.get(local.sync_id);
@@ -641,6 +645,7 @@ const RemoteWorkspace = {
       const merged = {
         ...(local || {}),
         ...payload,
+        ...(store === "exercicios" ? { workspace_v2: true } : {}),
         team_id: DEFAULT_TEAM_ID,
         sync_id: remote.id,
         sync_dirty: false,

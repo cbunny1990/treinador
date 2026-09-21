@@ -96,7 +96,8 @@ function docTypeShort(type){
 async function routeOnce(){
   var parts=(location.hash||"#/").slice(1).split("/").filter(Boolean);
   var root=parts[0]||"";
-  markNav(root===""?"workspace":root);
+  var navRoot=(root==="treinos"||root==="exercicios")?"planos":(root===""?"workspace":root);
+  markNav(navRoot);
   try{
     if(!root) return viewWorkspace();
     if(root==="equipa"){
@@ -110,6 +111,18 @@ async function routeOnce(){
       return viewTeam();
     }
     if(root==="calendario") return viewCalendar();
+    if(root==="treinos"){
+      if(parts[1]==="novo") return TrainingUI.viewTrainingForm(null,parts[2]);
+      if(parts[1] && parts[2]==="editar") return TrainingUI.viewTrainingForm(parts[1]);
+      if(parts[1]) return TrainingUI.viewTraining(parts[1]);
+      return TrainingUI.viewTrainings();
+    }
+    if(root==="exercicios"){
+      if(parts[1]==="novo") return TrainingUI.viewExerciseForm();
+      if(parts[1] && parts[2]==="editar") return TrainingUI.viewExerciseForm(parts[1]);
+      if(parts[1]) return TrainingUI.viewExercise(parts[1]);
+      return TrainingUI.viewExercises();
+    }
     if(root==="planos"){
       if(parts[1]==="novo") return viewDocumentForm();
       if(parts[1] && parts[2]==="editar") return viewDocumentForm(parts[1]);
@@ -350,7 +363,9 @@ async function viewMatch(id){
 async function viewDocuments(){
   var docs=await WorkspaceStore.listDocuments();
   var cards=docs.length?docs.map(documentCard).join(""):'<div class="empty">Ainda não existem planos ou análises. Cria o primeiro documento partilhado.</div>';
-  setView("Planos",'<div class="section-head"><div><h2>Documentos de trabalho</h2><p>Planos, análises, notas e briefings partilhados</p></div><a class="btn accent" href="#/planos/novo">Novo documento</a></div><div class="grid cols-2">'+cards+'</div>',"Planos");
+  var hub='<div class="grid cols-2"><a class="panel planner-hub-card" href="#/treinos"><div class="kicker">Sessões</div><h2>Planeador de treino</h2><p>Constrói treinos por blocos e reutiliza exercícios.</p></a><a class="panel planner-hub-card" href="#/exercicios"><div class="kicker">Biblioteca</div><h2>Exercícios</h2><p>Pesquisa, favoritos e exercícios partilhados com o Head Coach.</p></a></div>';
+  var html=hub+'<section class="section"><div class="section-head"><div><h2>Documentos de trabalho</h2><p>Planos, análises, notas e briefings partilhados</p></div><a class="btn accent" href="#/planos/novo">Novo documento</a></div><div class="grid cols-2">'+cards+'</div></section>';
+  setView("Planos",html,"Planos");
 }
 async function viewDocumentForm(id){
   var doc=id?await WorkspaceStore.getDocument(id):null;
@@ -411,7 +426,8 @@ async function subjectOptions(selectedType,selectedId){
     DB.porIndice("jogos","team_id",DEFAULT_TEAM_ID),
     DB.porIndice("treinos","team_id",DEFAULT_TEAM_ID),
     HeadCoachMemory.list(),
-    WorkspaceStore.listDocuments()
+    WorkspaceStore.listDocuments(),
+    DB.porIndice("exercicios","team_id",DEFAULT_TEAM_ID)
   ]);
   var selected=selectedType&&selectedId?selectedType+":"+selectedId:"";
   var options=['<option value="">Sem associação específica</option>'];
@@ -419,6 +435,7 @@ async function subjectOptions(selectedType,selectedId){
   data[1].forEach(function(x){options.push('<option value="match:'+x.id+'">Jogo · '+fmtDate(x.data)+' · '+esc(x.adversario)+'</option>');});
   data[2].forEach(function(x){options.push('<option value="training:'+x.id+'">Treino · '+fmtDate(x.data)+'</option>');});
   data[4].forEach(function(x){options.push('<option value="document:'+x.id+'">Documento · '+esc(x.title)+'</option>');});
+  data[5].filter(function(x){return x.workspace_v2;}).forEach(function(x){options.push('<option value="exercise:'+x.id+'">Exercício · '+esc(x.nome)+'</option>');});
   data[3].slice(0,30).forEach(function(x){options.push('<option value="memory:'+x.id+'">Memória · '+esc(x.title)+'</option>');});
   return options.join("").replace('value="'+esc(selected)+'"','value="'+esc(selected)+'" selected');
 }
@@ -435,7 +452,7 @@ async function viewMediaForm(subjectType,subjectId){
 }
 
 function timelineLabel(row){
-  return {activity:"Atividade",document:"Documento",memory:"Memória",match:"Jogo",training:"Treino"}[row.type]||row.type;
+  return {activity:"Atividade",document:"Documento",memory:"Memória",match:"Jogo",training:"Treino",exercise:"Exercício"}[row.type]||row.type;
 }
 async function viewTimeline(){
   var s=await WorkspaceStore.buildSnapshot();
