@@ -1,15 +1,12 @@
 # Ligar o Vision Coach ao Supabase
 
-A aplicação continua a funcionar localmente sem Supabase. Esta configuração ativa a cópia remota partilhada, autenticação e Storage privado.
+A aplicação continua a funcionar offline com IndexedDB, mas o deployment oficial já está ligado ao projeto remoto **Vision Coach**, alojado em Londres (`eu-west-2`).
 
-## 1. Criar o projeto
+## 1. Estado do projeto oficial
 
-1. Criar um projeto no Supabase.
-2. Abrir o SQL Editor.
-3. Executar integralmente:
-   `supabase/migrations/001_workspace.sql`
+O projeto Supabase de produção já existe e as migrations em `supabase/migrations/` foram aplicadas. Para criar outro ambiente do zero, aplicar as migrations pela ordem do nome do ficheiro.
 
-A migração cria:
+As migrations criam e protegem:
 - equipas e membros;
 - registos partilhados;
 - media;
@@ -27,30 +24,28 @@ Em Authentication, configurar a URL pública da app como Site URL:
 Adicionar também a URL de retorno permitida:
 
 `https://cbunny1990.github.io/treinador/?auth=1`
-## 3. Obter as credenciais públicas
+## 3. Credenciais do frontend
 
-No projeto Supabase, copiar:
+O deployment oficial já inclui:
 - Project URL;
 - Publishable key.
 
-Não usar na app:
+São valores públicos próprios para frontend. Nunca colocar na app:
 - secret key;
 - service-role key;
 - password da base de dados.
 
-A publishable key pode existir no browser porque o acesso real aos dados é limitado por RLS.
+O acesso real aos dados é limitado por Auth + RLS.
 
-## 4. Ligar na app
+## 4. Ativar a conta na app
 
 1. Abrir Vision Coach.
 2. Definições e backup.
-3. Em Backend remoto, preencher Project URL e Publishable key.
-4. Guardar.
-5. Introduzir o email e escolher “Enviar link de acesso”.
-6. Abrir o link recebido no email.
-7. Voltar a Definições.
-8. Escolher “Criar a partir desta equipa”.
-9. Escolher “Sincronizar agora”.
+3. Introduzir o email e escolher “Enviar link de acesso”.
+4. Abrir o link recebido no email.
+5. Voltar a Definições.
+6. Escolher “Criar a partir desta equipa”.
+7. Escolher “Sincronizar agora”.
 
 A partir daí a app agenda sincronização automática sempre que existem alterações locais e quando recupera ligação à Internet.
 

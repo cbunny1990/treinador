@@ -1,6 +1,10 @@
 "use strict";
 
 const REMOTE_CONFIG_KEY = "treinador.remote.supabase.v1";
+const REMOTE_DEFAULT_CONFIG = {
+  url: "https://rsydvhbsxzdoprekefij.supabase.co",
+  publishableKey: "sb_publishable_0DwyNhlIJijcAr3u3cG51w_3VP_2vmC",
+};
 const REMOTE_STORE_KINDS = {
   jogadores: "player",
   jogos: "match",
@@ -35,9 +39,12 @@ function remoteUuid() {
 
 function remoteLoadConfig() {
   try {
-    return JSON.parse(localStorage.getItem(REMOTE_CONFIG_KEY) || "{}");
+    return {
+      ...REMOTE_DEFAULT_CONFIG,
+      ...JSON.parse(localStorage.getItem(REMOTE_CONFIG_KEY) || "{}"),
+    };
   } catch (_) {
-    return {};
+    return { ...REMOTE_DEFAULT_CONFIG };
   }
 }
 function remoteSaveConfig(config) {

@@ -1,0 +1,5 @@
+project_id = "vision-coach"
+
+[auth]
+site_url = "https://cbunny1990.github.io/treinador/"
+additional_redirect_urls = ["https://cbunny1990.github.io/treinador/?auth=1"]
