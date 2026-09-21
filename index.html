@@ -26,9 +26,9 @@
         <a href="#/timeline" data-tab="timeline"><span class="nav-dot"></span>Timeline</a>
       </nav>
       <div class="sidebar-foot">
-        <div class="agent-state">
-          <span class="status-dot"></span>
-          <div><strong>Workspace local</strong><small>Ligação do agente por configurar</small></div>
+        <div class="agent-state" id="remote-state">
+          <span class="status-dot" id="remote-dot"></span>
+          <div><strong id="remote-title">Workspace local</strong><small id="remote-detail">Ligação remota por configurar</small></div>
         </div>
         <a class="settings-link" href="#/definicoes">Definições e backup</a>
       </div>
@@ -56,10 +56,12 @@
     <a href="#/media" data-tab="media"><span>M</span>Media</a>
     <a href="#/timeline" data-tab="timeline"><span>T</span>Timeline</a>
   </nav>
+  <script src="vendor/supabase.min.js"></script>
   <script src="js/db.js"></script>
   <script src="js/head_coach_memory.js"></script>
   <script src="js/head_coach_media.js"></script>
   <script src="js/workspace.js"></script>
+  <script src="js/remote_workspace.js"></script>
   <script src="js/agent_contract.js"></script>
   <script src="js/app.js"></script>
   <script>

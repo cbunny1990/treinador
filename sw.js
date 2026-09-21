@@ -1,13 +1,15 @@
 // Service worker - app shell offline.
-const CACHE = "treinador-v36";
+const CACHE = "treinador-v37";
 const ASSETS = [
   "./",
   "./index.html",
   "./css/styles.css",
+  "./vendor/supabase.min.js",
   "./js/db.js",
   "./js/head_coach_memory.js",
   "./js/head_coach_media.js",
   "./js/workspace.js",
+  "./js/remote_workspace.js",
   "./js/agent_contract.js",
   "./js/app.js",
   "./manifest.webmanifest",
