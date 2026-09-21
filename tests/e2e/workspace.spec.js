@@ -43,10 +43,11 @@ test("migra dados antigos para o workspace e continua offline", async ({ page, c
     };
   });
 
-  expect(migrated.version).toBe(8);
+  expect(migrated.version).toBe(9);
   expect(migrated.teamId).toBe("default");
   expect(migrated.stores).toContain("workspace_documents");
   expect(migrated.stores).toContain("activity_items");
+  expect(migrated.stores).toContain("sync_tombstones");
 
   await page.locator('.bottom-nav a[href="#/equipa"]').click();
   await expect(page.getByText("Jogador legado")).toBeVisible();
@@ -99,6 +100,8 @@ test("cria plano partilhado e associa media", async ({ page }) => {
   }));
   expect(state.docs).toHaveLength(1);
   expect(state.docs[0].created_by).toBe("human");
+  expect(state.docs[0].sync_id).toMatch(/^[0-9a-f-]{36}$/i);
+  expect(state.docs[0].sync_dirty).toBe(true);
   expect(state.media).toHaveLength(1);
   expect(state.media[0].subject_type).toBe("document");
   expect(state.activity.some((x) => x.action === "created_document")).toBeTruthy();
@@ -152,4 +155,42 @@ test("nova navegação não expõe chatbot nem gerador IA antigos", async ({ pag
   await expect(page.getByText("Chat Head Coach")).toHaveCount(0);
   await expect(page.locator('script[src*="head_coach_chat"]')).toHaveCount(0);
   await expect(page.locator('script[src*="ia_treino"]')).toHaveCount(0);
+});
+
+test("definições expõem ligação remota sem secret key", async ({ page }) => {
+  await page.goto("/#/definicoes");
+
+  await expect(page.getByRole("heading", { name: "Supabase" })).toBeVisible();
+  await expect(page.getByLabel("Project URL")).toBeVisible();
+  await expect(page.getByLabel("Publishable key")).toBeVisible();
+  await expect(page.locator('input[name="publishable_key"]')).toHaveAttribute("type", "password");
+  await expect(page.locator('input[name*="secret"], input[name*="service"]')).toHaveCount(0);
+  await expect(page.locator('script[src="vendor/supabase.min.js"]')).toHaveCount(1);
+  await expect(page.locator('script[src="js/remote_workspace.js"]')).toHaveCount(1);
+
+  const state = await page.evaluate(async () => RemoteWorkspace.status());
+  expect(state.configured).toBe(false);
+  expect(state.signedIn).toBe(false);
+});
+
+test("alteração offline recebe UUID e eliminação cria tombstone", async ({ page }) => {
+  await page.goto("/");
+  const state = await page.evaluate(async () => {
+    const id = await DB.criar("jogadores", {
+      team_id: DEFAULT_TEAM_ID,
+      nome: "Sync Offline",
+      escalao: "sub-8",
+    });
+    const row = await DB.obter("jogadores", id);
+    await DB.apagar("jogadores", id);
+    return {
+      syncId: row.sync_id,
+      dirty: row.sync_dirty,
+      tombstones: await DB.listar("sync_tombstones"),
+    };
+  });
+  expect(state.syncId).toMatch(/^[0-9a-f-]{36}$/i);
+  expect(state.dirty).toBe(true);
+  expect(state.tombstones).toHaveLength(1);
+  expect(state.tombstones[0].sync_id).toBe(state.syncId);
 });

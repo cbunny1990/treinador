@@ -1,13 +1,14 @@
 // Camada de dados offline (IndexedDB). Sem servidor: tudo vive no telemóvel.
 const DB_NOME = "treinador";
-const DB_VERSAO = 8;
+const DB_VERSAO = 9;
 const DEFAULT_TEAM_ID = "default";
 const STORES = [
   "jogadores", "exercicios", "treinos", "treino_itens", "presencas", "avaliacoes", "jogos",
   "teams", "game_models", "memory_items",
   "head_coach_conversations", "head_coach_messages", "media_items",
-  "workspace_documents", "activity_items",
+  "workspace_documents", "activity_items", "sync_tombstones",
 ];
+const SYNCABLE_STORES = new Set(["teams", "jogadores", "jogos", "treinos", "game_models", "memory_items", "workspace_documents", "activity_items", "media_items"]);
 
 let _db = null;
 
@@ -81,6 +82,10 @@ function abrirDB() {
         activity.createIndex("team_id", "team_id", { unique: false });
         activity.createIndex("entity_key", "entity_key", { unique: false });
       }
+      if (!db.objectStoreNames.contains("sync_tombstones")) {
+        const tombstones = db.createObjectStore("sync_tombstones", { keyPath: "id", autoIncrement: true });
+        tombstones.createIndex("sync_id", "sync_id", { unique: false });
+      }
 
       // A migração decorre na própria transação de upgrade: ou fica toda aplicada, ou nada muda.
       if (e.oldVersion < 4) {
@@ -116,6 +121,27 @@ function _prom(req) {
     req.onerror = () => reject(req.error);
   });
 }
+function _syncUuid() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0, v = c === "x" ? r : (r & 3 | 8);
+    return v.toString(16);
+  });
+}
+function _prepareSyncRecord(store, obj, options = {}) {
+  if (!SYNCABLE_STORES.has(store) || options.remote) return { ...obj };
+  const now = new Date().toISOString();
+  return {
+    ...obj,
+    sync_id: obj.sync_id || _syncUuid(),
+    sync_dirty: true,
+    sync_local_updated_at: now,
+  };
+}
+function _notifyRemoteSync(store, options = {}) {
+  if (options.remote || !SYNCABLE_STORES.has(store)) return;
+  if (globalThis.RemoteWorkspace?.scheduleSync) globalThis.RemoteWorkspace.scheduleSync();
+}
 
 const DB = {
   async listar(store) {
@@ -126,18 +152,32 @@ const DB = {
     const os = await _tx(store, "readonly");
     return _prom(os.get(store === "teams" ? String(id) : Number(id)));
   },
-  async criar(store, obj) {
+  async criar(store, obj, options = {}) {
     const os = await _tx(store, "readwrite");
-    const id = await _prom(os.add(obj));
+    const id = await _prom(os.add(_prepareSyncRecord(store, obj, options)));
+    _notifyRemoteSync(store, options);
     return id;
   },
-  async atualizar(store, obj) {
+  async atualizar(store, obj, options = {}) {
     const os = await _tx(store, "readwrite");
-    return _prom(os.put(obj));
+    const result = await _prom(os.put(_prepareSyncRecord(store, obj, options)));
+    _notifyRemoteSync(store, options);
+    return result;
   },
-  async apagar(store, id) {
+  async apagar(store, id, options = {}) {
+    const key = store === "teams" ? String(id) : Number(id);
+    const anterior = SYNCABLE_STORES.has(store) && !options.remote ? await this.obter(store, id) : null;
     const os = await _tx(store, "readwrite");
-    return _prom(os.delete(store === "teams" ? String(id) : Number(id)));
+    await _prom(os.delete(key));
+    if (anterior?.sync_id) {
+      await this.criar("sync_tombstones", {
+        store, sync_id: anterior.sync_id, team_id: anterior.team_id || DEFAULT_TEAM_ID,
+        storage_path: anterior.storage_path || null,
+        created_at: new Date().toISOString(),
+      });
+    }
+    _notifyRemoteSync(store, options);
+    return true;
   },
   async porIndice(store, indice, valor) {
     const os = await _tx(store, "readonly");
@@ -181,12 +221,13 @@ const DB = {
     const os = tx.objectStore("memory_items");
     return new Promise((resolve, reject) => {
       let novoId;
-      const req = os.add(nova);
+      const novaSync = _prepareSyncRecord("memory_items", nova);
+      const req = os.add(novaSync);
       req.onsuccess = () => {
         novoId = req.result;
-        os.put({ ...anterior, status: "superseded", superseded_by_id: novoId, updated_at: nova.updated_at });
+        os.put(_prepareSyncRecord("memory_items", { ...anterior, status: "superseded", superseded_by_id: novoId, updated_at: nova.updated_at }));
       };
-      tx.oncomplete = () => resolve(novoId);
+      tx.oncomplete = () => { _notifyRemoteSync("memory_items"); resolve(novoId); };
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("Revisão cancelada."));
     });
@@ -197,12 +238,13 @@ const DB = {
     const os = tx.objectStore("game_models");
     return new Promise((resolve, reject) => {
       let novoId;
-      const req = os.add(novo);
+      const novoSync = _prepareSyncRecord("game_models", novo);
+      const req = os.add(novoSync);
       req.onsuccess = () => {
         novoId = req.result;
-        os.put({ ...anterior, status: "superseded", superseded_by_id: novoId, updated_at: novo.updated_at });
+        os.put(_prepareSyncRecord("game_models", { ...anterior, status: "superseded", superseded_by_id: novoId, updated_at: novo.updated_at }));
       };
-      tx.oncomplete = () => resolve(novoId);
+      tx.oncomplete = () => { _notifyRemoteSync("game_models"); resolve(novoId); };
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("Revisão do modelo cancelada."));
     });

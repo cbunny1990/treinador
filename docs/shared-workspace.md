@@ -32,7 +32,7 @@ Chat embutido, OpenRouter, gerador de treino IA, biblioteca antiga de exercício
 
 ## Dados ativos
 
-IndexedDB v8 mantém os objetos principais:
+IndexedDB v9 mantém os objetos principais e a fila/tombstones necessários para sincronização remota:
 
 - `teams`
 - `jogadores`
@@ -121,29 +121,29 @@ Fluxo pretendido:
 
 O contrato público do agente **não inclui `data_url` local**. Um ficheiro guardado apenas no IndexedDB não deve ser enviado automaticamente para um agente externo.
 
-Para o agente aceder a media remotamente será necessária uma camada de armazenamento autenticada, com URLs privadas/temporárias e permissões explícitas.
+A fundação remota usa Storage privado Supabase. Ficheiros remotos são acedidos com sessão autorizada ou URLs assinadas temporárias; `data_url` local continua excluído do contrato do agente.
 
 ## Estado atual da ligação remota
 
-A UI, o modelo de dados, autoria e contrato do agente estão implementados.
+A fundação remota está implementada com Supabase:
 
-Ainda falta uma peça para o cenário “abro o ChatGPT e ele vai à app sozinho”: um **backend autenticado e acessível pela internet**. O GitHub Pages é estático e o IndexedDB existe apenas no dispositivo, portanto não podem servir diretamente como API remota.
+1. autenticação do treinador por email;
+2. RLS por equipa e membership;
+3. sincronização IndexedDB ↔ Supabase;
+4. UUIDs estáveis entre dispositivos;
+5. deteção de conflitos sem overwrite silencioso;
+6. tombstones para eliminações offline;
+7. Storage privado para media;
+8. activity log e tabela de autorizações do agente;
+9. sincronização automática ao alterar dados, abrir a app ou recuperar rede.
 
-O backend futuro deve:
+O código não contém credenciais privadas. A PWA aceita apenas Project URL + publishable key; secret/service-role ficam reservadas ao futuro servidor do agente.
 
-1. autenticar o treinador;
-2. autorizar um agente específico;
-3. sincronizar os objetos do workspace;
-4. guardar media fora do IndexedDB quando for necessário acesso remoto;
-5. manter audit log;
-6. expor apenas as operações do `AgentWorkspaceAPI` ou equivalentes server-side;
-7. permitir revogar o acesso do agente.
-
-Nenhuma chave privada deve ser colocada no JavaScript publicado no GitHub Pages.
+Para o cenário “abro o ChatGPT e ele vai à app sozinho”, falta apenas expor o backend através de um **servidor MCP autenticado** que aplique `agent_authorizations` e as operações do workspace. A base de dados e sincronização usadas por esse servidor já ficam preparadas.
 
 ## Migração da aplicação anterior
 
-A migração v3 → v8 é automática. Registos de jogadores, jogos, treinos e memória continuam disponíveis.
+A migração v3 → v9 é automática. Registos de jogadores, jogos, treinos e memória continuam disponíveis; UUIDs remotos são atribuídos de forma lazy na primeira sincronização.
 
 A reformulação remove o produto antigo da experiência sem apagar silenciosamente os dados existentes. Stores legados podem ser eliminados numa migração posterior apenas depois de confirmar que nada útil precisa de ser convertido para o novo modelo.
 
@@ -151,7 +151,7 @@ A reformulação remove o produto antigo da experiência sem apagar silenciosame
 
 A suíte deve validar, no mínimo:
 
-- migração de dados antigos para IndexedDB v8;
+- migração de dados antigos para IndexedDB v9;
 - funcionamento offline;
 - captura de observação pelo treinador;
 - documentos partilhados;

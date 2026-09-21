@@ -4,6 +4,10 @@ const app = document.getElementById("app");
 const titleEl = document.getElementById("titulo");
 const eyebrowEl = document.getElementById("eyebrow");
 const quickCapture = document.getElementById("quick-capture");
+const remoteStateEl = document.getElementById("remote-state");
+const remoteDotEl = document.getElementById("remote-dot");
+const remoteTitleEl = document.getElementById("remote-title");
+const remoteDetailEl = document.getElementById("remote-detail");
 const HUMAN_LABEL = "Treinador";
 
 function esc(v){
@@ -24,9 +28,33 @@ function setView(title,html,eyebrow){
   eyebrowEl.textContent=eyebrow||"Workspace";
   app.innerHTML=html;
   window.scrollTo(0,0);
+  refreshRemoteIndicator();
 }
 function markNav(tab){
   document.querySelectorAll("[data-tab]").forEach(function(a){a.classList.toggle("active",a.dataset.tab===tab);});
+}
+async function refreshRemoteIndicator(){
+  if (!globalThis.RemoteWorkspace || !remoteTitleEl) return;
+  try {
+    var status = await RemoteWorkspace.status();
+    remoteDotEl.classList.toggle("connected", !!(status.signedIn && status.remoteTeamId));
+    if (!status.configured) {
+      remoteTitleEl.textContent = "Workspace local";
+      remoteDetailEl.textContent = "Ligação remota por configurar";
+    } else if (!status.signedIn) {
+      remoteTitleEl.textContent = "Backend configurado";
+      remoteDetailEl.textContent = "Falta iniciar sessão";
+    } else if (!status.remoteTeamId) {
+      remoteTitleEl.textContent = "Conta ligada";
+      remoteDetailEl.textContent = "Falta escolher a equipa remota";
+    } else {
+      remoteTitleEl.textContent = "Workspace ligado";
+      remoteDetailEl.textContent = status.lastSyncAt ? "Sincronizado " + fmtDate(status.lastSyncAt) : "Pronto para sincronizar";
+    }
+  } catch (_) {
+    remoteTitleEl.textContent = "Ligação remota";
+    remoteDetailEl.textContent = "Não foi possível verificar";
+  }
 }
 function actorBadge(actor,label){
   var type=(actor==="agent"||actor==="system")?actor:"human";
@@ -114,6 +142,19 @@ window.addEventListener("hashchange",router);
 window.addEventListener("DOMContentLoaded",router);
 if(document.readyState!=="loading") router();
 
+RemoteWorkspace.init().then(function(client){
+  if(!client) return;
+  RemoteWorkspace.scheduleSync(600);
+  window.addEventListener("online",function(){ RemoteWorkspace.scheduleSync(500); });
+  client.auth.onAuthStateChange(function(event,session){
+    refreshRemoteIndicator();
+    if(event==="SIGNED_IN" && session && new URLSearchParams(location.search).get("auth")==="1"){
+      history.replaceState(null,"",location.pathname+"#/definicoes");
+      router();
+    }
+  });
+}).catch(function(){ /* modo local continua disponível */ });
+
 function nextEventHTML(s){
   var rows=[];
   if(s.next_match){
@@ -146,15 +187,20 @@ function activityHTML(rows,limit){
 
 async function viewWorkspace(){
   var s=await WorkspaceStore.buildSnapshot();
+  var remoteStatus=await RemoteWorkspace.status();
   var teamName=(s.team&&s.team.nome)||"Equipa";
   var context=[s.team&&s.team.clube,s.team&&s.team.escalao,s.team&&s.team.epoca].filter(Boolean).join(" · ");
   var recentDocs=s.recent_documents.length?s.recent_documents.map(documentCard).join(""):'<div class="empty">Ainda não existem planos ou análises partilhadas.</div>';
+  var remoteReady=!!(remoteStatus.signedIn&&remoteStatus.remoteTeamId);
+  var remoteLabel=remoteReady
+    ? (remoteStatus.lastSyncAt ? "Workspace remoto ligado · última sincronização "+fmtDate(remoteStatus.lastSyncAt) : "Workspace remoto ligado · pronto para sincronizar")
+    : "Modo local ativo · configura a ligação remota nas Definições";
   var html='';
   html+='<div class="hero">';
   html+='<section class="panel hero-main"><div class="kicker">Human–AI Shared Workspace</div><h2 class="display">O estado da equipa, num único lugar.</h2>';
   html+='<p class="lead">'+esc(context||"Configura a equipa para começar.")+' Dados, planos, media e decisões ficam disponíveis no mesmo workspace para treinador e agente.</p>';
   html+='<div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/capturar">Registar observação</a><a class="btn secondary" href="#/planos/novo">Novo plano</a><a class="btn secondary" href="#/media/novo">Adicionar media</a></div>';
-  html+='<div class="workspace-status"><span class="dot"></span>Modo local ativo · a interface externa do agente ainda não está ligada.</div></section>';
+  html+='<div class="workspace-status '+(remoteReady?"connected":"")+'"><span class="dot"></span>'+esc(remoteLabel)+'</div></section>';
   html+='<aside class="panel hero-side"><div class="section-head"><div><h2>Próximos</h2><p>Agenda operacional</p></div></div>'+nextEventHTML(s)+'</aside></div>';
   html+='<div class="grid cols-4">';
   html+='<div class="panel metric"><div class="metric-label">Plantel</div><div class="metric-value">'+s.players.length+'</div><div class="metric-sub">jogadores</div></div>';
@@ -328,7 +374,7 @@ async function viewMediaForm(subjectType,subjectId){
   html+='<label class="field"><span>Associar a</span><select name="subject_key">'+options+'</select></label>';
   html+='<div class="form-grid"><label class="field"><span>Tipo</span><select name="type"><option value="photo">Fotografia</option><option value="video">Vídeo</option><option value="file">Ficheiro</option></select></label><label class="field"><span>Título</span><input name="title" required></label></div>';
   html+='<label class="field"><span>Link externo</span><input name="url" type="url" placeholder="https://..."><small class="hint">Usa links para vídeos grandes.</small></label>';
-  html+='<label class="field"><span>Ou ficheiro local</span><input name="file" type="file"><small class="hint">Até 5 MB fica guardado no dispositivo e no backup.</small></label>';
+  html+='<label class="field"><span>Ou ficheiro local</span><input name="file" type="file"><small class="hint">Sem backend remoto: até 5 MB no dispositivo. Com remoto ligado, ficheiros maiores seguem diretamente para Storage privado.</small></label>';
   html+='<label class="field"><span>Nota / contexto</span><textarea name="note"></textarea></label>';
   html+='<div class="toolbar"><button class="btn accent" type="submit">Guardar media</button><a class="btn secondary" href="#/media">Cancelar</a></div></form></section>';
   setView("Adicionar media",html,"Media");
@@ -367,11 +413,49 @@ async function viewCapture(subjectType,subjectId){
   html+='<div class="toolbar"><button class="btn accent" type="submit">Guardar observação</button><a class="btn secondary" href="#/">Cancelar</a></div></form></section>';
   setView("Registar observação",html,"Workspace");
 }
+function remoteAccountHTML(status,teams,options){
+  if(!status.configured){
+    return '<h2 style="font-size:22px;margin:8px 0">Ainda local</h2><p class="lead">Guarda primeiro o Project URL e a publishable key.</p>';
+  }
+  if(!status.signedIn){
+    return '<h2 style="font-size:22px;margin:8px 0">Iniciar sessão</h2><p class="lead">Recebe um link seguro no teu email.</p><form class="form" data-form="remote-login" style="margin-top:16px"><label class="field"><span>Email</span><input name="email" type="email" required value="'+esc(status.email)+'"></label><button class="btn accent" type="submit">Enviar link de acesso</button></form>';
+  }
+  var html='<h2 style="font-size:22px;margin:8px 0">Conta ligada</h2><div class="row"><span class="badge ready">Ligado</span><span class="meta">'+esc(status.email||"Sessão ativa")+'</span></div>';
+  html+='<div class="form" style="margin-top:16px">';
+  if(teams.length){
+    html+='<label class="field"><span>Workspace remoto</span><select id="remote-team-select"><option value="">Escolher…</option>'+options+'</select></label>';
+    html+='<button class="btn secondary" type="button" data-action="remote-use-team">Usar equipa selecionada</button>';
+  }
+  html+='<button class="btn secondary" type="button" data-action="remote-create-team">Criar a partir desta equipa</button>';
+  if(status.remoteTeamId){
+    html+='<button class="btn accent" type="button" data-action="remote-sync">Sincronizar agora</button>';
+    html+='<div class="hint">ID remoto: '+esc(status.remoteTeamId)+'</div>';
+    if(status.lastSyncAt) html+='<div class="hint">Última sincronização: '+esc(new Date(status.lastSyncAt).toLocaleString("pt-PT"))+'</div>';
+  }
+  html+='<button class="link" type="button" data-action="remote-logout">Terminar sessão</button></div>';
+  return html;
+}
 async function viewSettings(){
   var s=await WorkspaceStore.buildSnapshot();
+  var status=await RemoteWorkspace.status();
+  var config=RemoteWorkspace.getConfig();
+  var teams=[], remoteError="";
+  if(status.signedIn){
+    try{ teams=await RemoteWorkspace.listTeams(); }catch(error){ remoteError=error.message; }
+  }
+  var options=teams.map(function(team){
+    return '<option value="'+esc(team.id)+'" '+(team.id===status.remoteTeamId?"selected":"")+'>'+esc(team.name)+'</option>';
+  }).join("");
   var html='<div class="grid cols-2">';
-  html+='<section class="panel hero-main"><div class="kicker">Dados</div><h2 style="font-size:22px;margin:8px 0">Backup do workspace</h2><p class="lead">A cópia inclui equipa, jogos, memória, documentos partilhados, atividade e media local.</p><div class="toolbar" style="margin-top:18px"><button class="btn" data-action="export-backup">Exportar backup</button><label class="btn secondary">Importar backup<input hidden type="file" accept="application/json" data-action="import-backup"></label></div></section>';
-  html+='<section class="panel hero-main"><div class="kicker">Agente</div><h2 style="font-size:22px;margin:8px 0">Interface externa ainda não ligada</h2><p class="lead">A estrutura já distingue autoria humana e do agente. O próximo passo técnico é ligar um backend/API segura para o ChatGPT ler e escrever neste workspace fora deste dispositivo.</p><div class="notice" style="margin-top:14px">A app não contém chatbot nem credenciais de fornecedor de IA. O agente liga-se por uma interface externa segura.</div></section></div>';
+  html+='<section class="panel hero-main"><div class="kicker">Backend remoto</div><h2 style="font-size:22px;margin:8px 0">Supabase</h2>';
+  html+='<p class="lead">A configuração pública fica apenas neste browser. Nunca coloques uma secret key aqui.</p>';
+  html+='<form class="form" data-form="remote-config" style="margin-top:16px"><label class="field"><span>Project URL</span><input name="url" type="url" placeholder="https://xxxxx.supabase.co" value="'+esc(config.url)+'" required></label>';
+  html+='<label class="field"><span>Publishable key</span><input name="publishable_key" type="password" value="'+esc(config.publishableKey)+'" required autocomplete="off"></label><button class="btn secondary" type="submit">Guardar configuração</button></form>';
+  if(remoteError) html+='<div class="notice" style="margin-top:12px">'+esc(remoteError)+'</div>';
+  html+='</section>';
+  html+='<section class="panel hero-main"><div class="kicker">Conta e sincronização</div>'+remoteAccountHTML(status,teams,options)+'</section></div>';
+  html+='<div class="grid cols-2 section"><section class="panel hero-main"><div class="kicker">Dados</div><h2 style="font-size:22px;margin:8px 0">Backup local</h2><p class="lead">Mantém uma cópia independente do backend remoto.</p><div class="toolbar" style="margin-top:18px"><button class="btn" data-action="export-backup">Exportar backup</button><label class="btn secondary">Importar backup<input hidden type="file" accept="application/json" data-action="import-backup"></label></div></section>';
+  html+='<section class="panel hero-main"><div class="kicker">Agente</div><h2 style="font-size:22px;margin:8px 0">Contrato preparado</h2><p class="lead">Depois da sincronização estar ativa, o servidor do agente poderá trabalhar sobre estes mesmos dados com permissões separadas e auditáveis.</p></section></div>';
   html+='<section class="section"><div class="grid cols-4"><div class="panel metric"><div class="metric-label">Jogadores</div><div class="metric-value">'+s.players.length+'</div></div><div class="panel metric"><div class="metric-label">Documentos</div><div class="metric-value">'+s.documents.length+'</div></div><div class="panel metric"><div class="metric-label">Media</div><div class="metric-value">'+s.media.length+'</div></div><div class="panel metric"><div class="metric-label">Atividade</div><div class="metric-value">'+s.activity.length+'</div></div></div></section>';
   setView("Definições",html,"Sistema");
 }
@@ -419,6 +503,35 @@ app.addEventListener("click",async function(event){
     await logHuman("removed_media","Removeu um item de media","media",target.dataset.id);
     return router();
   }
+  if(action==="remote-logout"){
+    await RemoteWorkspace.signOut();
+    await refreshRemoteIndicator();
+    return router();
+  }
+  if(action==="remote-create-team"){
+    try{
+      var createdTeam=await RemoteWorkspace.createTeamFromLocal();
+      alert("Workspace remoto criado: "+createdTeam.name);
+      return router();
+    }catch(error){ alert("Não foi possível criar: "+error.message); return; }
+  }
+  if(action==="remote-use-team"){
+    var select=document.getElementById("remote-team-select");
+    if(!select?.value){ alert("Escolhe uma equipa remota."); return; }
+    await RemoteWorkspace.useTeam(select.value);
+    return router();
+  }
+  if(action==="remote-sync"){
+    target.disabled=true;
+    try{
+      var syncResult=await RemoteWorkspace.syncNow();
+      var msg="Sincronização concluída: "+syncResult.pushed+" enviados, "+syncResult.pulled+" recebidos.";
+      if(syncResult.conflicts.length) msg+=" "+syncResult.conflicts.length+" conflito(s) mantidos para revisão.";
+      alert(msg);
+      return router();
+    }catch(error){ alert("Sincronização falhou: "+error.message); return; }
+    finally{ target.disabled=false; }
+  }
   if(action==="export-backup") return exportBackup();
 });
 app.addEventListener("change",async function(event){
@@ -433,6 +546,25 @@ app.addEventListener("submit",async function(event){
   var type=form.dataset.form;
   var id=form.dataset.id?Number(form.dataset.id):null;
   function numberOrNull(v){return v===""||v==null?null:Number(v);}
+
+  if(type==="remote-config"){
+    try{
+      RemoteWorkspace.saveConfig({
+        url:fd.get("url"),
+        publishableKey:fd.get("publishable_key")
+      });
+      alert("Configuração remota guardada.");
+      await refreshRemoteIndicator();
+      return router();
+    }catch(error){ alert(error.message); return; }
+  }
+  if(type==="remote-login"){
+    try{
+      await RemoteWorkspace.signInWithEmail(fd.get("email"));
+      alert("Enviei um link de acesso para o teu email.");
+      return router();
+    }catch(error){ alert("Não foi possível enviar o link: "+error.message); return; }
+  }
 
   if(type==="team"){
     await HeadCoachMemory.saveTeam({
@@ -506,25 +638,36 @@ app.addEventListener("submit",async function(event){
   if(type==="media"){
     var mediaSubject=splitSubject(fd.get("subject_key"));
     var file=fd.get("file");
-    var dataUrl=file&&file.size?await fileToDataURL(file):null;
     if(!mediaSubject.type){
       alert("Escolhe a entidade a que este media pertence.");
       return;
     }
     try{
-      var mediaId=await HeadCoachMedia.create({
-        team_id:DEFAULT_TEAM_ID,
-        subject_type:mediaSubject.type,
-        subject_id:mediaSubject.id,
-        type:fd.get("type"),
-        title:fd.get("title"),
-        url:fd.get("url")||null,
-        data_url:dataUrl,
-        file_name:file&&file.size?file.name:null,
-        mime_type:file&&file.size?file.type:null,
-        size:file&&file.size?file.size:null,
-        note:fd.get("note")||null
-      });
+      var mediaId;
+      if(file&&file.size&&await RemoteWorkspace.canUpload()){
+        mediaId=await RemoteWorkspace.uploadFileMedia(file,{
+          subject_type:mediaSubject.type,
+          subject_id:mediaSubject.id,
+          type:fd.get("type"),
+          title:fd.get("title"),
+          note:fd.get("note")||null
+        });
+      }else{
+        var dataUrl=file&&file.size?await fileToDataURL(file):null;
+        mediaId=await HeadCoachMedia.create({
+          team_id:DEFAULT_TEAM_ID,
+          subject_type:mediaSubject.type,
+          subject_id:mediaSubject.id,
+          type:fd.get("type"),
+          title:fd.get("title"),
+          url:fd.get("url")||null,
+          data_url:dataUrl,
+          file_name:file&&file.size?file.name:null,
+          mime_type:file&&file.size?file.type:null,
+          size:file&&file.size?file.size:null,
+          note:fd.get("note")||null
+        });
+      }
       await logHuman("added_media","Adicionou media · "+fd.get("title"),"media",mediaId);
       return go("#/media");
     }catch(error){
