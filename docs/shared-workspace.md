@@ -1,8 +1,8 @@
-# Treinador Pro — Human–AI Shared Workspace
+# Vision Coach — Human–AI Shared Workspace
 
 ## Conceito
 
-O Treinador Pro não é um chatbot embutido numa aplicação de gestão.
+O Vision Coach não é um chatbot embutido numa aplicação de gestão.
 
 É um **workspace partilhado entre humano e agente**. O treinador usa uma interface visual. O agente usa um contrato de operações próprio. Ambos trabalham sobre os mesmos objetos: equipa, jogadores, jogos, observações, planos, media e atividade.
 
