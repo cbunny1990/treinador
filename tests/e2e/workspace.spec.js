@@ -169,8 +169,9 @@ test("definições expõem ligação remota sem secret key", async ({ page }) =>
   await expect(page.locator('script[src="js/remote_workspace.js"]')).toHaveCount(1);
 
   const state = await page.evaluate(async () => RemoteWorkspace.status());
-  expect(state.configured).toBe(false);
+  expect(state.configured).toBe(true);
   expect(state.signedIn).toBe(false);
+  expect(state.remoteTeamId).toBe(null);
 });
 
 test("alteração offline recebe UUID e eliminação cria tombstone", async ({ page }) => {
