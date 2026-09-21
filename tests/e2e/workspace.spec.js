@@ -209,3 +209,41 @@ test("alteração offline recebe UUID e eliminação cria tombstone", async ({ p
   expect(state.tombstones[0].sync_id).toBe(state.syncId);
   expect(state.tombstones[1].expected_updated_at).toBe("2026-09-21T12:00:00.000Z");
 });
+
+test("editar documento remoto preserva identidade e versão de sincronização", async ({ page }) => {
+  await page.goto("/");
+  const state = await page.evaluate(async () => {
+    const id = await DB.criar("workspace_documents", {
+      team_id: DEFAULT_TEAM_ID,
+      type: "brief",
+      title: "Documento remoto",
+      body: "Versão remota",
+      status: "draft",
+      refs: [],
+      created_by: "agent",
+      created_by_label: "Head Coach",
+      updated_by: "agent",
+      updated_by_label: "Head Coach",
+      created_at: "2026-09-21T12:00:00.000Z",
+      updated_at: "2026-09-21T12:00:00.000Z",
+      sync_id: "33333333-3333-4333-8333-333333333333",
+      sync_dirty: false,
+      remote_updated_at: "2026-09-21T12:00:00.000Z",
+      sync_actor_type: "agent",
+      sync_actor_label: "Head Coach",
+    }, { remote: true });
+
+    await WorkspaceStore.saveDocument({
+      id,
+      body: "Versão humana",
+      updated_by: "human",
+      updated_by_label: "Treinador",
+    });
+    return DB.obter("workspace_documents", id);
+  });
+
+  expect(state.sync_id).toBe("33333333-3333-4333-8333-333333333333");
+  expect(state.remote_updated_at).toBe("2026-09-21T12:00:00.000Z");
+  expect(state.sync_dirty).toBe(true);
+  expect(state.body).toBe("Versão humana");
+});

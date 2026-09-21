@@ -119,7 +119,7 @@ const WorkspaceStore = {
     const existing = input?.id ? await this.getDocument(input.id) : null;
     const actor = wsActor(input?.updated_by || input?.created_by);
     const actorLabel = wsText(input?.updated_by_label || input?.created_by_label, 120) || (actor === "agent" ? "Agente" : "Treinador");
-    const row = normalizarWorkspaceDocument({
+    const normalized = normalizarWorkspaceDocument({
       ...(existing || {}),
       ...input,
       created_by: existing?.created_by || input?.created_by,
@@ -128,6 +128,11 @@ const WorkspaceStore = {
       updated_by_label: actorLabel,
       created_at: existing?.created_at,
     });
+    // Keep the sync identity/version that arrived from the remote workspace.
+    // The domain normalizer intentionally returns only document fields, so an
+    // edit must merge those fields back over the stored row instead of
+    // replacing the row and accidentally creating a new remote record.
+    const row = { ...(existing || {}), ...normalized };
     let id;
     if (existing) {
       id = existing.id;
