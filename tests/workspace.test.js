@@ -46,13 +46,15 @@ test("timeline mistura documentos, atividade, jogos e memória por data", () => 
     activity: [{ created_at: "2026-09-21T10:00:00Z", summary: "Agente criou plano", actor: "agent" }],
     documents: [{ updated_at: "2026-09-21T09:00:00Z", title: "Plano", created_by: "agent" }],
     memory: [{ occurred_at: "2026-09-20", title: "Observação", metadata: { actor: "human" } }],
-    matches: [{ data: "2026-09-19", adversario: "Teste" }],
+    matches: [{ data: "2026-09-19", adversario: "Teste", sync_actor_type: "agent", sync_actor_label: "Head Coach" }],
     trainings: [],
   });
   assert.equal(rows[0].type, "activity");
   assert.equal(rows[1].type, "document");
   assert.equal(rows[2].type, "memory");
   assert.equal(rows[3].type, "match");
+  assert.equal(rows[3].actor, "agent");
+  assert.equal(rows[3].actor_label, "Head Coach");
 });
 
 test("documento inválido é recusado", () => {

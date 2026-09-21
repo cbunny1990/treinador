@@ -9,6 +9,10 @@ const {
   remoteActorFor,
   remotePayload,
   remoteSafeFilename,
+  remoteIdentityKey,
+  remoteNeedsConflict,
+  remoteProjectRef,
+  remoteShouldUseTus,
   remoteRecordRow,
   remoteActivityRow,
 } = require("../js/remote_workspace.js");
@@ -27,6 +31,8 @@ test("payload remoto remove chaves locais e data_url", () => {
     sync_dirty: true,
     sync_local_updated_at: "now",
     remote_updated_at: "remote",
+    sync_actor_type: "agent",
+    sync_actor_label: "Head Coach",
     data_url: "data:image/png;base64,secret",
     nome: "Jogador",
   });
@@ -43,6 +49,32 @@ test("documento usa autoria da última alteração", () => {
     }),
     { actor_type: "human", actor_label: "Treinador" }
   );
+});
+
+test("registo genérico preserva proveniência sincronizada", () => {
+  assert.deepEqual(
+    remoteActorFor("jogos", { sync_actor_type: "agent", sync_actor_label: "Head Coach" }),
+    { actor_type: "agent", actor_label: "Head Coach" }
+  );
+});
+
+test("conflito exige a versão remota esperada", () => {
+  const remote = { updated_at: "2026-09-21T10:00:00Z" };
+  assert.equal(remoteNeedsConflict({ sync_dirty: true, remote_updated_at: null }, remote), true);
+  assert.equal(remoteNeedsConflict({ sync_dirty: true, remote_updated_at: "old" }, remote), true);
+  assert.equal(remoteNeedsConflict({ sync_dirty: true, remote_updated_at: remote.updated_at }, remote), false);
+  assert.equal(remoteNeedsConflict({ sync_dirty: false, remote_updated_at: "old" }, remote), false);
+});
+
+test("external_key impede identidade duplicada entre browsers", () => {
+  assert.equal(remoteIdentityKey("match", { external_key: " JOGO-1 " }), "match|jogo-1");
+  assert.equal(remoteIdentityKey("match", {}), null);
+});
+
+test("uploads grandes usam TUS no endpoint direto", () => {
+  assert.equal(remoteShouldUseTus(6 * 1024 * 1024), false);
+  assert.equal(remoteShouldUseTus(6 * 1024 * 1024 + 1), true);
+  assert.equal(remoteProjectRef("https://abcdefghijklmnopqrst.supabase.co"), "abcdefghijklmnopqrst");
 });
 
 test("mapeamento store/kind é reversível", () => {

@@ -100,10 +100,10 @@ function workspaceTimeline(data) {
     actor: item.metadata?.actor || "human", actor_label: item.metadata?.actor_label || item.source?.label || "Treinador", ref: item,
   });
   for (const item of data.matches || []) rows.push({
-    type: "match", date: item.data, title: "Jogo · " + (item.adversario || "Adversário"), actor: "human", actor_label: "Equipa", ref: item,
+    type: "match", date: item.data, title: "Jogo · " + (item.adversario || "Adversário"), actor: item.sync_actor_type || "human", actor_label: item.sync_actor_label || "Equipa", ref: item,
   });
   for (const item of data.trainings || []) rows.push({
-    type: "training", date: item.data, title: "Treino · " + (item.escalao || ""), actor: "human", actor_label: "Equipa", ref: item,
+    type: "training", date: item.data, title: "Treino · " + (item.escalao || ""), actor: item.sync_actor_type || "human", actor_label: item.sync_actor_label || "Equipa", ref: item,
   });
   return rows.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
 }

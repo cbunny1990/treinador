@@ -431,6 +431,7 @@ function remoteAccountHTML(status,teams,options){
     html+='<button class="btn accent" type="button" data-action="remote-sync">Sincronizar agora</button>';
     html+='<div class="hint">ID remoto: '+esc(status.remoteTeamId)+'</div>';
     if(status.lastSyncAt) html+='<div class="hint">Última sincronização: '+esc(new Date(status.lastSyncAt).toLocaleString("pt-PT"))+'</div>';
+    if(status.conflicts&&status.conflicts.length) html+='<div class="notice" style="margin-top:12px">'+status.conflicts.length+' conflito(s) aguardam revisão. Nenhum dado foi sobrescrito.</div>';
   }
   html+='<button class="link" type="button" data-action="remote-logout">Terminar sessão</button></div>';
   return html;

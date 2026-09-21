@@ -166,7 +166,11 @@ test("definições expõem ligação remota sem secret key", async ({ page }) =>
   await expect(page.locator('input[name="publishable_key"]')).toHaveAttribute("type", "password");
   await expect(page.locator('input[name*="secret"], input[name*="service"]')).toHaveCount(0);
   await expect(page.locator('script[src="vendor/supabase.min.js"]')).toHaveCount(1);
+  await expect(page.locator('script[src="vendor/tus.min.js"]')).toHaveCount(1);
   await expect(page.locator('script[src="js/remote_workspace.js"]')).toHaveCount(1);
+
+  const tusReady = await page.evaluate(() => typeof TusClient?.Upload === "function");
+  expect(tusReady).toBe(true);
 
   const state = await page.evaluate(async () => RemoteWorkspace.status());
   expect(state.configured).toBe(true);
@@ -184,6 +188,15 @@ test("alteração offline recebe UUID e eliminação cria tombstone", async ({ p
     });
     const row = await DB.obter("jogadores", id);
     await DB.apagar("jogadores", id);
+    const syncedId = await DB.criar("jogadores", {
+      team_id: DEFAULT_TEAM_ID,
+      nome: "Sync com versão",
+      escalao: "sub-8",
+      sync_id: "22222222-2222-4222-8222-222222222222",
+      sync_dirty: false,
+      remote_updated_at: "2026-09-21T12:00:00.000Z",
+    }, { remote: true });
+    await DB.apagar("jogadores", syncedId);
     return {
       syncId: row.sync_id,
       dirty: row.sync_dirty,
@@ -192,6 +205,7 @@ test("alteração offline recebe UUID e eliminação cria tombstone", async ({ p
   });
   expect(state.syncId).toMatch(/^[0-9a-f-]{36}$/i);
   expect(state.dirty).toBe(true);
-  expect(state.tombstones).toHaveLength(1);
+  expect(state.tombstones).toHaveLength(2);
   expect(state.tombstones[0].sync_id).toBe(state.syncId);
+  expect(state.tombstones[1].expected_updated_at).toBe("2026-09-21T12:00:00.000Z");
 });

@@ -15,6 +15,12 @@ As migrations criam e protegem:
 - RLS;
 - bucket privado `team-media`.
 
+O repositório também contém as migrations de produção do gateway do Head Coach,
+o hardening de idempotência e a validação de media. A Edge Function está em
+`supabase/functions/head-coach-gateway/` e mantém `verify_jwt = true` em
+`supabase/config.toml`. A função lê a service-role key apenas das variáveis do
+runtime Supabase; nenhuma credencial privada pertence à PWA ou ao Git.
+
 ## 2. Configurar Auth
 
 Em Authentication, configurar a URL pública da app como Site URL:
@@ -54,6 +60,8 @@ A partir daí a app agenda sincronização automática sempre que existem altera
 Com o remoto desligado, ficheiros locais continuam limitados a 5 MB.
 Com o remoto ligado, um ficheiro escolhido na app é enviado diretamente para o bucket privado `team-media`.
 O browser guarda apenas metadados e uma URL assinada temporária. A URL é renovada nas sincronizações seguintes.
+Uploads acima de 6 MB usam TUS resumível, em blocos de 6 MB, para poderem retomar
+depois de uma interrupção. O bucket permanece privado e não são gerados URLs públicos.
 
 ## Conflitos
 
@@ -63,6 +71,10 @@ Nesse caso:
 - o registo local é mantido;
 - o registo remoto é mantido;
 - a sincronização reporta o conflito para revisão.
+
+Cada escrita usa a versão remota conhecida (`updated_at`) como precondição. As
+eliminações são soft-deletes, chegam a todas as cópias através de `deleted_at` e
+só são aplicadas localmente quando não existe uma alteração local concorrente.
 
 ## Agente
 

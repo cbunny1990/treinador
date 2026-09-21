@@ -131,12 +131,17 @@ function _syncUuid() {
 function _prepareSyncRecord(store, obj, options = {}) {
   if (!SYNCABLE_STORES.has(store) || options.remote) return { ...obj };
   const now = new Date().toISOString();
-  return {
+  const next = {
     ...obj,
     sync_id: obj.sync_id || _syncUuid(),
     sync_dirty: true,
     sync_local_updated_at: now,
   };
+  if (store !== "activity_items") {
+    next.sync_actor_type = "human";
+    next.sync_actor_label = "Treinador";
+  }
+  return next;
 }
 function _notifyRemoteSync(store, options = {}) {
   if (options.remote || !SYNCABLE_STORES.has(store)) return;
@@ -173,6 +178,7 @@ const DB = {
       await this.criar("sync_tombstones", {
         store, sync_id: anterior.sync_id, team_id: anterior.team_id || DEFAULT_TEAM_ID,
         storage_path: anterior.storage_path || null,
+        expected_updated_at: anterior.remote_updated_at || null,
         created_at: new Date().toISOString(),
       });
     }
