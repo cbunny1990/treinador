@@ -1,4 +1,4 @@
-# Ligar o Treinador Pro ao Supabase
+# Ligar o Vision Coach ao Supabase
 
 A aplicação continua a funcionar localmente sem Supabase. Esta configuração ativa a cópia remota partilhada, autenticação e Storage privado.
 
@@ -42,7 +42,7 @@ A publishable key pode existir no browser porque o acesso real aos dados é limi
 
 ## 4. Ligar na app
 
-1. Abrir Treinador Pro.
+1. Abrir Vision Coach.
 2. Definições e backup.
 3. Em Backend remoto, preencher Project URL e Publishable key.
 4. Guardar.

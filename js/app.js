@@ -683,7 +683,7 @@ async function exportBackup(){
   var url=URL.createObjectURL(blob);
   var a=document.createElement("a");
   a.href=url;
-  a.download="treinador-workspace-"+today()+".json";
+  a.download="vision-coach-workspace-"+today()+".json";
   a.click();
   URL.revokeObjectURL(url);
   await logHuman("exported_backup","Exportou uma cópia de segurança","workspace",DEFAULT_TEAM_ID);

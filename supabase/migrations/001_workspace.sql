@@ -1,4 +1,4 @@
--- Treinador Pro: shared Human-Agent workspace
+-- Vision Coach: shared Human-Agent workspace
 create extension if not exists pgcrypto;
 
 create table if not exists public.teams (

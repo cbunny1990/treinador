@@ -1,6 +1,6 @@
 {
-  "name": "Treinador Pro Workspace",
-  "short_name": "Treinador Pro",
+  "name": "Vision Coach",
+  "short_name": "Vision Coach",
   "description": "Workspace partilhado entre treinador e agente para dados, planos e media da equipa.",
   "start_url": "./index.html",
   "scope": "./",
