@@ -562,6 +562,8 @@ const RemoteWorkspace = {
           const updateRow = {
             kind: row.kind,
             payload: row.payload,
+            actor_type: row.actor_type,
+            actor_label: row.actor_label,
           };
           const savedRes = await client.from("workspace_records")
             .update(updateRow)
