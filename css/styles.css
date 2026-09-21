@@ -33,6 +33,7 @@ a{color:inherit}
 .topbar h1{font-size:22px;letter-spacing:-.02em}
 .topbar-actions{display:flex;align-items:center;gap:10px}
 .offline-badge{padding:5px 9px;border-radius:999px;font-size:11px;font-weight:700;background:#fee2e2;color:#991b1b}
+.topbar-settings{width:38px;height:38px;border:1px solid var(--line-strong);border-radius:12px;background:#fff;color:var(--ink);display:grid;place-items:center;text-decoration:none;font-size:17px;line-height:1}
 .icon-button{width:38px;height:38px;border:0;border-radius:12px;background:var(--ink);color:#fff;font-size:24px;line-height:1;cursor:pointer}
 .page{max-width:1180px;margin:0 auto;padding:28px}
 .bottom-nav{display:none}
