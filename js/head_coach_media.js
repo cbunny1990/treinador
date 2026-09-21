@@ -1,7 +1,7 @@
 "use strict";
 
 const HEAD_COACH_MEDIA_TYPES = ["photo", "video", "file"];
-const HEAD_COACH_MEDIA_SUBJECTS = ["player", "training", "match", "memory"];
+const HEAD_COACH_MEDIA_SUBJECTS = ["player", "training", "match", "memory", "document"];
 
 function mediaText(value, max = 2000) {
   return String(value == null ? "" : value).trim().slice(0, max);
