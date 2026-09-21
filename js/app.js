@@ -507,13 +507,62 @@ function remoteAccountHTML(status,teams,options){
   html+='<button class="link" type="button" data-action="remote-logout">Terminar sessão</button></div>';
   return html;
 }
+function mcpConnectorsHTML(status,data,error){
+  var html='<section class="panel hero-main section mcp-panel"><div class="kicker">Ligações IA</div><h2 style="font-size:22px;margin:8px 0">Vision Coach MCP</h2>';
+  html+='<p class="lead">Liga uma IA compatível com MCP ao teu workspace sem partilhar a chave privada do Supabase. Cada ligação tem token próprio, permissões e revogação independente.</p>';
+  if(!status.signedIn){
+    return html+'<div class="notice" style="margin-top:16px">Inicia sessão no workspace remoto para criar uma ligação IA.</div></section>';
+  }
+  if(!status.remoteTeamId){
+    return html+'<div class="notice" style="margin-top:16px">Escolhe primeiro o workspace remoto desta equipa.</div></section>';
+  }
+  if(error){
+    return html+'<div class="notice" style="margin-top:16px">'+esc(error)+'</div></section>';
+  }
+
+  var credential=MCPConnectors.lastCredential();
+  if(credential){
+    html+='<div class="mcp-credential"><div class="row"><div class="grow"><div class="title">Credencial criada agora</div><div class="meta">Copia o token já. Depois de atualizares a página ele deixa de estar disponível.</div></div><span class="badge ready">Uma vez</span></div>';
+    html+='<label class="field"><span>URL MCP</span><div class="copy-field"><input id="mcp-url-once" readonly value="'+esc(credential.mcp_url)+'"><button class="btn secondary small" type="button" data-action="copy-mcp-value" data-copy-target="mcp-url-once">Copiar</button></div></label>';
+    html+='<label class="field"><span>Token Bearer</span><div class="copy-field"><input id="mcp-token-once" readonly value="'+esc(credential.token)+'"><button class="btn secondary small" type="button" data-action="copy-mcp-value" data-copy-target="mcp-token-once">Copiar</button></div></label>';
+    html+='<div class="notice">Este token dá acesso ao workspace com as permissões escolhidas. Não o publiques nem o envies em mensagens.</div>';
+    html+='<button class="link" type="button" data-action="clear-mcp-credential">Já guardei o token</button></div>';
+  }
+
+  var mcpUrl=data&&data.mcp_url?data.mcp_url:(RemoteWorkspace.getConfig().url+"/functions/v1/vision-coach-mcp");
+  html+='<div class="mcp-instructions"><strong>Como ligar noutra IA</strong><span>1. Adiciona um servidor MCP.</span><span>2. Usa a URL abaixo.</span><span>3. No campo Authorization/Bearer Token, cola o token criado aqui.</span></div>';
+  html+='<label class="field"><span>URL do servidor MCP</span><div class="copy-field"><input id="mcp-server-url" readonly value="'+esc(mcpUrl)+'"><button class="btn secondary small" type="button" data-action="copy-mcp-value" data-copy-target="mcp-server-url">Copiar</button></div></label>';
+
+  html+='<form class="form mcp-create-form" data-form="mcp-connector-create">';
+  html+='<div class="form-grid"><label class="field"><span>Nome da ligação</span><input name="label" required maxlength="80" placeholder="Ex.: Claude no portátil"></label><label class="field"><span>Validade</span><select name="expires_in_days"><option value="30">30 dias</option><option value="365" selected>1 ano</option><option value="3650">10 anos</option></select></label></div>';
+  html+='<div class="field"><span>Permissões</span><div class="scope-grid"><label><input type="checkbox" name="scopes" value="read" checked> Ler workspace</label><label><input type="checkbox" name="scopes" value="write" checked> Criar/alterar</label><label><input type="checkbox" name="scopes" value="media"> Media externo</label></div></div>';
+  html+='<button class="btn accent" type="submit">Criar ligação IA</button></form>';
+
+  var connectors=(data&&Array.isArray(data.connectors))?data.connectors:[];
+  html+='<div class="section-head" style="margin-top:22px"><div><h2>Ligações existentes</h2><p>'+connectors.length+' ligação(ões)</p></div></div>';
+  if(!connectors.length){
+    html+='<div class="empty">Ainda não existem ligações MCP.</div>';
+  }else{
+    html+='<div class="list">'+connectors.map(function(item){
+      var active=item.enabled&&!item.revoked_at&&( !item.expires_at || new Date(item.expires_at)>new Date() );
+      var scopeText=(item.scopes||[]).join(' · ');
+      var last=item.last_used_at?new Date(item.last_used_at).toLocaleString("pt-PT"):"Nunca usada";
+      var expires=item.expires_at?new Date(item.expires_at).toLocaleDateString("pt-PT"):"Sem validade";
+      return '<div class="list-item row"><div class="grow"><div class="row"><span class="title">'+esc(item.label)+'</span><span class="badge '+(active?'ready':'system')+'">'+(active?'Ativa':'Inativa')+'</span></div><div class="meta">'+esc(item.token_prefix)+'… · '+esc(scopeText)+'</div><div class="meta">Último uso: '+esc(last)+' · validade: '+esc(expires)+'</div></div>'+(active?'<button class="btn danger small" type="button" data-action="revoke-mcp-connector" data-id="'+esc(item.id)+'">Revogar</button>':'')+'</div>';
+    }).join('')+'</div>';
+  }
+  return html+'</section>';
+}
 async function viewSettings(){
   var s=await WorkspaceStore.buildSnapshot();
   var status=await RemoteWorkspace.status();
   var config=RemoteWorkspace.getConfig();
-  var teams=[], remoteError="";
+  var teams=[], remoteError="", mcpData=null, mcpError="";
   if(status.signedIn){
     try{ teams=await RemoteWorkspace.listTeams(); }catch(error){ remoteError=error.message; }
+    if(status.remoteTeamId){
+      try{ mcpData=await MCPConnectors.list(status.remoteTeamId); }catch(error){ mcpError=error.message; }
+    }
   }
   var options=teams.map(function(team){
     return '<option value="'+esc(team.id)+'" '+(team.id===status.remoteTeamId?"selected":"")+'>'+esc(team.name)+'</option>';
@@ -526,6 +575,7 @@ async function viewSettings(){
   if(remoteError) html+='<div class="notice" style="margin-top:12px">'+esc(remoteError)+'</div>';
   html+='</section>';
   html+='<section class="panel hero-main"><div class="kicker">Conta e sincronização</div>'+remoteAccountHTML(status,teams,options)+'</section></div>';
+  html+=mcpConnectorsHTML(status,mcpData,mcpError);
   html+='<div class="grid cols-2 section"><section class="panel hero-main"><div class="kicker">Dados</div><h2 style="font-size:22px;margin:8px 0">Backup local</h2><p class="lead">Mantém uma cópia independente do backend remoto.</p><div class="toolbar" style="margin-top:18px"><button class="btn" data-action="export-backup">Exportar backup</button><label class="btn secondary">Importar backup<input hidden type="file" accept="application/json" data-action="import-backup"></label></div></section>';
   html+='<section class="panel hero-main"><div class="kicker">Agente</div><h2 style="font-size:22px;margin:8px 0">Contrato preparado</h2><p class="lead">Depois da sincronização estar ativa, o servidor do agente poderá trabalhar sobre estes mesmos dados com permissões separadas e auditáveis.</p></section></div>';
   html+='<section class="section"><div class="grid cols-4"><div class="panel metric"><div class="metric-label">Jogadores</div><div class="metric-value">'+s.players.length+'</div></div><div class="panel metric"><div class="metric-label">Documentos</div><div class="metric-value">'+s.documents.length+'</div></div><div class="panel metric"><div class="metric-label">Media</div><div class="metric-value">'+s.media.length+'</div></div><div class="panel metric"><div class="metric-label">Atividade</div><div class="metric-value">'+s.activity.length+'</div></div></div></section>';
@@ -609,6 +659,29 @@ app.addEventListener("click",async function(event){
     }catch(error){ alert("Sincronização falhou: "+error.message); return; }
     finally{ target.disabled=false; }
   }
+  if(action==="copy-mcp-value"){
+    var source=document.getElementById(target.dataset.copyTarget);
+    if(!source) return;
+    try{
+      await navigator.clipboard.writeText(source.value||source.textContent||"");
+      var oldText=target.textContent;
+      target.textContent="Copiado";
+      setTimeout(function(){target.textContent=oldText;},1200);
+    }catch(error){ alert("Não foi possível copiar automaticamente."); }
+    return;
+  }
+  if(action==="clear-mcp-credential"){
+    MCPConnectors.clearCredential();
+    return router();
+  }
+  if(action==="revoke-mcp-connector"){
+    if(!confirm("Revogar esta ligação IA? A IA deixa de conseguir aceder imediatamente.")) return;
+    try{
+      var mcpStatus=await RemoteWorkspace.status();
+      await MCPConnectors.revoke(mcpStatus.remoteTeamId,target.dataset.id);
+      return router();
+    }catch(error){ alert("Não foi possível revogar: "+error.message); return; }
+  }
   if(action==="export-backup") return exportBackup();
 });
 app.addEventListener("change",async function(event){
@@ -641,6 +714,19 @@ app.addEventListener("submit",async function(event){
       alert("Enviei um link de acesso para o teu email.");
       return router();
     }catch(error){ alert("Não foi possível enviar o link: "+error.message); return; }
+  }
+  if(type==="mcp-connector-create"){
+    try{
+      var mcpStatus=await RemoteWorkspace.status();
+      var scopes=fd.getAll("scopes").map(String);
+      if(!scopes.length){ alert("Escolhe pelo menos uma permissão."); return; }
+      await MCPConnectors.create(mcpStatus.remoteTeamId,{
+        label:fd.get("label"),
+        scopes:scopes,
+        expires_in_days:Number(fd.get("expires_in_days")||365)
+      });
+      return router();
+    }catch(error){ alert("Não foi possível criar a ligação: "+error.message); return; }
   }
 
   if(type==="team"){
