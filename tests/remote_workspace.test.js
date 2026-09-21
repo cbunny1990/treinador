@@ -114,3 +114,9 @@ test("atividade remota mantém autoria e entidade", () => {
   assert.equal(row.actor_type, "agent");
   assert.equal(row.entity_ref, "7");
 });
+
+
+test("exercise é tipo remoto oficial sem confundir biblioteca legada", () => {
+  assert.equal(REMOTE_STORE_KINDS.exercicios, "exercise");
+  assert.equal(REMOTE_KIND_STORES.exercise, "exercicios");
+});

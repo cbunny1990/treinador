@@ -43,7 +43,7 @@ test("migra dados antigos para o workspace e continua offline", async ({ page, c
     };
   });
 
-  expect(migrated.version).toBe(9);
+  expect(migrated.version).toBe(10);
   expect(migrated.teamId).toBe("default");
   expect(migrated.stores).toContain("workspace_documents");
   expect(migrated.stores).toContain("activity_items");
@@ -294,4 +294,47 @@ test("telemóvel expõe acesso à ligação remota", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Supabase" })).toBeVisible();
   await expect(page.getByLabel("Project URL")).toBeVisible();
   await expect(page.getByLabel("Publishable key")).toBeVisible();
+});
+
+
+test("biblioteca cria exercício e planeador reutiliza-o em blocos", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(async () => {
+    await DB.criar("exercicios", { nome: "Exercício legado invisível" }, { remote: true });
+  });
+
+  await page.goto("/#/exercicios");
+  await expect(page.getByText("Exercício legado invisível")).toHaveCount(0);
+  await page.getByRole("link", { name: "Novo exercício" }).click();
+  await page.getByLabel("Nome").fill("Fechar e Cobrir E2E");
+  await page.getByLabel("Objetivo").fill("Posicionamento defensivo");
+  await page.getByLabel("Espaço").fill("20x15");
+  await page.getByLabel("Séries").fill("3");
+  await page.getByLabel("Minutos por série").fill("4");
+  await page.getByLabel("Tags · separadas por vírgulas").fill("defesa, cobertura");
+  await page.getByRole("button", { name: "Guardar exercício" }).click();
+
+  await expect(page.locator("#app").getByRole("heading", { name: "Fechar e Cobrir E2E" })).toBeVisible();
+  const exercise = await page.evaluate(async () => {
+    const rows = await DB.listar("exercicios");
+    return rows.find((x) => x.nome === "Fechar e Cobrir E2E");
+  });
+  expect(exercise.workspace_v2).toBe(true);
+  expect(exercise.sync_id).toMatch(/^[0-9a-f-]{36}$/i);
+  expect(exercise.duracao_total_min).toBe(12);
+
+  await page.getByRole("link", { name: "Usar num treino" }).click();
+  await page.getByLabel("Objetivo da sessão").fill("Melhorar organização defensiva");
+  await page.getByRole("button", { name: "Guardar treino" }).click();
+
+  await expect(page.getByText("Fechar e Cobrir E2E")).toBeVisible();
+  await expect(page.getByText("12 min", { exact: true }).first()).toBeVisible();
+
+  const training = await page.evaluate(async () => {
+    const rows = await DB.listar("treinos");
+    return rows.find((x) => x.objetivo === "Melhorar organização defensiva");
+  });
+  expect(training.blocos).toHaveLength(1);
+  expect(training.blocos[0].exercise_ref).toBe(exercise.sync_id);
+  expect(training.duracao_min).toBe(12);
 });

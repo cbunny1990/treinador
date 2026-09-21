@@ -82,3 +82,11 @@ test("foreign keys críticas têm índices dedicados", () => {
     "agent_authorizations_owner_id_idx",
   ]) assert.match(sql, new RegExp(name, "i"));
 });
+
+
+test("exercise é record kind oficial do gateway e suporta media", () => {
+  assert.match(sql, /workspace_records_kind_check[\s\S]*exercise/i);
+  assert.match(sql, /record_kinds[\s\S]*exercise/i);
+  assert.match(sql, /p_kind not in[\s\S]*exercise/i);
+  assert.match(sql, /p_subject_type in[\s\S]*exercise/i);
+});

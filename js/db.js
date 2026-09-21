@@ -1,6 +1,6 @@
 // Camada de dados offline (IndexedDB). Sem servidor: tudo vive no telemóvel.
 const DB_NOME = "treinador";
-const DB_VERSAO = 9;
+const DB_VERSAO = 10;
 const DEFAULT_TEAM_ID = "default";
 const STORES = [
   "jogadores", "exercicios", "treinos", "treino_itens", "presencas", "avaliacoes", "jogos",
@@ -8,7 +8,7 @@ const STORES = [
   "head_coach_conversations", "head_coach_messages", "media_items",
   "workspace_documents", "activity_items", "sync_tombstones",
 ];
-const SYNCABLE_STORES = new Set(["teams", "jogadores", "jogos", "treinos", "game_models", "memory_items", "workspace_documents", "activity_items", "media_items"]);
+const SYNCABLE_STORES = new Set(["teams", "jogadores", "exercicios", "jogos", "treinos", "game_models", "memory_items", "workspace_documents", "activity_items", "media_items"]);
 
 let _db = null;
 
@@ -20,8 +20,16 @@ function abrirDB() {
       const db = e.target.result;
       if (!db.objectStoreNames.contains("jogadores"))
         db.createObjectStore("jogadores", { keyPath: "id", autoIncrement: true });
-      if (!db.objectStoreNames.contains("exercicios"))
-        db.createObjectStore("exercicios", { keyPath: "id", autoIncrement: true });
+      let exercises;
+      if (!db.objectStoreNames.contains("exercicios")) {
+        exercises = db.createObjectStore("exercicios", { keyPath: "id", autoIncrement: true });
+        exercises.createIndex("team_id", "team_id", { unique: false });
+        exercises.createIndex("external_key", "external_key", { unique: false });
+      } else {
+        exercises = e.target.transaction.objectStore("exercicios");
+        if (!exercises.indexNames.contains("team_id")) exercises.createIndex("team_id", "team_id", { unique: false });
+        if (!exercises.indexNames.contains("external_key")) exercises.createIndex("external_key", "external_key", { unique: false });
+      }
       if (!db.objectStoreNames.contains("treinos"))
         db.createObjectStore("treinos", { keyPath: "id", autoIncrement: true });
       if (!db.objectStoreNames.contains("treino_itens")) {
@@ -130,6 +138,7 @@ function _syncUuid() {
 }
 function _prepareSyncRecord(store, obj, options = {}) {
   if (!SYNCABLE_STORES.has(store) || options.remote) return { ...obj };
+  if (store === "exercicios" && !obj.workspace_v2 && !obj.sync_id) return { ...obj };
   const now = new Date().toISOString();
   const next = {
     ...obj,

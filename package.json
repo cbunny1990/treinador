@@ -2,7 +2,7 @@
   "name": "treinador-pwa",
   "private": true,
   "scripts": {
-    "check": "node --check js/app.js && node --check js/db.js && node --check js/head_coach_memory.js && node --check js/head_coach_media.js && node --check js/workspace.js && node --check js/calendar.js && node --check js/remote_workspace.js && node --check js/agent_contract.js",
+    "check": "node --check js/app.js && node --check js/db.js && node --check js/head_coach_memory.js && node --check js/head_coach_media.js && node --check js/workspace.js && node --check js/calendar.js && node --check js/training_planner.js && node --check js/remote_workspace.js && node --check js/training_ui.js && node --check js/agent_contract.js",
     "test": "node --test tests/*.test.js && node js/db.js",
     "test:e2e": "playwright test",
     "vendor:supabase": "esbuild node_modules/@supabase/supabase-js/dist/index.mjs --bundle --platform=browser --format=iife --global-name=SupabaseLib --minify --outfile=vendor/supabase.min.js",

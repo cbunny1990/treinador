@@ -169,3 +169,33 @@ tr:last-child td{border-bottom:0}
   .match-stage-nav{top:66px;overflow:auto}
   .match-stage-nav button{flex:1;white-space:nowrap}
 }
+
+.planner-hub-card{padding:22px;text-decoration:none;display:block}
+.planner-hub-card h2{font-size:18px;margin-top:7px}
+.planner-hub-card p{font-size:12px;color:var(--muted);line-height:1.5;margin-top:6px}
+.exercise-filter-bar{display:flex;gap:10px;align-items:center;margin-bottom:14px}
+.exercise-filter-bar>input{flex:1}
+.favorite-filter{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;color:#334155}
+.favorite-filter input{width:auto}
+.exercise-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.exercise-card{margin:0}
+.favorite-button{width:36px;height:36px;border:1px solid var(--line);border-radius:11px;background:#fff;color:#94a3b8;cursor:pointer;font-size:17px}
+.favorite-button.active{background:#fffbeb;color:#d97706;border-color:#fde68a}
+.exercise-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:18px}
+.exercise-facts span{padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--surface-2)}
+.exercise-facts strong,.exercise-facts small{display:block}
+.exercise-facts strong{font-size:13px}.exercise-facts small{font-size:10px;color:var(--muted);margin-top:3px}
+.training-card{display:flex;align-items:center;gap:12px;text-decoration:none}
+.training-block-grid{display:grid;gap:10px}
+.training-block-choice{border:1px solid var(--line);border-radius:14px;padding:13px;background:#fff}
+.training-block-choice>label input{width:auto}
+.training-block-choice strong,.training-block-choice small{display:block}
+.training-block-choice strong{font-size:13px}.training-block-choice small{font-size:10px;color:var(--muted);margin-top:2px}
+.form-grid.compact{margin-top:10px}
+.training-total{font-size:12px;color:var(--muted)}
+.block-order{width:30px;height:30px;border-radius:10px;background:var(--ink);color:#fff;display:grid;place-items:center;font-size:11px;font-weight:800}
+@media(max-width:720px){
+  .exercise-grid{grid-template-columns:1fr}
+  .exercise-filter-bar{align-items:stretch;flex-direction:column}
+  .exercise-facts{grid-template-columns:1fr}
+}
