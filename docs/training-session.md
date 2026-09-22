@@ -62,3 +62,6 @@ https://developer.mozilla.org/en-US/docs/Web/API/Page_Visibility_API
 A contagem usa instantes persistidos, não o número de callbacks de um temporizador, porque páginas em segundo plano podem ter callbacks adiados.
 
 O teste antigo de retirada do plantel clicava em “Retirar definitivamente” mas esperava que o registo existisse. A cobertura foi separada: retirada reversível preserva o registo; eliminação definitiva remove-o, cria tombstone e preserva as presenças históricas na sessão. Não foi alterado o comportamento da app para satisfazer o teste.
+
+## Atualização — fase 2
+O percurso de avaliação/memória/proposta/aprovação está agora em `training-continuity.md`. A avaliação do treino em campo alimenta esse percurso, sem criar outro registo de sessão.

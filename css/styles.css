@@ -280,3 +280,15 @@ tr:last-child td{border-bottom:0}
 .session-instructions li{margin:8px 0}
 .session-reorder{margin-top:12px}
 @media(max-width:480px){.session-attendee{grid-template-columns:minmax(0,1fr) 155px}.session-active .toolbar .btn{flex:1 1 135px}}
+
+/* Continuity: evidence remains readable; no speculative results or cropped images. */
+.continuity-evidence{display:grid;gap:12px;margin-top:16px}
+.continuity-evidence article,.continuity-choice{padding:16px;border:1px solid var(--line);border-radius:12px}
+.continuity-evidence strong{font-size:13px}
+.continuity-evidence blockquote{white-space:pre-wrap;font-size:14px;line-height:1.6;margin-top:9px;border-left:3px solid var(--accent);padding-left:12px}
+.continuity-blocks{display:grid;gap:14px}
+.continuity-choice{display:grid;gap:12px}
+.continuity-choice .row input{width:auto;min-width:22px;min-height:22px}
+[data-training-continuity] .btn{min-height:44px}
+[data-training-continuity] [hidden],[data-review-feedback][hidden]{display:none!important}
+[data-training-continuity] details summary{padding:12px 0;font-weight:700;cursor:pointer}

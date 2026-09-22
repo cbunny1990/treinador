@@ -266,7 +266,8 @@ async function viewTraining(id){
   if(linked) html+='<div class="notice" style="margin-top:16px">Ligado ao jogo de '+fmtDate(linked.data)+' vs '+tuEsc(linked.adversario||"adversário")+'.</div>';
   html+='<div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/sessao/'+id+'">Treino em campo / presenças</a><a class="btn secondary" href="#/treinos/'+id+'/duplicar">Duplicar treino</a><a class="btn secondary" href="#/treinos/'+id+'/editar">Editar planeamento</a><a class="btn secondary" href="#/media/novo/training/'+id+'">Adicionar media</a><button class="btn danger" type="button" data-action="delete-training" data-id="'+id+'">Apagar treino</button></div></section>';
   html+='<section class="section"><div class="section-head"><div><h2>Blocos</h2><p>Sequência da sessão</p></div></div><div class="list">'+blocks+'</div></section>';
-  html+='<section class="section"><div class="section-head"><div><h2>Avaliação pós-treino</h2><p>Fecha o ciclo com o jogo que originou esta sessão</p></div></div><form class="panel match-form form" data-form="training-review" data-id="'+id+'"><div class="form-grid"><label class="field"><span>O que melhorou</span><textarea name="melhorou">'+tuEsc(t.review.melhorou||"")+'</textarea></label><label class="field"><span>O que continua por corrigir</span><textarea name="continua">'+tuEsc(t.review.continua||"")+'</textarea></label></div><label class="field"><span>Conclusão</span><textarea name="conclusao">'+tuEsc(t.review.conclusao||"")+'</textarea></label><label class="field"><span>Próxima ação</span><textarea name="proxima_acao">'+tuEsc(t.review.proxima_acao||"")+'</textarea></label><div class="toolbar"><button class="btn accent" type="submit">Guardar avaliação</button>'+(linked?'<a class="btn secondary" href="#/equipa/jogo/'+linked.id+'">Voltar ao jogo de origem</a>':'')+'</div></form></section>';
+  html+='<section class="section"><div class="section-head"><div><h2>Avaliação pós-treino</h2><p>Fecha o ciclo com o jogo que originou esta sessão</p></div></div><form class="panel match-form form" data-form="training-review" data-id="'+id+'" data-review-key="'+tuEsc(VisionTrainingContinuity.reviewKey(t.review))+'"><div class="form-grid"><label class="field"><span>O que melhorou</span><textarea name="melhorou">'+tuEsc(t.review.melhorou||"")+'</textarea></label><label class="field"><span>O que continua por corrigir</span><textarea name="continua">'+tuEsc(t.review.continua||"")+'</textarea></label></div><label class="field"><span>Conclusão</span><textarea name="conclusao">'+tuEsc(t.review.conclusao||"")+'</textarea></label><label class="field"><span>Próxima ação</span><textarea name="proxima_acao">'+tuEsc(t.review.proxima_acao||"")+'</textarea></label><label class="field"><span>Resultado do foco trabalhado</span><select name="focus_outcome">'+Object.entries(VisionTrainingContinuity.outcomes).map(([k,label])=>'<option value="'+k+'" '+((t.review.focus_outcome||'pending')===k?'selected':'')+'>'+tuEsc(label)+'</option>').join('')+'</select><small>Assinalado por ti; não é inferido das presenças ou do resultado do jogo.</small></label><p class="notice" data-review-feedback role="status" hidden></p><div class="toolbar"><button class="btn accent" type="submit">Guardar avaliação</button><button class="btn danger" type="button" data-action="clear-training-review" data-id="'+id+'">Apagar avaliação</button>'+(linked?'<a class="btn secondary" href="#/equipa/jogo/'+linked.id+'">Voltar ao jogo de origem</a>':'')+'</div></form></section>';
+  html+=await TrainingContinuityUI.summary(t);
   setView("Treino · "+fmtDate(t.data),html,"Planos");
 }
 
@@ -313,22 +314,17 @@ function tuRandomKey(){
   const id=globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2);
   return String(id).slice(0,8);
 }
-async function tuSaveTrainingReview(fd,id){
-  const old=await DB.obter("treinos",id);
-  if(!old) throw new Error("Treino não encontrado.");
-  const row=TrainingPlanner.normalizeTraining({
-    ...old,
-    review:{
-      status:"done",
-      melhorou:fd.get("melhorou")||null,
-      continua:fd.get("continua")||null,
-      conclusao:fd.get("conclusao")||null,
-      proxima_acao:fd.get("proxima_acao")||null
-    }
-  });
-  await DB.atualizar("treinos",row);
-  await logHuman("reviewed_training","Avaliou treino · "+fmtDate(row.data),"training",row.sync_id||id);
-  go("#/treinos/"+id);
+async function tuSaveTrainingReview(fd,id,form){
+  const button=form.querySelector('[type="submit"]'),out=form.querySelector('[data-review-feedback]');
+  if(button.disabled)return;button.disabled=true;
+  try{
+    const review=Object.fromEntries([...Object.keys(VisionTrainingContinuity.fields),'focus_outcome'].map(k=>[k,fd.get(k)]));
+    const result=await TrainingContinuityStore.commit(id,'review',{review,expected_review_key:form.dataset.reviewKey});
+    try{await logHuman('reviewed_training','Avaliou treino e ligou à memória','training',id);}catch(_){}
+    if(location.hash!=="#/treinos/"+id)return;
+    await viewTraining(id);
+    if(!result.memory_linked){const notice=document.querySelector('[data-review-feedback]');if(notice){notice.hidden=false;notice.textContent='Avaliação guardada. A memória anteriormente apagada não foi recriada.';}}
+  }catch(error){out.hidden=false;out.textContent=error.message;}finally{button.disabled=false;}
 }
 async function tuSaveTraining(form,fd,id){
   const old=id?await DB.obter("treinos",id):null;
@@ -386,6 +382,13 @@ document.addEventListener("click",async(event)=>{
     if(target.dataset.action==="training-block-down" && card.nextElementSibling) parent.insertBefore(card.nextElementSibling,card);
     return;
   }
+  if(target.dataset.action==="clear-training-review"){
+    const form=target.closest('form'),out=form.querySelector('[data-review-feedback]');
+    if(!confirm('Apagar esta avaliação? A memória ligada será arquivada. O treino e as suas observações mantêm-se.'))return;
+    target.disabled=true;
+    try{await TrainingContinuityStore.commit(Number(target.dataset.id),'clear_review',{confirmed:true,expected_review_key:form.dataset.reviewKey});await viewTraining(Number(target.dataset.id));}
+    catch(error){out.hidden=false;out.textContent=error.message;}finally{target.disabled=false;}return;
+  }
   if(target.dataset.action==="toggle-exercise-favorite"){
     const row=await DB.obter("exercicios",Number(target.dataset.id));
     if(!row) return;
@@ -417,7 +420,7 @@ document.addEventListener("submit",async(event)=>{
   const fd=new FormData(form);
   const id=form.dataset.id?Number(form.dataset.id):null;
   if(type==="exercise") return tuSaveExercise(form,fd,id);
-  if(type==="training-review") return tuSaveTrainingReview(fd,id);
+  if(type==="training-review") return tuSaveTrainingReview(fd,id,form);
   if(type==="training-plan") return tuSaveTraining(form,fd,id);
 });
 const TrainingUI={

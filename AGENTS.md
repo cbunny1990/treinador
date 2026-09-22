@@ -24,4 +24,7 @@ Mantém documentação e código da Edge Function no mesmo PR. Mantém a autenti
 ## Treino em campo
 Lê `docs/training-session.md`. Usa as operações MCP de sessão sobre o treino existente; não cria sessões/exercícios duplicados para marcar presença ou escrever notas.
 Não inicia o cronómetro, assume controlo ou marca presença por inferência. São ações explícitas do treinador.
-Preserva as revisões, UUIDs dos atletas, plano original e registo realizado. A proposta automática do foco seguinte pertence à fase 2 e ainda não está implementada.
+Preserva as revisões, UUIDs dos atletas, plano original e registo realizado. A fase 2 está em `docs/training-continuity.md`: modelo local identificado como tal ou proposta revista pela IA autorizada, sempre sujeita a aprovação explícita antes de criar o treino.
+
+## Continuidade de treino
+Lê `docs/training-continuity.md`. Usa as sete operações MCP com versões atuais; não escreve diretamente várias linhas para simular uma aprovação. Distingue registos do treinador, propostas e resultados assinalados. Nunca marca uma melhoria por inferência.
