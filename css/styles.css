@@ -292,3 +292,24 @@ tr:last-child td{border-bottom:0}
 [data-training-continuity] .btn{min-height:44px}
 [data-training-continuity] [hidden],[data-review-feedback][hidden]{display:none!important}
 [data-training-continuity] details summary{padding:12px 0;font-weight:700;cursor:pointer}
+
+/* Match board: interactive HTML, not a replacement for approved exercise images. */
+.match-visual-grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:18px;align-items:start}
+.match-pitch{position:relative;width:100%;aspect-ratio:3/4;border:3px solid #f8fafc;border-radius:15px;background:repeating-linear-gradient(0deg,#258448 0%,#258448 12.5%,#298c4d 12.5%,#298c4d 25%);box-shadow:0 0 0 1px #166534;overflow:hidden;isolation:isolate}
+.pitch-half{position:absolute;inset:50% 4% auto;height:2px;background:#ffffffb3;pointer-events:none}
+.pitch-centre{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:28%;aspect-ratio:1;border:2px solid #ffffffb3;border-radius:50%;pointer-events:none}
+.pitch-box{position:absolute;left:24%;width:52%;height:15%;border:2px solid #ffffffb3;pointer-events:none}
+.pitch-box-top{top:-2px}.pitch-box-bottom{bottom:-2px}
+.pitch-direction{position:absolute;top:7px;left:10px;color:#fff;font-size:10px;font-weight:800;letter-spacing:.1em;pointer-events:none}
+.pitch-player{position:absolute;transform:translate(-50%,-50%);width:96px;max-width:31%;min-height:65px;display:grid;justify-items:center;gap:2px;border:2px solid transparent;background:none;color:#fff;cursor:pointer;border-radius:12px;padding:4px 1px;z-index:2;touch-action:manipulation}
+.pitch-player .avatar{border:2px solid #fff;background:#1d4ed8;color:#fff;font-weight:900;border-radius:50%;box-shadow:0 2px 5px #0004}
+.pitch-player.keeper .avatar{background:#d97706}
+.pitch-player-name{width:100%;white-space:normal;overflow-wrap:anywhere;font-size:11px;font-weight:800;line-height:1.15;text-shadow:0 1px 3px #000;background:#0b122099;border-radius:5px;padding:2px 3px}
+.pitch-player small{font-size:9px;font-weight:700;text-shadow:0 1px 3px #000}
+.pitch-player.selected,.pitch-player:focus-visible{border-color:#fde047;background:#0b122045;outline:0}
+.match-bench{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.match-live-clock{font-size:clamp(44px,12vw,74px);font-weight:850;letter-spacing:-.04em;font-variant-numeric:tabular-nums;margin:10px 0}
+[data-match-visual] .btn{min-height:44px}
+[data-match-visual] [hidden]{display:none!important}
+[data-match-visual] td{font-variant-numeric:tabular-nums}
+@media(max-width:800px){.match-visual-grid{grid-template-columns:1fr}.match-visual-grid .hero-main{padding:16px}.match-pitch{max-width:480px;margin:0 auto}.match-visual-grid .form-grid{grid-template-columns:1fr}}

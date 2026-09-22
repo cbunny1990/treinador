@@ -111,7 +111,7 @@ async function routeOnce(){
   var parts=(location.hash||"#/").slice(1).split("/").filter(Boolean);
   var root=parts[0]||"";
   var navRoot=(root==="treinos"||root==="exercicios")?"planos":(root===""?"workspace":root);
-  markNav(navRoot);
+  markNav(root==="jogo-visual"?"calendario":navRoot);
   try{
     if(!root) return viewWorkspace();
     if(root==="equipa"){
@@ -129,6 +129,7 @@ async function routeOnce(){
       return TrainingUI.viewTrainingConsultation(parts[1]||null,parts[2]||null);
     }
     if(root==="sessao") return TrainingSessionUI.view(parts[1]);
+    if(root==="jogo-visual") return MatchVisualUI.view(parts[1]);
     if(root==="continuidade") return TrainingContinuityUI.view(parts[1]);
     if(root==="treinos"){
       if(parts[1] && parts[2]==="duplicar") return TrainingSessionUI.duplicateView(parts[1]);
@@ -190,7 +191,7 @@ if(document.readyState!=="loading") router();
 window.addEventListener("visioncoach:sync-complete",async function(){
   refreshRemoteIndicator();
   if(app.querySelector('form[data-form]')) return;
-  if(app.querySelector('[data-training-session], [data-session-duplicate], [data-training-continuity]')) return;
+  if(app.querySelector('[data-training-session], [data-session-duplicate], [data-training-continuity], [data-match-visual]')) return;
   if(document.querySelector('#exercise-image-viewer[open]')) return;
   var scrollX=window.scrollX;
   var scrollY=window.scrollY;
@@ -398,6 +399,7 @@ async function viewPlayer(id){
   html+='<aside class="panel hero-side"><div class="metric-label">Contexto</div><div class="metric-value">'+memory.length+'</div><div class="metric-sub">registos na memória</div><div class="metric-value" style="margin-top:18px">'+media.length+'</div><div class="metric-sub">itens de media</div></aside></div>';
   html+='<section class="section"><div class="section-head"><div><h2>Últimas observações</h2><p>Contexto usado pelo workspace</p></div></div>'+obs+'</section>';
   html+=await TrainingSessionUI.history(player);
+  html+=await MatchVisualUI.history(player);
   setView(player.nome,html,"Equipa");
 }
 
@@ -441,7 +443,7 @@ async function viewMatch(id){
   var lineupPlayers=called.size?availablePlayers.filter(function(p){return called.has(stablePlayerRef(p));}):availablePlayers;
   var keeperOptions='<option value="">Por definir</option>'+lineupPlayers.map(function(p){var ref=stablePlayerRef(p);return '<option value="'+esc(ref)+'" '+(String(match.lineup.goalkeeper_id||"")===ref?"selected":"")+'>'+esc(p.nome)+'</option>';}).join("");
   var context=memory.length?'<div class="list">'+memory.map(function(m){return '<div class="list-item"><div class="title">'+esc(m.title)+'</div><div class="body-copy">'+esc(m.content)+'</div></div>';}).join("")+'</div>':'<div class="empty">Ainda sem observações associadas.</div>';
-  var html='<div class="profile-grid"><section class="panel hero-main"><div class="kicker">'+esc(match.casa_fora==="fora"?"Fora":"Casa")+' · '+fmtDate(match.data)+(match.hora?' · '+esc(match.hora):'')+'</div><h2 class="display">'+esc(match.adversario)+'</h2><div class="metric-value" style="margin-top:18px">'+resultText(match)+'</div><p class="lead">'+esc(match.local||"Local por definir")+(match.hora_saida?' · saída '+esc(match.hora_saida):'')+'</p><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/jogo/'+id+'/editar">Editar dados</a><a class="btn" href="#/capturar/match/'+id+'">Observação</a><a class="btn secondary" href="#/media/novo/match/'+id+'">Media</a><button class="btn danger" type="button" data-action="delete-match" data-id="'+id+'" data-name="'+esc(match.adversario||"jogo")+'">Apagar jogo</button></div></section>';
+  var html='<div class="profile-grid"><section class="panel hero-main"><div class="kicker">'+esc(match.casa_fora==="fora"?"Fora":"Casa")+' · '+fmtDate(match.data)+(match.hora?' · '+esc(match.hora):'')+'</div><h2 class="display">'+esc(match.adversario)+'</h2><div class="metric-value" style="margin-top:18px">'+resultText(match)+'</div><p class="lead">'+esc(match.local||"Local por definir")+(match.hora_saida?' · saída '+esc(match.hora_saida):'')+'</p><div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/jogo-visual/'+id+'">Jogo visual / substituições</a><a class="btn secondary" href="#/equipa/jogo/'+id+'/editar">Editar dados</a><a class="btn" href="#/capturar/match/'+id+'">Observação</a><a class="btn secondary" href="#/media/novo/match/'+id+'">Media</a><button class="btn danger" type="button" data-action="delete-match" data-id="'+id+'" data-name="'+esc(match.adversario||"jogo")+'">Apagar jogo</button></div></section>';
   html+='<aside class="panel hero-side"><div class="metric-label">Preparação</div><div class="match-progress"><span class="'+(progress.pre_game?"done":"")+'">Plano</span><span class="'+(progress.callup?"done":"")+'">Convocados</span><span class="'+(progress.lineup?"done":"")+'">5v5</span><span class="'+(progress.post_game?"done":"")+'">Análise</span></div><div class="meta" style="margin-top:16px">'+memory.length+' observações · '+media.length+' media</div></aside></div>';
   html+='<div class="match-stage-nav"><button type="button" data-action="jump-match" data-target="match-before">Antes</button><button type="button" data-action="jump-match" data-target="match-during">Durante</button><button type="button" data-action="jump-match" data-target="match-after">Depois</button></div>';
   html+='<section class="section match-stage" id="match-before"><div class="section-head"><div><h2>Antes do jogo</h2><p>Plano, convocatória e alinhamento</p></div></div><div class="grid cols-2">';
@@ -451,6 +453,7 @@ async function viewMatch(id){
   html+='<section class="section match-stage" id="match-during"><div class="section-head"><div><h2>Durante</h2><p>Registo simples, sem distrair do jogo</p></div></div><form class="panel match-form form" data-form="match-during" data-id="'+id+'"><label class="field"><span>Resultado ao intervalo</span><input name="halftime_score" placeholder="Ex.: 2-1" value="'+esc(match.during.halftime_score)+'"></label><label class="field"><span>Notas rápidas · uma por linha</span><textarea name="notes">'+esc(linesText(match.during.notes))+'</textarea></label><button class="btn accent" type="submit">Guardar durante</button></form></section>';
   html+='<section class="section match-stage" id="match-after"><div class="section-head"><div><h2>Depois</h2><p>Aprendizagem e ligação ao próximo treino</p></div></div><form class="panel match-form form" data-form="match-post" data-id="'+id+'"><div class="form-grid"><label class="field"><span>O que correu bem</span><textarea name="correu_bem">'+esc(match.post_game.correu_bem)+'</textarea></label><label class="field"><span>O que melhorar</span><textarea name="melhorar">'+esc(match.post_game.melhorar)+'</textarea></label></div><label class="field"><span>Conclusões</span><textarea name="conclusoes">'+esc(match.post_game.conclusoes)+'</textarea></label><label class="field"><span>Ações para o próximo treino · uma por linha</span><textarea name="acoes">'+esc(linesText(match.post_game.acoes_proximo_treino))+'</textarea></label><div class="toolbar"><button class="btn accent" type="submit">Guardar análise</button>'+(progress.post_game?'<a class="btn secondary" href="#/treinos/novo/jogo/'+id+'">Criar treino desta análise</a>':'')+'</div></form>';
   html+='<div class="grid cols-2 section"><div><div class="section-head"><div><h2>Contexto associado</h2><p>Observações e decisões</p></div></div>'+context+'</div><div><div class="section-head"><div><h2>Media</h2><p>'+media.length+' item(ns)</p></div></div>'+renderMediaCards(media)+'</div></div></section>';
+  if(location.hash!=="#/equipa/jogo/"+id)return;
   setView("Jogo vs "+match.adversario,html,"Jogo");
 }
 async function viewDocuments(){
@@ -711,7 +714,7 @@ async function removePlayerFromOpenMatches(player){
   var changedMatches=0;
   for(var i=0;i<matches.length;i++){
     var match=matchStructure(matches[i]);
-    if(match.estado==="concluido") continue;
+    if(match.estado==="concluido"||match.visual_match?.started_at) continue;
     var changed=false;
     var callup=match.callup.player_ids.filter(function(x){return String(x)!==ref;});
     if(callup.length!==match.callup.player_ids.length){match.callup.player_ids=callup;changed=true;}
@@ -723,7 +726,7 @@ async function removePlayerFromOpenMatches(player){
     if(changed){
       match.callup.status=match.callup.player_ids.length?"ready":"draft";
       match.lineup.status=(match.lineup.goalkeeper_id&&match.lineup.starters.length===4)?"ready":"draft";
-      await DB.atualizar("jogos",match);
+      await DB.modificar("jogos",match.id,current=>current.visual_match?.started_at?current:{...current,callup:match.callup,lineup:match.lineup});
       changedMatches++;
     }
   }
@@ -998,7 +1001,7 @@ app.addEventListener("submit",async function(event){
     var team=await HeadCoachMemory.ensureTeam();
     var existing=matchStructure(id?await DB.obter("jogos",id):null);
     var externalKey=existing.external_key||("match:"+fd.get("data")+":"+String(fd.get("adversario")||"").toLowerCase());
-    var matchId=await saveRecord("jogos",id,{
+    var matchData={
       team_id:DEFAULT_TEAM_ID,
       data:fd.get("data"),
       hora:fd.get("hora")||null,
@@ -1019,7 +1022,10 @@ app.addEventListener("submit",async function(event){
       lineup:existing.lineup,
       during:existing.during,
       post_game:existing.post_game
-    });
+    };
+    var matchId;
+    if(id){for(const key of ["pre_game","callup","lineup","during","post_game"])delete matchData[key];await DB.modificar("jogos",id,current=>({...current,...matchData}));matchId=id;}
+    else matchId=await DB.criar("jogos",matchData);
     await logHuman(id?"updated_match":"created_match",(id?"Atualizou jogo · ":"Criou jogo · ")+fd.get("adversario"),"match",matchId);
     return go("#/equipa/jogo/"+matchId);
   }
@@ -1032,7 +1038,7 @@ app.addEventListener("submit",async function(event){
       adversario_notas:fd.get("adversario_notas")||null,
       pontos_observar:linesFromText(fd.get("pontos_observar"))
     };
-    await DB.atualizar("jogos",preMatch);
+    await DB.modificar("jogos",id,current=>({...current,pre_game:preMatch.pre_game}));
     await logHuman("updated_match_pre_game","Atualizou plano pré-jogo · "+preMatch.adversario,"match",id);
     return router();
   }
@@ -1043,7 +1049,10 @@ app.addEventListener("submit",async function(event){
     callMatch.lineup.starters=callMatch.lineup.starters.filter(function(ref){return calledIds.includes(String(ref));});
     callMatch.lineup.substitutes=callMatch.lineup.substitutes.filter(function(ref){return calledIds.includes(String(ref));});
     if(callMatch.lineup.goalkeeper_id&&!calledIds.includes(String(callMatch.lineup.goalkeeper_id))) callMatch.lineup.goalkeeper_id=null;
-    await DB.atualizar("jogos",callMatch);
+    try{await DB.modificar("jogos",id,current=>{
+      if(current.visual_match?.started_at)throw new Error("O alinhamento e a convocatória iniciais já estão preservados. Usa o Jogo visual para registar substituições.");
+      return {...current,callup:callMatch.callup,lineup:callMatch.lineup};
+    });}catch(error){alert(error.message);return;}
     await logHuman("updated_match_callup","Atualizou convocatória · "+callMatch.adversario,"match",id);
     return router();
   }
@@ -1055,22 +1064,25 @@ app.addEventListener("submit",async function(event){
     if(starters.length>4){alert("No 5v5 escolhe no máximo 4 jogadores de campo.");return;}
     var pool=lineMatch.callup.player_ids.length?lineMatch.callup.player_ids.map(String):[];
     var substitutes=pool.filter(function(ref){return ref!==keeper&&!starters.includes(ref);});
-    lineMatch.lineup={status:(keeper&&starters.length===4)?"ready":"draft",system:fd.get("system")||"1-2-1",goalkeeper_id:keeper||null,starters:starters,substitutes:substitutes};
-    await DB.atualizar("jogos",lineMatch);
+    lineMatch.lineup={...lineMatch.lineup,status:(keeper&&starters.length===4)?"ready":"draft",system:fd.get("system")||"1-2-1",goalkeeper_id:keeper||null,starters:starters,substitutes:substitutes};
+    try{await DB.modificar("jogos",id,current=>{
+      if(current.visual_match?.started_at)throw new Error("O alinhamento e a convocatória iniciais já estão preservados. Usa o Jogo visual para registar substituições.");
+      return {...current,lineup:lineMatch.lineup};
+    });}catch(error){alert(error.message);return;}
     await logHuman("updated_match_lineup","Atualizou alinhamento 5v5 · "+lineMatch.adversario,"match",id);
     return router();
   }
   if(type==="match-during"){
     var liveMatch=matchStructure(await DB.obter("jogos",id));
     liveMatch.during={...liveMatch.during,halftime_score:fd.get("halftime_score")||null,notes:linesFromText(fd.get("notes"))};
-    await DB.atualizar("jogos",liveMatch);
+    await DB.modificar("jogos",id,current=>({...current,during:liveMatch.during}));
     await logHuman("updated_match_during","Atualizou registo durante o jogo · "+liveMatch.adversario,"match",id);
     return router();
   }
   if(type==="match-post"){
     var postMatch=matchStructure(await DB.obter("jogos",id));
     postMatch.post_game={status:"done",correu_bem:fd.get("correu_bem")||null,melhorar:fd.get("melhorar")||null,conclusoes:fd.get("conclusoes")||null,acoes_proximo_treino:linesFromText(fd.get("acoes"))};
-    await DB.atualizar("jogos",postMatch);
+    await DB.modificar("jogos",id,current=>({...current,post_game:postMatch.post_game}));
     await logHuman("updated_match_post_game","Atualizou análise pós-jogo · "+postMatch.adversario,"match",id);
     return router();
   }

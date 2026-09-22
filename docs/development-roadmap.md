@@ -8,7 +8,7 @@ O treino planeado é preservado. Imagens e consulta anteriores não são redesen
 Implementado: avaliação ligada a memória única, rascunho com evidências, revisão pela IA autorizada, aprovação explícita e ligação ao treino seguinte com resultado assinalado. Guia: training-continuity.md. O rascunho inicial é um modelo local, não análise automática de toda a época; agregação de tendências fica para aprofundamento posterior.
 
 ## Fase 3 — jogo e quadro tático
-Pendente: campo visual 5v5, rotações/substituições, minutos, registo estruturado de acontecimentos/zonas, distinção entre dados medidos e estimados, quadro estático e adversário.
+Implementado o primeiro incremento: campo 5v5, alinhamento e suplentes, plano de rotações, substituições e trocas de funções confirmadas, cronómetro e minutos registados por atleta/GR. Guia: match-visual.md. Pendente: lances e zonas (remates/perdas/cantos), estatísticas coletivas, adversário estruturado e quadro tático completo com cones/setas.
 
 ## Fase 4 — relatórios na app
 Pendente: PDF de treino com originais, convocatória/alinhamento e relatório pós-jogo, usando os dados atuais e partilha no telemóvel.
