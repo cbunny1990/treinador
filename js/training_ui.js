@@ -159,13 +159,15 @@ function tuTrainingBlocksForm(exercises,training,preselectedId){
     const duration=block?.duration_min ?? e.duracao_total_min ?? 10;
     const phase=block?.phase || "principal";
     return '<article class="training-block-choice"><label class="row"><input type="checkbox" name="exercise_refs" value="'+tuEsc(ref)+'" '+(checked?"checked":"")+'><span class="grow"><strong>'+tuEsc(e.nome)+'</strong><small>'+tuEsc(e.objetivo||"")+'</small></span></label>'+
-      '<div class="form-grid compact"><label class="field"><span>Fase</span><select name="phase__'+tuEsc(ref)+'"><option value="ativacao" '+(phase==="ativacao"?"selected":"")+'>Ativação</option><option value="principal" '+(phase==="principal"?"selected":"")+'>Principal</option><option value="jogo" '+(phase==="jogo"?"selected":"")+'>Jogo</option><option value="retorno" '+(phase==="retorno"?"selected":"")+'>Retorno</option></select></label><label class="field"><span>Minutos</span><input data-block-duration type="number" min="0" name="duration__'+tuEsc(ref)+'" value="'+tuEsc(duration)+'"></label></div></article>';
+      '<div class="toolbar session-reorder"><button type="button" class="btn secondary small" data-action="training-block-up">↑ Subir</button><button type="button" class="btn secondary small" data-action="training-block-down">↓ Descer</button></div>'+
+      '<div class="form-grid compact"><label class="field"><span>Fase</span><select name="phase__'+tuEsc(ref)+'"><option value="ativacao" '+(phase==="ativacao"?"selected":"")+'>Ativação</option><option value="principal" '+(phase==="principal"?"selected":"")+'>Principal</option><option value="jogo" '+(phase==="jogo"?"selected":"")+'>Jogo</option><option value="retorno" '+(phase==="retorno"?"selected":"")+'>Retorno</option></select></label><label class="field"><span>Minutos</span><input data-block-duration type="number" min="0" name="duration__'+tuEsc(ref)+'" value="'+tuEsc(duration)+'"></label></div><label class="field"><span>Notas deste exercício</span><textarea name="notes__'+tuEsc(ref)+'">'+tuEsc(block?.notes||'')+'</textarea></label></article>';
   }).join("");
 }
 
 async function viewTrainingForm(id,preselectedId,sourceMatchId){
   const team=await HeadCoachMemory.ensureTeam();
   const old=id?await DB.obter("treinos",id):null;
+  if(old?.session?.started_at) return setView("Planeamento preservado",'<div class="notice">Este treino já foi iniciado. O plano fica preservado para comparação com o realizado. <a class="link" href="#/treinos/'+id+'/duplicar">Duplicar para uma nova sessão</a></div>',"Treino");
   const matches=(await DB.porIndice("jogos","team_id",DEFAULT_TEAM_ID)).sort((a,b)=>String(b.data).localeCompare(String(a.data)));
   const sourceMatch=!old&&sourceMatchId?matches.find((m)=>String(m.id)===String(sourceMatchId)):null;
   const sourcePost=sourceMatch?VisionCalendar.normalizeMatch(sourceMatch).post_game:null;
@@ -226,6 +228,7 @@ async function viewTrainingConsultation(id,step){
     return '<a class="consult-index '+(i===index?"active":"")+'" href="#/consulta/'+t.id+'/'+i+'"><strong>'+(i+1)+'. '+tuEsc(ex?.nome||b.exercise_name||"Exercício")+'</strong><small>'+b.duration_min+' min · '+tuEsc(b.phase||"")+'</small></a>';
   }).join("");
   let html='<section class="panel hero-main consult-hero"><div class="kicker">'+fmtDate(t.data)+(t.hora?' · '+tuEsc(t.hora):'')+'</div><h2 class="display" style="font-size:28px">Consulta do treino</h2><p class="lead">'+tuEsc(t.objetivo||"Sem objetivo definido.")+'</p><div class="row" style="margin-top:14px"><span class="badge ready">'+t.duracao_min+' min</span><span class="badge">'+blocks.length+' exercícios</span></div></section>';
+  html+='<div class="toolbar section"><a class="btn accent" href="#/sessao/'+t.id+'">Treino em campo / presenças</a></div>';
   html+='<section class="section"><div class="consult-index-list">'+timeline+'</div></section>';
   html+='<section class="panel hero-main consult-exercise"><div class="kicker">Exercício '+(index+1)+' de '+blocks.length+' · '+block.duration_min+' min</div><h2 class="display" style="font-size:27px">'+tuEsc(e?.nome||block.exercise_name||"Exercício")+'</h2><p class="lead">'+tuEsc(e?.objetivo||block.notes||"")+'</p>';
   if(e) html+=tuExerciseVisualHTML(e,false);
@@ -261,7 +264,7 @@ async function viewTraining(id){
   }).join(""):'<div class="empty">Sem blocos.</div>';
   let html='<section class="panel hero-main"><div class="kicker">'+fmtDate(t.data)+(t.hora?' · '+tuEsc(t.hora):'')+'</div><h2 class="display" style="font-size:30px">Treino</h2><p class="lead">'+tuEsc(t.objetivo||"Sem objetivo definido.")+'</p><div class="exercise-facts"><span><strong>'+t.blocos.length+'</strong><small>blocos</small></span><span><strong>'+t.duracao_min+' min</strong><small>duração</small></span><span><strong>'+tuEsc(t.status)+'</strong><small>estado</small></span></div>';
   if(linked) html+='<div class="notice" style="margin-top:16px">Ligado ao jogo de '+fmtDate(linked.data)+' vs '+tuEsc(linked.adversario||"adversário")+'.</div>';
-  html+='<div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/treinos/'+id+'/editar">Editar planeamento</a><a class="btn secondary" href="#/media/novo/training/'+id+'">Adicionar media</a><button class="btn danger" type="button" data-action="delete-training" data-id="'+id+'">Apagar treino</button></div></section>';
+  html+='<div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/sessao/'+id+'">Treino em campo / presenças</a><a class="btn secondary" href="#/treinos/'+id+'/duplicar">Duplicar treino</a><a class="btn secondary" href="#/treinos/'+id+'/editar">Editar planeamento</a><a class="btn secondary" href="#/media/novo/training/'+id+'">Adicionar media</a><button class="btn danger" type="button" data-action="delete-training" data-id="'+id+'">Apagar treino</button></div></section>';
   html+='<section class="section"><div class="section-head"><div><h2>Blocos</h2><p>Sequência da sessão</p></div></div><div class="list">'+blocks+'</div></section>';
   html+='<section class="section"><div class="section-head"><div><h2>Avaliação pós-treino</h2><p>Fecha o ciclo com o jogo que originou esta sessão</p></div></div><form class="panel match-form form" data-form="training-review" data-id="'+id+'"><div class="form-grid"><label class="field"><span>O que melhorou</span><textarea name="melhorou">'+tuEsc(t.review.melhorou||"")+'</textarea></label><label class="field"><span>O que continua por corrigir</span><textarea name="continua">'+tuEsc(t.review.continua||"")+'</textarea></label></div><label class="field"><span>Conclusão</span><textarea name="conclusao">'+tuEsc(t.review.conclusao||"")+'</textarea></label><label class="field"><span>Próxima ação</span><textarea name="proxima_acao">'+tuEsc(t.review.proxima_acao||"")+'</textarea></label><div class="toolbar"><button class="btn accent" type="submit">Guardar avaliação</button>'+(linked?'<a class="btn secondary" href="#/equipa/jogo/'+linked.id+'">Voltar ao jogo de origem</a>':'')+'</div></form></section>';
   setView("Treino · "+fmtDate(t.data),html,"Planos");
@@ -330,14 +333,17 @@ async function tuSaveTrainingReview(fd,id){
 async function tuSaveTraining(form,fd,id){
   const old=id?await DB.obter("treinos",id):null;
   const exercises=await tuExercises();
+  if(old?.session?.started_at) throw new Error("O treino já foi iniciado. Duplica a sessão para alterar o plano.");
   const refs=fd.getAll("exercise_refs").map(String);
+  const previousBlocks=new Map((old?.blocos||[]).map(b=>[String(b.exercise_ref),b]));
   const blocks=refs.map((ref,index)=>{
     const e=tuExerciseByRef(exercises,ref);
     return {
+      ...(previousBlocks.get(ref)||{}), block_id:previousBlocks.get(ref)?.block_id||crypto.randomUUID(),
       order:index, exercise_ref:ref, exercise_name:e?.nome||null,
       phase:fd.get("phase__"+ref)||"principal",
       duration_min:Math.max(0,Number(fd.get("duration__"+ref)||0)),
-      notes:null
+      notes:fd.get("notes__"+ref)||null
     };
   });
   const team=await HeadCoachMemory.ensureTeam();
@@ -349,7 +355,13 @@ async function tuSaveTraining(form,fd,id){
     status:"ready", blocos:blocks,
     external_key:old?.external_key || ("training-"+fd.get("data")+"-"+tuRandomKey())
   });
-  const saved=await saveRecord("treinos",id,row);
+  let saved;
+  if(id){
+    await DB.modificar("treinos",id,current=>{
+      if(current.session?.started_at) throw new Error("O treino começou entretanto; o planeamento não foi alterado.");
+      return {...current,...row,session:current.session,review:current.review||row.review};
+    });saved=id;
+  }else saved=await saveRecord("treinos",id,row);
   await logHuman(id?"updated_training_plan":"created_training_plan",(id?"Atualizou treino · ":"Criou treino · ")+fmtDate(row.data),"training",saved);
   go("#/treinos/"+saved);
 }
@@ -366,6 +378,14 @@ document.addEventListener("change",(event)=>{
 document.addEventListener("click",async(event)=>{
   const target=event.target.closest("[data-action]");
   if(!target) return;
+  if(target.dataset.action==="training-block-up" || target.dataset.action==="training-block-down"){
+    event.preventDefault();
+    const card=target.closest(".training-block-choice"),parent=card?.parentElement;
+    if(!parent) return;
+    if(target.dataset.action==="training-block-up" && card.previousElementSibling) parent.insertBefore(card,card.previousElementSibling);
+    if(target.dataset.action==="training-block-down" && card.nextElementSibling) parent.insertBefore(card.nextElementSibling,card);
+    return;
+  }
   if(target.dataset.action==="toggle-exercise-favorite"){
     const row=await DB.obter("exercicios",Number(target.dataset.id));
     if(!row) return;

@@ -63,6 +63,9 @@ function tpExerciseMatches(exercise, query, favoritesOnly) {
 function tpNormalizeBlock(block, index) {
   const b = { ...(block || {}) };
   return {
+    ...b,
+    block_id: b.block_id || null,
+    exercise_name: b.exercise_name || null,
     order: Number(b.order ?? index ?? 0),
     exercise_ref: String(b.exercise_ref || ""),
     phase: b.phase || "principal",

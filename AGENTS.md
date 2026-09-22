@@ -20,3 +20,8 @@ Lê o estado atual antes de alterar. Cria um worktree próprio a partir de `refs
 `npm run check` e `npm test` são obrigatórios. Executa os testes específicos do fluxo e, quando aplicável, os testes de navegador.
 Não escondas falhas anteriores da suíte geral nem as atribuas a uma mudança sem comparação.
 Mantém documentação e código da Edge Function no mesmo PR. Mantém a autenticação própria já existente no MCP.
+
+## Treino em campo
+Lê `docs/training-session.md`. Usa as operações MCP de sessão sobre o treino existente; não cria sessões/exercícios duplicados para marcar presença ou escrever notas.
+Não inicia o cronómetro, assume controlo ou marca presença por inferência. São ações explícitas do treinador.
+Preserva as revisões, UUIDs dos atletas, plano original e registo realizado. A proposta automática do foco seguinte pertence à fase 2 e ainda não está implementada.
