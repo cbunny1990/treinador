@@ -127,6 +127,19 @@ function remoteProjectRef(url) {
 function remoteShouldUseTus(size) {
   return Number(size || 0) > REMOTE_TUS_THRESHOLD;
 }
+function remoteChooseTeamId(currentTeamId, teams) {
+  const rows = Array.isArray(teams) ? teams : [];
+  const current = remoteText(currentTeamId, 100);
+  if (current && rows.some((team) => String(team?.id) === current)) return current;
+  if (rows.length === 1 && rows[0]?.id) return String(rows[0].id);
+  return null;
+}
+function remoteEmitSync(result) {
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return;
+  try {
+    window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", { detail: result || {} }));
+  } catch (_) {}
+}
 
 function remoteDataUrlToBlob(dataUrl) {
   const parts = String(dataUrl || "").split(",");
@@ -214,8 +227,10 @@ const RemoteWorkspace = {
     clearTimeout(this._syncTimer);
     this._syncTimer = setTimeout(async () => {
       try {
+        if (!navigator.onLine) return;
         const status = await this.status();
-        if (navigator.onLine && status.signedIn && status.remoteTeamId) await this.syncNow();
+        if (!status.signedIn) return;
+        await this.syncNow();
       } catch (error) {
         console.warn("Remote sync adiado:", error.message);
       }
@@ -306,6 +321,17 @@ const RemoteWorkspace = {
     if (error) throw error;
     return data || [];
   },
+  async ensureSelectedTeam() {
+    const session = await this.getSession();
+    if (!session) return null;
+    const teams = await this.listTeams();
+    const config = remoteLoadConfig();
+    const selected = remoteChooseTeamId(config.remoteTeamId, teams);
+    if ((config.remoteTeamId || null) !== selected) {
+      remoteSaveConfig({ ...config, remoteTeamId: selected });
+    }
+    return selected;
+  },
 
   async createTeamFromLocal() {
     const client = await this.init();
@@ -327,6 +353,7 @@ const RemoteWorkspace = {
       sync_dirty: false,
       remote_updated_at: data.updated_at,
     }, { remote: true });
+    this.scheduleSync(0);
     return data;
   },
   async useTeam(teamId) {
@@ -334,6 +361,7 @@ const RemoteWorkspace = {
     if (!id) throw new Error("Escolhe um workspace remoto.");
     const config = remoteLoadConfig();
     remoteSaveConfig({ ...config, remoteTeamId: id });
+    this.scheduleSync(0);
     return id;
   },
   async syncTeam(remoteTeamId) {
@@ -995,18 +1023,20 @@ const RemoteWorkspace = {
 
   async syncNow() {
     if (!navigator.onLine) throw new Error("Sem ligação à Internet.");
-    const config = remoteLoadConfig();
+    let config = remoteLoadConfig();
     if (!remoteConfigValid(config)) throw new Error("Configura primeiro o backend remoto.");
     const session = await this.getSession();
     if (!session) throw new Error("Inicia sessão para sincronizar.");
-    if (!config.remoteTeamId) throw new Error("Escolhe ou cria o workspace remoto.");
+    const remoteTeamId = await this.ensureSelectedTeam();
+    if (!remoteTeamId) throw new Error("Escolhe ou cria o workspace remoto.");
+    config = remoteLoadConfig();
     const result = { pushed: 0, pulled: 0, conflicts: [], deleted: 0 };
 
     const tombstoneResult = await this._syncTombstones();
-    const teamResult = await this.syncTeam(config.remoteTeamId);
-    const recordResult = await this._syncRecords(config.remoteTeamId, session.user.id);
-    const activityResult = await this._syncActivity(config.remoteTeamId, session.user.id);
-    const mediaResult = await this._syncMedia(config.remoteTeamId, session.user.id);
+    const teamResult = await this.syncTeam(remoteTeamId);
+    const recordResult = await this._syncRecords(remoteTeamId, session.user.id);
+    const activityResult = await this._syncActivity(remoteTeamId, session.user.id);
+    const mediaResult = await this._syncMedia(remoteTeamId, session.user.id);
     const parts = [tombstoneResult, teamResult, recordResult, activityResult, mediaResult];
 
     for (const part of parts) {
@@ -1017,8 +1047,10 @@ const RemoteWorkspace = {
     }
 
     const lastSyncAt = new Date().toISOString();
+    const completed = { ...result, lastSyncAt };
     remoteSaveConfig({ ...remoteLoadConfig(), lastSyncAt, conflicts: result.conflicts });
-    return { ...result, lastSyncAt };
+    remoteEmitSync(completed);
+    return completed;
   },
 
   async canUpload() {
@@ -1115,6 +1147,7 @@ if (typeof module !== "undefined" && module.exports) {
     remoteConflict,
     remoteProjectRef,
     remoteShouldUseTus,
+    remoteChooseTeamId,
     remoteRecordRow,
     remoteActivityRow,
     RemoteWorkspace,

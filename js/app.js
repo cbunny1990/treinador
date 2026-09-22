@@ -166,12 +166,24 @@ window.addEventListener("hashchange",router);
 window.addEventListener("DOMContentLoaded",router);
 if(document.readyState!=="loading") router();
 
+window.addEventListener("visioncoach:sync-complete",function(){
+  refreshRemoteIndicator();
+  if(!app.querySelector('form[data-form]')) router();
+});
+window.addEventListener("focus",function(){ RemoteWorkspace.scheduleSync(150); });
+document.addEventListener("visibilitychange",function(){
+  if(document.visibilityState==="visible") RemoteWorkspace.scheduleSync(150);
+});
+
 RemoteWorkspace.init().then(function(client){
   if(!client) return;
-  RemoteWorkspace.scheduleSync(600);
-  window.addEventListener("online",function(){ RemoteWorkspace.scheduleSync(500); });
+  RemoteWorkspace.scheduleSync(250);
+  window.addEventListener("online",function(){ RemoteWorkspace.scheduleSync(150); });
   client.auth.onAuthStateChange(function(event,session){
     refreshRemoteIndicator();
+    if(session && (event==="SIGNED_IN" || event==="INITIAL_SESSION" || event==="TOKEN_REFRESHED")){
+      setTimeout(function(){ RemoteWorkspace.scheduleSync(0); },0);
+    }
     if(event==="SIGNED_IN" && session && new URLSearchParams(location.search).get("auth")==="1"){
       history.replaceState(null,"",location.pathname+"#/definicoes");
       router();
@@ -514,6 +526,7 @@ function remoteAccountHTML(status,teams,options){
   }
   html+='<button class="btn secondary" type="button" data-action="remote-create-team">Criar a partir desta equipa</button>';
   if(status.remoteTeamId){
+    html+='<div class="row" style="margin:4px 0 8px"><span class="badge ready">Sync automático</span><span class="meta">Este dispositivo usa o workspace remoto partilhado.</span></div>';
     html+='<button class="btn accent" type="button" data-action="remote-sync">Sincronizar agora</button>';
     html+='<div class="hint">ID remoto: '+esc(status.remoteTeamId)+'</div>';
     if(status.lastSyncAt) html+='<div class="hint">Última sincronização: '+esc(new Date(status.lastSyncAt).toLocaleString("pt-PT"))+'</div>';
