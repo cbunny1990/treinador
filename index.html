@@ -76,10 +76,10 @@
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
-        const registration = await navigator.serviceWorker.register("sw.js?v=59");
+        const registration = await navigator.serviceWorker.register("sw.js?v=60");
         registration.update();
         navigator.serviceWorker.addEventListener("controllerchange", () => {
-          const key = "vision-sw-reloaded-v59";
+          const key = "vision-sw-reloaded-v60";
           if (sessionStorage.getItem(key)) return;
           sessionStorage.setItem(key, "1");
           location.reload();
