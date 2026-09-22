@@ -214,3 +214,7 @@ tr:last-child td{border-bottom:0}
   .copy-field{grid-template-columns:1fr}
   .scope-grid{display:grid;grid-template-columns:1fr}
 }
+
+.player-choice.player-unavailable{opacity:.58;background:var(--surface-2)}
+.player-choice.player-unavailable input{cursor:not-allowed}
+.player-card .badge{flex:0 0 auto}

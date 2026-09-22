@@ -197,9 +197,10 @@ const WorkspaceStore = {
       DB.porIndice("media_items", "team_id", teamId),
       this.listActivity(teamId, 50),
     ]);
+    const activePlayers = players.filter((player) => player?.plantel_ativo !== false);
     const futureMatches = matches.filter((m) => wsDate(m.data) >= today).sort((a, b) => String(a.data).localeCompare(String(b.data)));
     const futureTrainings = trainings.filter((t) => wsDate(t.data) >= today).sort((a, b) => String(a.data).localeCompare(String(b.data)));
-    const data = { team, players, matches, trainings, memory, documents, media, activity };
+    const data = { team, players: activePlayers, matches, trainings, memory, documents, media, activity };
     return {
       ...data,
       next_match: futureMatches[0] || null,

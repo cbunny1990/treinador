@@ -292,8 +292,10 @@ async function viewTeam(){
   var s=await WorkspaceStore.buildSnapshot();
   var team=s.team||{};
   var players=s.players.slice().sort(function(a,b){return String(a.nome).localeCompare(String(b.nome));});
+  var availableCount=players.filter(function(p){return PlayerStatus.isAvailable(p);}).length;
   var playerCards=players.length?players.map(function(p){
-    return '<a class="card player-card" href="#/equipa/jogador/'+p.id+'">'+avatarHTML(p)+'<span class="grow"><span class="title">'+esc(p.nome)+'</span><span class="meta">'+esc(p.posicao||p.escalao||"Jogador")+'</span></span></a>';
+    var status=PlayerStatus.normalize(p.estado_disponibilidade);
+    return '<a class="card player-card" href="#/equipa/jogador/'+p.id+'">'+avatarHTML(p)+'<span class="grow"><span class="title">'+esc(p.nome)+'</span><span class="meta">'+esc(p.posicao||p.escalao||"Jogador")+'</span></span><span class="badge '+PlayerStatus.badgeClass(status)+'">'+esc(PlayerStatus.label(status))+'</span></a>';
   }).join(""):'<div class="empty">Ainda não existem jogadores.</div>';
   var games=s.matches.slice().sort(function(a,b){return String(b.data).localeCompare(String(a.data));}).slice(0,8);
   var gameRows=games.length?games.map(function(m){
@@ -302,7 +304,7 @@ async function viewTeam(){
   var html='<div class="profile-grid">';
   html+='<section class="panel hero-main"><div class="kicker">Perfil da equipa</div><h2 class="display" style="font-size:28px">'+esc(team.nome||"Equipa")+'</h2><p class="lead">'+esc([team.clube,team.escalao,team.epoca,team.competicao,team.formato].filter(Boolean).join(" · ")||"Completa os dados base da equipa.")+'</p><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/editar">Editar equipa</a><a class="btn" href="#/equipa/jogador/novo">Adicionar jogador</a></div></section>';
   html+='<section class="panel hero-side"><div class="metric-label">Modelo de trabalho</div><p class="lead">A equipa é a fonte factual do workspace. O agente deve ler estes dados, nunca inventá-los.</p><div class="notice" style="margin-top:14px">A ligação externa do agente ainda não está ativa. Esta estrutura já está preparada para autoria separada.</div></section></div>';
-  html+='<section class="section"><div class="section-head"><div><h2>Plantel</h2><p>'+players.length+' jogador(es)</p></div><a class="link" href="#/equipa/jogador/novo">Adicionar</a></div><div class="player-grid">'+playerCards+'</div></section>';
+  html+='<section class="section"><div class="section-head"><div><h2>Plantel</h2><p>'+players.length+' jogador(es) · '+availableCount+' disponível(eis) · '+(players.length-availableCount)+' não disponível(eis)</p></div><a class="link" href="#/equipa/jogador/novo">Adicionar</a></div><div class="player-grid">'+playerCards+'</div></section>';
   html+='<section class="section"><div class="section-head"><div><h2>Jogos</h2><p>Calendário e resultados</p></div><a class="btn small" href="#/equipa/jogo/novo">Novo jogo</a></div><div class="table-wrap"><table><thead><tr><th>Data</th><th>Adversário</th><th>Local</th><th>Resultado</th></tr></thead><tbody>'+gameRows+'</tbody></table></div></section>';
   setView(team.nome||"Equipa",html,"Equipa");
 }
@@ -322,9 +324,14 @@ async function viewPlayerForm(id){
   var opts=['<option value="">—</option>'].concat(ESCALOES.map(function(e){
     return '<option value="'+esc(e)+'" '+(player&&player.escalao===e?"selected":"")+'>'+esc(e)+'</option>';
   })).join("");
+  var statusCurrent=PlayerStatus.normalize(player&&player.estado_disponibilidade);
+  var statusOpts=Object.keys(PlayerStatus.statuses).map(function(key){
+    return '<option value="'+key+'" '+(statusCurrent===key?"selected":"")+'>'+esc(PlayerStatus.statuses[key])+'</option>';
+  }).join("");
   var html='<section class="panel hero-main" style="max-width:760px"><form class="form" data-form="player" data-id="'+(id||"")+'">';
   html+='<div class="form-grid"><label class="field"><span>Nome</span><input name="nome" required value="'+esc(player&&player.nome)+'"></label><label class="field"><span>Número</span><input type="number" name="numero" min="1" value="'+esc(player&&player.numero!=null?player.numero:"")+'"></label></div>';
   html+='<div class="form-grid"><label class="field"><span>Escalão</span><select name="escalao">'+opts+'</select></label><label class="field"><span>Posição</span><input name="posicao" value="'+esc(player&&player.posicao)+'"></label></div>';
+  html+='<label class="field"><span>Disponibilidade</span><select name="estado_disponibilidade">'+statusOpts+'</select><small>Usa apenas o estado operacional. Não registes diagnósticos médicos.</small></label>';
   html+='<label class="field"><span>Notas factuais</span><textarea name="notas">'+esc(player&&player.notas)+'</textarea></label>';
   html+='<div class="toolbar"><button class="btn accent" type="submit">Guardar</button><a class="btn secondary" href="'+(id?'#/equipa/jogador/'+id:'#/equipa')+'">Cancelar</a></div></form></section>';
   setView(id?"Editar jogador":"Novo jogador",html,"Equipa");
@@ -337,8 +344,12 @@ async function viewPlayer(id){
   var obs=memory.length?'<div class="list">'+memory.slice(0,8).map(function(m){
     return '<div class="list-item"><div class="row"><span class="title grow">'+esc(m.title)+'</span>'+actorBadge(m.metadata&&m.metadata.actor,m.metadata&&m.metadata.actor_label||m.source&&m.source.label)+'</div><div class="body-copy">'+esc(m.content)+'</div><div class="meta">'+fmtDate(m.occurred_at)+'</div></div>';
   }).join("")+'</div>':'<div class="empty">Sem observações deste jogador.</div>';
+  var status=PlayerStatus.normalize(player.estado_disponibilidade);
+  var inRoster=PlayerStatus.inRoster(player);
+  var playerBadge=inRoster?('<span class="badge '+PlayerStatus.badgeClass(status)+'">'+esc(PlayerStatus.label(status))+'</span>'):'<span class="badge system">Fora do plantel</span>';
+  var retireButton=inRoster?'<button class="btn danger" type="button" data-action="retire-player" data-id="'+id+'" data-name="'+esc(player.nome)+'">Retirar definitivamente</button>':"";
   var html='<div class="profile-grid">';
-  html+='<section class="panel hero-main"><div class="row">'+avatarHTML(player,64)+'<div class="grow"><div class="kicker">Jogador</div><h2 class="display" style="font-size:28px">'+esc(player.nome)+'</h2><p class="lead">'+esc([player.escalao,player.posicao,player.numero?'#'+player.numero:null].filter(Boolean).join(" · "))+'</p></div></div><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/jogador/'+id+'/editar">Editar</a><a class="btn" href="#/capturar/player/'+id+'">Registar observação</a><a class="btn secondary" href="#/media/novo/player/'+id+'">Adicionar media</a></div></section>';
+  html+='<section class="panel hero-main"><div class="row">'+avatarHTML(player,64)+'<div class="grow"><div class="kicker">Jogador</div><h2 class="display" style="font-size:28px">'+esc(player.nome)+'</h2><p class="lead">'+esc([player.escalao,player.posicao,player.numero?'#'+player.numero:null].filter(Boolean).join(" · "))+'</p>'+playerBadge+'</div></div><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/jogador/'+id+'/editar">Editar</a><a class="btn" href="#/capturar/player/'+id+'">Registar observação</a><a class="btn secondary" href="#/media/novo/player/'+id+'">Adicionar media</a>'+retireButton+'</div></section>';
   html+='<aside class="panel hero-side"><div class="metric-label">Contexto</div><div class="metric-value">'+memory.length+'</div><div class="metric-sub">registos na memória</div><div class="metric-value" style="margin-top:18px">'+media.length+'</div><div class="metric-sub">itens de media</div></aside></div>';
   html+='<section class="section"><div class="section-head"><div><h2>Últimas observações</h2><p>Contexto usado pelo workspace</p></div></div>'+obs+'</section>';
   setView(player.nome,html,"Equipa");
@@ -360,18 +371,28 @@ async function viewMatchForm(id){
 }
 function playerChecks(players,selected,name){
   var chosen=new Set((selected||[]).map(String));
-  return players.map(function(p){var ref=stablePlayerRef(p);return '<label class="player-choice"><input type="checkbox" name="'+name+'" value="'+esc(ref)+'" '+(chosen.has(ref)?"checked":"")+'><span>'+avatarHTML(p,32)+'<span><strong>'+esc(p.nome)+'</strong><small>'+esc(p.posicao||"Jogador")+'</small></span></span></label>';}).join("");
+  return players.map(function(p){
+    var ref=stablePlayerRef(p);
+    var available=PlayerStatus.isAvailable(p);
+    var checked=available&&chosen.has(ref);
+    var detail=available?(p.posicao||"Jogador"):(PlayerStatus.label(p.estado_disponibilidade)+" · não convocável");
+    return '<label class="player-choice '+(available?"":"player-unavailable")+'"><input type="checkbox" name="'+name+'" value="'+esc(ref)+'" '+(checked?"checked":"")+' '+(available?"":"disabled")+'><span>'+avatarHTML(p,32)+'<span><strong>'+esc(p.nome)+'</strong><small>'+esc(detail)+'</small></span></span></label>';
+  }).join("");
 }
 async function viewMatch(id){
   var raw=await DB.obter("jogos",id);
   if(!raw) return go("#/equipa");
   var match=matchStructure(raw);
-  var players=(await DB.porIndice("jogadores","team_id",DEFAULT_TEAM_ID)).sort(function(a,b){return String(a.nome).localeCompare(String(b.nome));});
+  var allPlayers=(await DB.porIndice("jogadores","team_id",DEFAULT_TEAM_ID)).sort(function(a,b){return String(a.nome).localeCompare(String(b.nome));});
+  var players=allPlayers.filter(function(p){return PlayerStatus.inRoster(p);});
+  var availablePlayers=players.filter(function(p){return PlayerStatus.isAvailable(p);});
   var memory=await HeadCoachMemory.list(DEFAULT_TEAM_ID,{subjectType:"match",subjectId:id});
   var media=await HeadCoachMedia.listForSubject("match",id);
   var progress=VisionCalendar.matchProgress(match);
   var called=new Set(match.callup.player_ids.map(String));
-  var lineupPlayers=called.size?players.filter(function(p){return called.has(stablePlayerRef(p));}):players;
+  var unavailableCalled=players.filter(function(p){return called.has(stablePlayerRef(p))&&!PlayerStatus.isAvailable(p);});
+  var retiredCalled=allPlayers.filter(function(p){return !PlayerStatus.inRoster(p)&&called.has(stablePlayerRef(p));});
+  var lineupPlayers=called.size?availablePlayers.filter(function(p){return called.has(stablePlayerRef(p));}):availablePlayers;
   var keeperOptions='<option value="">Por definir</option>'+lineupPlayers.map(function(p){var ref=stablePlayerRef(p);return '<option value="'+esc(ref)+'" '+(String(match.lineup.goalkeeper_id||"")===ref?"selected":"")+'>'+esc(p.nome)+'</option>';}).join("");
   var context=memory.length?'<div class="list">'+memory.map(function(m){return '<div class="list-item"><div class="title">'+esc(m.title)+'</div><div class="body-copy">'+esc(m.content)+'</div></div>';}).join("")+'</div>':'<div class="empty">Ainda sem observações associadas.</div>';
   var html='<div class="profile-grid"><section class="panel hero-main"><div class="kicker">'+esc(match.casa_fora==="fora"?"Fora":"Casa")+' · '+fmtDate(match.data)+(match.hora?' · '+esc(match.hora):'')+'</div><h2 class="display">'+esc(match.adversario)+'</h2><div class="metric-value" style="margin-top:18px">'+resultText(match)+'</div><p class="lead">'+esc(match.local||"Local por definir")+(match.hora_saida?' · saída '+esc(match.hora_saida):'')+'</p><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/jogo/'+id+'/editar">Editar dados</a><a class="btn" href="#/capturar/match/'+id+'">Observação</a><a class="btn secondary" href="#/media/novo/match/'+id+'">Media</a></div></section>';
@@ -379,7 +400,7 @@ async function viewMatch(id){
   html+='<div class="match-stage-nav"><button type="button" data-action="jump-match" data-target="match-before">Antes</button><button type="button" data-action="jump-match" data-target="match-during">Durante</button><button type="button" data-action="jump-match" data-target="match-after">Depois</button></div>';
   html+='<section class="section match-stage" id="match-before"><div class="section-head"><div><h2>Antes do jogo</h2><p>Plano, convocatória e alinhamento</p></div></div><div class="grid cols-2">';
   html+='<form class="panel match-form form" data-form="match-pre" data-id="'+id+'"><h3>Plano pré-jogo</h3><label class="field"><span>Objetivo principal</span><input name="objetivo_principal" value="'+esc(match.pre_game.objetivo_principal)+'"></label><label class="field"><span>Plano de jogo</span><textarea name="plano_jogo">'+esc(match.pre_game.plano_jogo)+'</textarea></label><label class="field"><span>Notas do adversário</span><textarea name="adversario_notas">'+esc(match.pre_game.adversario_notas)+'</textarea></label><label class="field"><span>Pontos a observar · um por linha</span><textarea name="pontos_observar">'+esc(linesText(match.pre_game.pontos_observar))+'</textarea></label><button class="btn accent" type="submit">Guardar plano</button></form>';
-  html+='<form class="panel match-form form" data-form="match-callup" data-id="'+id+'"><h3>Convocatória</h3><div class="player-choice-grid">'+playerChecks(players,match.callup.player_ids,"player_ids")+'</div><label class="field"><span>Notas</span><textarea name="notes">'+esc(match.callup.notes)+'</textarea></label><button class="btn accent" type="submit">Guardar convocatória</button></form></div>';
+  html+='<form class="panel match-form form" data-form="match-callup" data-id="'+id+'"><h3>Convocatória</h3>'+(retiredCalled.length?'<div class="notice">Histórico: '+retiredCalled.map(function(p){return esc(p.nome);}).join(", ")+' já não pertence ao plantel atual.</div>':'')+(unavailableCalled.length?'<div class="notice">'+unavailableCalled.map(function(p){return esc(p.nome)+" · "+esc(PlayerStatus.label(p.estado_disponibilidade));}).join("<br>")+'<br>Estes jogadores deixaram de estar disponíveis e serão retirados ao guardar a convocatória.</div>':'')+'<div class="player-choice-grid">'+playerChecks(players,match.callup.player_ids,"player_ids")+'</div><label class="field"><span>Notas</span><textarea name="notes">'+esc(match.callup.notes)+'</textarea></label><button class="btn accent" type="submit">Guardar convocatória</button></form></div>';
   html+='<form class="panel match-form form section" data-form="match-lineup" data-id="'+id+'"><div class="section-head"><div><h2>Alinhamento 5v5</h2><p>Base 1-2-1 · guarda-redes + 4 jogadores de campo</p></div></div><div class="form-grid"><label class="field"><span>Sistema</span><select name="system"><option value="1-2-1" selected>1-2-1</option></select></label><label class="field"><span>Guarda-redes</span><select name="goalkeeper_id">'+keeperOptions+'</select></label></div><div class="field"><span>Titulares de campo · máximo 4</span><div class="player-choice-grid">'+playerChecks(lineupPlayers,match.lineup.starters,"starter_ids")+'</div></div><button class="btn accent" type="submit">Guardar alinhamento</button></form></section>';
   html+='<section class="section match-stage" id="match-during"><div class="section-head"><div><h2>Durante</h2><p>Registo simples, sem distrair do jogo</p></div></div><form class="panel match-form form" data-form="match-during" data-id="'+id+'"><label class="field"><span>Resultado ao intervalo</span><input name="halftime_score" placeholder="Ex.: 2-1" value="'+esc(match.during.halftime_score)+'"></label><label class="field"><span>Notas rápidas · uma por linha</span><textarea name="notes">'+esc(linesText(match.during.notes))+'</textarea></label><button class="btn accent" type="submit">Guardar durante</button></form></section>';
   html+='<section class="section match-stage" id="match-after"><div class="section-head"><div><h2>Depois</h2><p>Aprendizagem e ligação ao próximo treino</p></div></div><form class="panel match-form form" data-form="match-post" data-id="'+id+'"><div class="form-grid"><label class="field"><span>O que correu bem</span><textarea name="correu_bem">'+esc(match.post_game.correu_bem)+'</textarea></label><label class="field"><span>O que melhorar</span><textarea name="melhorar">'+esc(match.post_game.melhorar)+'</textarea></label></div><label class="field"><span>Conclusões</span><textarea name="conclusoes">'+esc(match.post_game.conclusoes)+'</textarea></label><label class="field"><span>Ações para o próximo treino · uma por linha</span><textarea name="acoes">'+esc(linesText(match.post_game.acoes_proximo_treino))+'</textarea></label><button class="btn accent" type="submit">Guardar análise</button></form>';
@@ -637,6 +658,41 @@ async function saveRecord(store,id,data){
   }
   return DB.criar(store,data);
 }
+async function removePlayerFromOpenMatches(player){
+  var ref=stablePlayerRef(player);
+  var matches=await DB.porIndice("jogos","team_id",DEFAULT_TEAM_ID);
+  var changedMatches=0;
+  for(var i=0;i<matches.length;i++){
+    var match=matchStructure(matches[i]);
+    if(match.estado==="concluido") continue;
+    var changed=false;
+    var callup=match.callup.player_ids.filter(function(x){return String(x)!==ref;});
+    if(callup.length!==match.callup.player_ids.length){match.callup.player_ids=callup;changed=true;}
+    var starters=match.lineup.starters.filter(function(x){return String(x)!==ref;});
+    var substitutes=match.lineup.substitutes.filter(function(x){return String(x)!==ref;});
+    if(starters.length!==match.lineup.starters.length){match.lineup.starters=starters;changed=true;}
+    if(substitutes.length!==match.lineup.substitutes.length){match.lineup.substitutes=substitutes;changed=true;}
+    if(String(match.lineup.goalkeeper_id||"")===ref){match.lineup.goalkeeper_id=null;changed=true;}
+    if(changed){
+      match.callup.status=match.callup.player_ids.length?"ready":"draft";
+      match.lineup.status=(match.lineup.goalkeeper_id&&match.lineup.starters.length===4)?"ready":"draft";
+      await DB.atualizar("jogos",match);
+      changedMatches++;
+    }
+  }
+  return changedMatches;
+}
+async function retirePlayerFromRoster(id){
+  var player=await DB.obter("jogadores",id);
+  if(!player) throw new Error("Jogador não encontrado.");
+  await removePlayerFromOpenMatches(player);
+  await DB.atualizar("jogadores",Object.assign({},player,{
+    plantel_ativo:false,
+    retirado_em:new Date().toISOString()
+  }));
+  await logHuman("retired_player","Retirou jogador do plantel · "+player.nome,"player",player.sync_id||id);
+  return player;
+}
 
 app.addEventListener("click",async function(event){
   var target=event.target.closest("[data-action]");
@@ -657,6 +713,17 @@ app.addEventListener("click",async function(event){
     await HeadCoachMedia.remove(target.dataset.id);
     await logHuman("removed_media","Removeu um item de media","media",target.dataset.id);
     return router();
+  }
+  if(action==="retire-player"){
+    var playerName=target.dataset.name||"jogador";
+    if(!confirm("Retirar "+playerName+" definitivamente do plantel atual? O histórico de jogos será preservado.")) return;
+    var typed=prompt("Para confirmar, escreve exatamente o nome do jogador:\n"+playerName);
+    if(typed!==playerName){ if(typed!==null) alert("Nome diferente. O jogador não foi retirado."); return; }
+    try{
+      await retirePlayerFromRoster(Number(target.dataset.id));
+      alert(playerName+" foi retirado do plantel.");
+      return go("#/equipa");
+    }catch(error){ alert("Não foi possível retirar o jogador: "+error.message); return; }
   }
   if(action==="remote-logout"){
     await RemoteWorkspace.signOut();
@@ -774,14 +841,22 @@ app.addEventListener("submit",async function(event){
     return go("#/equipa");
   }
   if(type==="player"){
+    var previousPlayer=id?await DB.obter("jogadores",id):null;
+    var nextAvailability=PlayerStatus.normalize(fd.get("estado_disponibilidade"));
     var playerId=await saveRecord("jogadores",id,{
       team_id:DEFAULT_TEAM_ID,
       nome:fd.get("nome"),
       numero:numberOrNull(fd.get("numero")),
       escalao:fd.get("escalao")||null,
       posicao:fd.get("posicao")||null,
+      estado_disponibilidade:nextAvailability,
       notas:fd.get("notas")||null
     });
+    var savedPlayer=await DB.obter("jogadores",playerId);
+    if(id&&previousPlayer&&PlayerStatus.normalize(previousPlayer.estado_disponibilidade)!==nextAvailability){
+      if(nextAvailability!=="disponivel") await removePlayerFromOpenMatches(savedPlayer);
+      await logHuman("updated_player_availability","Alterou disponibilidade · "+fd.get("nome")+" · "+PlayerStatus.label(nextAvailability),"player",savedPlayer.sync_id||playerId);
+    }
     await logHuman(id?"updated_player":"created_player",(id?"Atualizou jogador · ":"Adicionou jogador · ")+fd.get("nome"),"player",playerId);
     return go("#/equipa/jogador/"+playerId);
   }
