@@ -159,3 +159,8 @@ A suíte deve validar, no mínimo:
 - escrita do agente através de `AgentWorkspaceAPI`;
 - autoria distinta humano/agente;
 - ausência do chatbot e gerador IA antigos no bundle ativo.
+
+
+## Publicação rápida de imagens por IA
+
+O procedimento atual está em [ai-image-workflow.md](ai-image-workflow.md). Usa o MCP autenticado ou `npm run images:publish`; não volta a gerar imagens aprovadas nem requer alterações de frontend por imagem.

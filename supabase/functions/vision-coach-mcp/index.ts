@@ -1,8 +1,10 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.116.0";
 
+import { IMAGE_TOOLS, executeImageTool } from "./image_uploads.mjs";
+
 const SERVER_NAME = "vision-coach";
-const SERVER_VERSION = "1.0.0";
+const SERVER_VERSION = "1.1.0";
 const MODERN_PROTOCOL = "2026-07-28";
 const LEGACY_PROTOCOLS = new Set(["2025-11-25", "2025-06-18", "2025-03-26"]);
 const MAX_BODY_BYTES = 256 * 1024;
@@ -76,6 +78,7 @@ function normalizePlayerAvailability(value: unknown) {
 }
 
 const TOOLS = [
+  ...IMAGE_TOOLS,
   {
     name: "workspace_summary",
     description: "Resumo atual do workspace Vision Coach: equipa, próximos jogos, exercícios e treinos recentes.",
@@ -175,6 +178,18 @@ const TOOLS = [
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "set_player_roster_status",
+    description: "Retira ou reintegra um jogador no plantel, preservando o histórico.",
+    inputSchema: {type:"object",properties:{id:{type:"string"},external_key:{type:"string"},active:{type:"boolean"}},required:["active"],additionalProperties:false},
+    annotations: {readOnlyHint:false,destructiveHint:false},
+  },
+  {
+    name: "remove_player_permanently",
+    description: "Retira definitivamente um jogador do workspace ativo, preservando o histórico interno.",
+    inputSchema: {type:"object",properties:{id:{type:"string"},external_key:{type:"string"}},additionalProperties:false},
+    annotations: {readOnlyHint:false,destructiveHint:true},
   },
   {
     name: "create_exercise",
@@ -304,6 +319,7 @@ async function putRecord(admin: any, teamId: string, kind: string, payload: any,
 
 async function executeTool(admin: any, connector: any, name: string, args: any, requestId: unknown) {
   const teamId = String(connector.team_id);
+  if (IMAGE_TOOLS.some((tool) => tool.name === name)) return executeImageTool(admin,connector,name,args,Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "");
 
   if (name === "workspace_summary") {
     requireScope(connector, "read");
@@ -443,6 +459,28 @@ async function executeTool(admin: any, connector: any, name: string, args: any, 
       },
       record,
     };
+  }
+
+  if (name === "set_player_roster_status") {
+    requireScope(connector,"write");
+    const existing=await findRecord(admin,teamId,"player",args);
+    if(!existing) throw new Error("player_not_found");
+    const active=Boolean(args?.active);
+    const payload={...(existing.payload||{}),plantel_ativo:active,estado_disponibilidade:active?normalizePlayerAvailability(existing.payload?.estado_disponibilidade):"indisponivel"};
+    const record=await putRecord(admin,teamId,"player",payload,existing,"mcp:"+connector.id+":player-roster:"+existing.id+":"+String(active));
+    return {updated:true,player:{id:existing.id,nome:payload.nome||null,plantel_ativo:active,estado_disponibilidade:payload.estado_disponibilidade},record};
+  }
+  if (name === "remove_player_permanently") {
+    requireScope(connector,"write");
+    const existing=await findRecord(admin,teamId,"player",args);
+    if(!existing) throw new Error("player_not_found");
+    const removedAt=new Date().toISOString();
+    const {data,error}=await admin.from("workspace_records").update({deleted_at:removedAt,updated_at:removedAt,payload:{...(existing.payload||{}),plantel_ativo:false,estado_disponibilidade:"indisponivel",removido_definitivamente_em:removedAt}}).eq("id",existing.id).eq("team_id",teamId).eq("kind","player").is("deleted_at",null).select("id,payload,deleted_at,updated_at").maybeSingle();
+    if(error) throw error;
+    if(!data) throw new Error("player_remove_conflict");
+    const {error:logError}=await admin.from("activity_log").insert({team_id:teamId,actor_type:"agent",actor_label:"head-coach",action:"player_removed_permanently",summary:"Jogador retirado definitivamente do plantel ativo.",entity_type:"player",entity_ref:existing.id,metadata:{nome:existing.payload?.nome||null}});
+    if(logError) throw logError;
+    return {removed:true,player:{id:existing.id,nome:existing.payload?.nome||null,deleted_at:removedAt}};
   }
 
   if (name === "create_exercise") {
@@ -659,7 +697,7 @@ Deno.serve(async (req: Request) => {
       protocolVersion: legacyVersion,
       capabilities: { tools: { listChanged: false } },
       serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-      instructions: "Vision Coach workspace connector. Use read tools before write tools when context is needed.",
+      instructions: "Vision Coach workspace connector. Read before writing. For approved exercise images use get_exercise_image, prepare_exercise_image_upload, binary PUT of original bytes, then complete_exercise_image_upload. Never regenerate or downsize an approved image; never claim success before completion. Guide: docs/ai-image-workflow.md in cbunny1990/treinador.",
     }), {
       "MCP-Protocol-Version": legacyVersion,
       "Mcp-Session-Id": crypto.randomUUID(),

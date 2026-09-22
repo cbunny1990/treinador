@@ -1,5 +1,5 @@
 // Service worker - app shell offline.
-const CACHE = "vision-coach-v63";
+const CACHE = "vision-coach-v64";
 const ASSETS = [
   "./",
   "./index.html",
@@ -16,6 +16,7 @@ const ASSETS = [
   "./js/remote_workspace.js",
   "./js/mcp_connectors.js",
   "./js/exercise_visuals.js",
+  "./js/exercise_image_storage.js",
   "./js/training_ui.js",
   "./js/agent_contract.js",
   "./js/app.js",
@@ -36,7 +37,7 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE && key !== "vision-coach-private-images-v1").map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });

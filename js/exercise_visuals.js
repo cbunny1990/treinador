@@ -45,6 +45,7 @@ const VC_APPROVED_VISUALS = Object.freeze([
 
 function vcVisualSafeSource(value){
   const src=String(value||"").trim();
+  if(globalThis.VisionExerciseImageStorage?.isOwnedBlob(src)) return src;
   if(/^data:image\/(png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(src)) return src;
   if(/^assets\/exercises\/[a-z0-9_./-]+$/i.test(src)&&!src.includes("..")) return src;
   try{const url=new URL(src);if(url.protocol==="https:"&&!url.username&&!url.password) return url.href;}catch(_){}
@@ -52,6 +53,7 @@ function vcVisualSafeSource(value){
 }
 function vcVisualSource(exercise){
   if(exercise?.visual_removed) return null;
+  if(exercise?.visual_storage_path) return globalThis.VisionExerciseImageStorage?.source(exercise)||null;
   const approved=VC_APPROVED_VISUALS.find((x)=>x.key===exercise?.external_key);
   const explicit=vcVisualSafeSource(exercise?.visual_url);
   if(explicit) return {src:explicit,width:exercise?.visual_image?.width||approved?.width,height:exercise?.visual_image?.height||approved?.height};
