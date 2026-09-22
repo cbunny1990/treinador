@@ -291,12 +291,17 @@ async function viewCalendar(){
 async function viewTeam(){
   var s=await WorkspaceStore.buildSnapshot();
   var team=s.team||{};
-  var players=s.players.slice().sort(function(a,b){return String(a.nome).localeCompare(String(b.nome));});
+  var allPlayers=(await DB.porIndice("jogadores","team_id",DEFAULT_TEAM_ID)).slice().sort(function(a,b){return String(a.nome).localeCompare(String(b.nome));});
+  var players=allPlayers.filter(function(p){return PlayerStatus.inRoster(p);});
+  var retiredPlayers=allPlayers.filter(function(p){return !PlayerStatus.inRoster(p);});
   var availableCount=players.filter(function(p){return PlayerStatus.isAvailable(p);}).length;
   var playerCards=players.length?players.map(function(p){
     var status=PlayerStatus.normalize(p.estado_disponibilidade);
     return '<a class="card player-card" href="#/equipa/jogador/'+p.id+'">'+avatarHTML(p)+'<span class="grow"><span class="title">'+esc(p.nome)+'</span><span class="meta">'+esc(p.posicao||p.escalao||"Jogador")+'</span></span><span class="badge '+PlayerStatus.badgeClass(status)+'">'+esc(PlayerStatus.label(status))+'</span></a>';
-  }).join(""):'<div class="empty">Ainda não existem jogadores.</div>';
+  }).join(""):'<div class="empty">Ainda não existem jogadores ativos.</div>';
+  var retiredCards=retiredPlayers.length?retiredPlayers.map(function(p){
+    return '<a class="card player-card" href="#/equipa/jogador/'+p.id+'">'+avatarHTML(p)+'<span class="grow"><span class="title">'+esc(p.nome)+'</span><span class="meta">Fora do plantel</span></span><span class="badge system">Retirado</span></a>';
+  }).join(""):"";
   var games=s.matches.slice().sort(function(a,b){return String(b.data).localeCompare(String(a.data));}).slice(0,8);
   var gameRows=games.length?games.map(function(m){
     return '<tr><td>'+fmtDate(m.data)+'</td><td><a class="link" href="#/equipa/jogo/'+m.id+'">'+esc(m.adversario||"Jogo")+'</a></td><td>'+esc(m.casa_fora==="fora"?"Fora":"Casa")+'</td><td>'+resultText(m)+'</td></tr>';
@@ -305,6 +310,7 @@ async function viewTeam(){
   html+='<section class="panel hero-main"><div class="kicker">Perfil da equipa</div><h2 class="display" style="font-size:28px">'+esc(team.nome||"Equipa")+'</h2><p class="lead">'+esc([team.clube,team.escalao,team.epoca,team.competicao,team.formato].filter(Boolean).join(" · ")||"Completa os dados base da equipa.")+'</p><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/editar">Editar equipa</a><a class="btn" href="#/equipa/jogador/novo">Adicionar jogador</a></div></section>';
   html+='<section class="panel hero-side"><div class="metric-label">Modelo de trabalho</div><p class="lead">A equipa é a fonte factual do workspace. O agente deve ler estes dados, nunca inventá-los.</p><div class="notice" style="margin-top:14px">A ligação externa do agente ainda não está ativa. Esta estrutura já está preparada para autoria separada.</div></section></div>';
   html+='<section class="section"><div class="section-head"><div><h2>Plantel</h2><p>'+players.length+' jogador(es) · '+availableCount+' disponível(eis) · '+(players.length-availableCount)+' não disponível(eis)</p></div><a class="link" href="#/equipa/jogador/novo">Adicionar</a></div><div class="player-grid">'+playerCards+'</div></section>';
+  if(retiredPlayers.length) html+='<section class="section"><div class="section-head"><div><h2>Fora do plantel</h2><p>'+retiredPlayers.length+' jogador(es) retirado(s)</p></div></div><div class="player-grid">'+retiredCards+'</div></section>';
   html+='<section class="section"><div class="section-head"><div><h2>Jogos</h2><p>Calendário e resultados</p></div><a class="btn small" href="#/equipa/jogo/novo">Novo jogo</a></div><div class="table-wrap"><table><thead><tr><th>Data</th><th>Adversário</th><th>Local</th><th>Resultado</th></tr></thead><tbody>'+gameRows+'</tbody></table></div></section>';
   setView(team.nome||"Equipa",html,"Equipa");
 }
@@ -347,9 +353,12 @@ async function viewPlayer(id){
   var status=PlayerStatus.normalize(player.estado_disponibilidade);
   var inRoster=PlayerStatus.inRoster(player);
   var playerBadge=inRoster?('<span class="badge '+PlayerStatus.badgeClass(status)+'">'+esc(PlayerStatus.label(status))+'</span>'):'<span class="badge system">Fora do plantel</span>';
-  var retireButton=inRoster?'<button class="btn danger" type="button" data-action="retire-player" data-id="'+id+'" data-name="'+esc(player.nome)+'">Retirar definitivamente</button>':"";
+  var rosterButton=inRoster
+    ? '<button class="btn secondary" type="button" data-action="retire-player" data-id="'+id+'" data-name="'+esc(player.nome)+'">Retirar do plantel</button>'
+    : '<button class="btn secondary" type="button" data-action="restore-player" data-id="'+id+'" data-name="'+esc(player.nome)+'">Reintegrar no plantel</button>';
+  var deleteButton='<button class="btn danger" type="button" data-action="delete-player-permanently" data-id="'+id+'" data-name="'+esc(player.nome)+'">Retirar definitivamente</button>';
   var html='<div class="profile-grid">';
-  html+='<section class="panel hero-main"><div class="row">'+avatarHTML(player,64)+'<div class="grow"><div class="kicker">Jogador</div><h2 class="display" style="font-size:28px">'+esc(player.nome)+'</h2><p class="lead">'+esc([player.escalao,player.posicao,player.numero?'#'+player.numero:null].filter(Boolean).join(" · "))+'</p>'+playerBadge+'</div></div><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/jogador/'+id+'/editar">Editar</a><a class="btn" href="#/capturar/player/'+id+'">Registar observação</a><a class="btn secondary" href="#/media/novo/player/'+id+'">Adicionar media</a>'+retireButton+'</div></section>';
+  html+='<section class="panel hero-main"><div class="row">'+avatarHTML(player,64)+'<div class="grow"><div class="kicker">Jogador</div><h2 class="display" style="font-size:28px">'+esc(player.nome)+'</h2><p class="lead">'+esc([player.escalao,player.posicao,player.numero?'#'+player.numero:null].filter(Boolean).join(" · "))+'</p>'+playerBadge+'</div></div><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/jogador/'+id+'/editar">Editar</a><a class="btn" href="#/capturar/player/'+id+'">Registar observação</a><a class="btn secondary" href="#/media/novo/player/'+id+'">Adicionar media</a>'+rosterButton+deleteButton+'</div></section>';
   html+='<aside class="panel hero-side"><div class="metric-label">Contexto</div><div class="metric-value">'+memory.length+'</div><div class="metric-sub">registos na memória</div><div class="metric-value" style="margin-top:18px">'+media.length+'</div><div class="metric-sub">itens de media</div></aside></div>';
   html+='<section class="section"><div class="section-head"><div><h2>Últimas observações</h2><p>Contexto usado pelo workspace</p></div></div>'+obs+'</section>';
   setView(player.nome,html,"Equipa");
@@ -688,9 +697,29 @@ async function retirePlayerFromRoster(id){
   await removePlayerFromOpenMatches(player);
   await DB.atualizar("jogadores",Object.assign({},player,{
     plantel_ativo:false,
+    estado_disponibilidade:"indisponivel",
     retirado_em:new Date().toISOString()
   }));
   await logHuman("retired_player","Retirou jogador do plantel · "+player.nome,"player",player.sync_id||id);
+  return player;
+}
+async function restorePlayerToRoster(id){
+  var player=await DB.obter("jogadores",id);
+  if(!player) throw new Error("Jogador não encontrado.");
+  await DB.atualizar("jogadores",Object.assign({},player,{
+    plantel_ativo:true,
+    estado_disponibilidade:PlayerStatus.normalize(player.estado_disponibilidade),
+    retirado_em:null
+  }));
+  await logHuman("restored_player","Reintegrou jogador no plantel · "+player.nome,"player",player.sync_id||id);
+  return player;
+}
+async function deletePlayerPermanently(id){
+  var player=await DB.obter("jogadores",id);
+  if(!player) throw new Error("Jogador não encontrado.");
+  await removePlayerFromOpenMatches(player);
+  await DB.apagar("jogadores",id);
+  await logHuman("deleted_player","Retirou jogador definitivamente · "+player.nome,"player",player.sync_id||id);
   return player;
 }
 
@@ -716,14 +745,27 @@ app.addEventListener("click",async function(event){
   }
   if(action==="retire-player"){
     var playerName=target.dataset.name||"jogador";
-    if(!confirm("Retirar "+playerName+" definitivamente do plantel atual? O histórico de jogos será preservado.")) return;
-    var typed=prompt("Para confirmar, escreve exatamente o nome do jogador:\n"+playerName);
-    if(typed!==playerName){ if(typed!==null) alert("Nome diferente. O jogador não foi retirado."); return; }
+    if(!confirm("Retirar "+playerName+" do plantel ativo? O histórico será preservado e podes reintegrá-lo depois.")) return;
     try{
       await retirePlayerFromRoster(Number(target.dataset.id));
-      alert(playerName+" foi retirado do plantel.");
       return go("#/equipa");
     }catch(error){ alert("Não foi possível retirar o jogador: "+error.message); return; }
+  }
+  if(action==="restore-player"){
+    try{
+      await restorePlayerToRoster(Number(target.dataset.id));
+      return go("#/equipa/jogador/"+target.dataset.id);
+    }catch(error){ alert("Não foi possível reintegrar o jogador: "+error.message); return; }
+  }
+  if(action==="delete-player-permanently"){
+    var deleteName=target.dataset.name||"jogador";
+    if(!confirm("Retirar "+deleteName+" definitivamente? Esta ação remove o jogador da equipa e não poderá ser desfeita pela app.")) return;
+    var typed=prompt("Para confirmar a remoção definitiva, escreve exatamente o nome do jogador:\n"+deleteName);
+    if(typed!==deleteName){ if(typed!==null) alert("Nome diferente. O jogador não foi removido."); return; }
+    try{
+      await deletePlayerPermanently(Number(target.dataset.id));
+      return go("#/equipa");
+    }catch(error){ alert("Não foi possível remover definitivamente: "+error.message); return; }
   }
   if(action==="remote-logout"){
     await RemoteWorkspace.signOut();
