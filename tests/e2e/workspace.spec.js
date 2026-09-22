@@ -425,3 +425,25 @@ test("Planos sincroniza documentos remotos antes de renderizar", async ({ page }
   await expect(page.getByText("Relatório remoto de teste")).toBeVisible();
   expect(await page.evaluate(() => window.__remoteSyncCalls)).toBeGreaterThan(0);
 });
+
+
+test("sync remoto atualiza o ecrã aberto sem refresh manual", async ({ page }) => {
+  await page.goto("/#/equipa");
+  await expect(page.getByRole("heading", { name: /Equipa/i }).first()).toBeVisible();
+
+  await page.evaluate(async () => {
+    await DB.criar("jogadores", {
+      team_id: DEFAULT_TEAM_ID,
+      nome: "Jogador recebido do remoto",
+      escalao: "sub-8",
+      sync_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      sync_dirty: false,
+      remote_updated_at: "2026-09-22T00:00:00.000Z",
+    }, { remote: true });
+    window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", {
+      detail: { pulled: 1, pushed: 0, conflicts: [], deleted: 0 }
+    }));
+  });
+
+  await expect(page.getByText("Jogador recebido do remoto", { exact: true })).toBeVisible();
+});

@@ -14,6 +14,7 @@ const {
   remoteNeedsConflict,
   remoteProjectRef,
   remoteShouldUseTus,
+  remoteChooseTeamId,
   remoteRecordRow,
   remoteActivityRow,
 } = require("../js/remote_workspace.js");
@@ -130,4 +131,13 @@ test("atividade remota mantém autoria e entidade", () => {
 test("exercise é tipo remoto oficial sem confundir biblioteca legada", () => {
   assert.equal(REMOTE_STORE_KINDS.exercicios, "exercise");
   assert.equal(REMOTE_KIND_STORES.exercise, "exercicios");
+});
+
+
+test("seleção remota reutiliza equipa válida e adota a única equipa disponível", () => {
+  const teams = [{ id: "team-a" }];
+  assert.equal(remoteChooseTeamId("team-a", teams), "team-a");
+  assert.equal(remoteChooseTeamId(null, teams), "team-a");
+  assert.equal(remoteChooseTeamId("team-antiga", teams), "team-a");
+  assert.equal(remoteChooseTeamId(null, [{ id: "a" }, { id: "b" }]), null);
 });
