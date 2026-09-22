@@ -71,16 +71,17 @@
   <script src="js/remote_workspace.js"></script>
   <script src="js/mcp_connectors.js"></script>
   <script src="js/exercise_visuals.js"></script>
+  <script src="js/exercise_image_storage.js"></script>
   <script src="js/training_ui.js"></script>
   <script src="js/agent_contract.js"></script>
   <script src="js/app.js"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
-        const registration = await navigator.serviceWorker.register("sw.js?v=63");
+        const registration = await navigator.serviceWorker.register("sw.js?v=64");
         registration.update();
         navigator.serviceWorker.addEventListener("controllerchange", () => {
-          const key = "vision-sw-reloaded-v63";
+          const key = "vision-sw-reloaded-v64";
           if (sessionStorage.getItem(key)) return;
           sessionStorage.setItem(key, "1");
           location.reload();

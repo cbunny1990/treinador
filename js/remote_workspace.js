@@ -345,6 +345,7 @@ const RemoteWorkspace = {
     return true;
   },
   async signOut() {
+    await globalThis.VisionExerciseImageStorage?.clear();
     await this.stopRealtime();
     const client = await this.init();
     if (client) await client.auth.signOut();

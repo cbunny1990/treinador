@@ -28,6 +28,7 @@ function tuExerciseRef(exercise){
 
 async function tuExercises(){
   const rows = await DB.listar("exercicios");
+  await globalThis.VisionExerciseImageStorage?.resolve(rows);
   return TrainingPlanner.visionExercises(rows)
     .filter((x)=>(x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID)
     .sort((a,b)=>String(a.nome).localeCompare(String(b.nome),"pt-PT"));
@@ -68,6 +69,8 @@ function tuExerciseVisualSVG(exercise,compact){
 function tuExerciseVisualHTML(exercise,compact){
   const original=globalThis.VisionExerciseVisuals?.render(exercise,compact);
   if(original) return original;
+  if(exercise?.visual_removed) return "";
+  if(exercise?.visual_storage_path) return '<div class="notice">Imagem privada indisponível. Confirma a ligação à equipa e tenta novamente; o texto do exercício continua disponível.</div>';
   return '<div class="'+(compact?"exercise-visual-auto compact":"exercise-visual-auto")+'">'+tuExerciseVisualSVG(exercise,compact)+'</div>';
 }
 
@@ -117,6 +120,7 @@ async function viewExercise(id){
   const raw=await DB.obter("exercicios",id);
   if(!raw || !raw.workspace_v2) return go("#/exercicios");
   const e=TrainingPlanner.normalizeExercise(raw);
+  await globalThis.VisionExerciseImageStorage?.resolve([e]);
   const media=await HeadCoachMedia.listForSubject("exercise",id);
   let html='<section class="panel hero-main"><div class="row"><div class="grow"><div class="kicker">'+tuEsc(e.escalao+' · '+e.modelo)+'</div><h2 class="display" style="font-size:30px">'+tuEsc(e.nome)+'</h2></div><span class="badge '+(e.favorito?"ready":"")+'">'+(e.favorito?"Favorito":"Exercício")+'</span></div>';
   html+=tuExerciseVisualHTML(e,false);
