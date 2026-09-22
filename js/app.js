@@ -128,7 +128,9 @@ async function routeOnce(){
     if(root==="consulta"){
       return TrainingUI.viewTrainingConsultation(parts[1]||null,parts[2]||null);
     }
+    if(root==="sessao") return TrainingSessionUI.view(parts[1]);
     if(root==="treinos"){
+      if(parts[1] && parts[2]==="duplicar") return TrainingSessionUI.duplicateView(parts[1]);
       if(parts[1]==="novo" && parts[2]==="jogo" && parts[3]) return TrainingUI.viewTrainingForm(null,null,parts[3]);
       if(parts[1]==="novo") return TrainingUI.viewTrainingForm(null,parts[2]);
       if(parts[1] && parts[2]==="editar") return TrainingUI.viewTrainingForm(parts[1]);
@@ -187,6 +189,7 @@ if(document.readyState!=="loading") router();
 window.addEventListener("visioncoach:sync-complete",async function(){
   refreshRemoteIndicator();
   if(app.querySelector('form[data-form]')) return;
+  if(app.querySelector('[data-training-session], [data-session-duplicate]')) return;
   if(document.querySelector('#exercise-image-viewer[open]')) return;
   var scrollX=window.scrollX;
   var scrollY=window.scrollY;
@@ -393,6 +396,7 @@ async function viewPlayer(id){
   html+='<section class="panel hero-main"><div class="row">'+avatarHTML(player,64)+'<div class="grow"><div class="kicker">Jogador</div><h2 class="display" style="font-size:28px">'+esc(player.nome)+'</h2><p class="lead">'+esc([player.escalao,player.posicao,player.numero?'#'+player.numero:null].filter(Boolean).join(" · "))+'</p>'+playerBadge+'</div></div><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/jogador/'+id+'/editar">Editar</a><a class="btn" href="#/capturar/player/'+id+'">Registar observação</a><a class="btn secondary" href="#/media/novo/player/'+id+'">Adicionar media</a>'+rosterButton+deleteButton+'</div></section>';
   html+='<aside class="panel hero-side"><div class="metric-label">Contexto</div><div class="metric-value">'+memory.length+'</div><div class="metric-sub">registos na memória</div><div class="metric-value" style="margin-top:18px">'+media.length+'</div><div class="metric-sub">itens de media</div></aside></div>';
   html+='<section class="section"><div class="section-head"><div><h2>Últimas observações</h2><p>Contexto usado pelo workspace</p></div></div>'+obs+'</section>';
+  html+=await TrainingSessionUI.history(player);
   setView(player.nome,html,"Equipa");
 }
 

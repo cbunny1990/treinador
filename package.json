@@ -2,7 +2,7 @@
   "name": "treinador-pwa",
   "private": true,
   "scripts": {
-    "check": "node --check js/app.js && node --check js/db.js && node --check js/head_coach_memory.js && node --check js/head_coach_media.js && node --check js/workspace.js && node --check js/calendar.js && node --check js/player_status.js && node --check js/training_planner.js && node --check js/remote_workspace.js && node --check js/mcp_connectors.js && node --check js/training_ui.js && node --check js/agent_contract.js && node --check js/exercise_visuals.js && node --check js/exercise_image_storage.js && node --check scripts/publish-exercise-images.mjs && node --check supabase/functions/vision-coach-mcp/image_uploads.mjs",
+    "check": "node --check js/app.js && node --check js/db.js && node --check js/head_coach_memory.js && node --check js/head_coach_media.js && node --check js/workspace.js && node --check js/calendar.js && node --check js/player_status.js && node --check js/training_planner.js && node --check js/remote_workspace.js && node --check js/mcp_connectors.js && node --check js/training_ui.js && node --check js/agent_contract.js && node --check js/exercise_visuals.js && node --check js/exercise_image_storage.js && node --check scripts/publish-exercise-images.mjs && node --check supabase/functions/vision-coach-mcp/image_uploads.mjs && node --check js/training_session.js && node --check js/training_session_ui.js && node --check supabase/functions/vision-coach-mcp/training_sessions.mjs",
     "test": "node --test tests/*.test.js && node js/db.js",
     "test:e2e": "playwright test",
     "vendor:supabase": "esbuild node_modules/@supabase/supabase-js/dist/index.mjs --bundle --platform=browser --format=iife --global-name=SupabaseLib --minify --outfile=vendor/supabase.min.js",

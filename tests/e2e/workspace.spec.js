@@ -480,8 +480,9 @@ test("estado do jogador condiciona convocatória e saída do plantel preserva re
     if (dialog.type() === "prompt") await dialog.accept("Jogador Estado E2E");
     else await dialog.accept();
   });
-  await page.getByRole("button", { name: "Retirar definitivamente" }).click();
-  await expect(page.getByText("Jogador Estado E2E", { exact: true })).toHaveCount(0);
+  // Retirement preserves a record; permanent deletion is tested separately.
+  await page.getByRole("button", { name: "Retirar do plantel", exact: true }).click();
+  await expect.poll(() => page.evaluate(id => DB.obter("jogadores", id).then(p => p?.plantel_ativo), ids.playerId)).toBe(false);
 
   const stored = await page.evaluate(async ({ playerId, matchId, playerRef }) => {
     const player = await DB.obter("jogadores", playerId);

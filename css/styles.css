@@ -259,3 +259,24 @@ tr:last-child td{border-bottom:0}
 .image-viewer-scroll.original-size .image-viewer-image{max-width:none;max-height:none;margin:0;object-fit:initial}
 .image-viewer-help{font-size:12px;line-height:1.5;padding:10px 16px;padding-bottom:max(10px,env(safe-area-inset-bottom));border-top:1px solid var(--line)}
 @media(max-width:720px){.image-viewer-toolbar{padding-left:10px;padding-right:10px}.image-viewer-toolbar .toolbar{width:100%}.image-viewer-toolbar .btn{flex:1}.image-viewer-scroll{padding:4px}}
+
+/* Field session: touch-sized controls, no resizing of approved originals. */
+.session-attendance{padding:20px;margin-top:18px}
+.session-attendance summary{font-weight:800;font-size:16px;cursor:pointer;padding:8px 0}
+.session-attendee{display:grid;grid-template-columns:minmax(0,1fr) minmax(140px,220px);gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.session-attendee select{min-height:44px;font-size:14px}
+.session-clock{font-size:clamp(48px,14vw,80px);font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.04em;margin:18px 0 4px}
+[data-training-session] .btn{min-height:44px}
+[data-training-session] [hidden]{display:none!important}
+[data-session-note-form]{display:grid;gap:14px;margin-top:15px}
+.session-summary{display:grid;gap:16px;margin-top:18px}
+.session-summary article{padding:15px;border:1px solid var(--line);border-radius:12px}
+.session-summary p{font-size:13px;line-height:1.6;white-space:pre-wrap}
+.session-observation{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
+.session-observation small{display:block;color:var(--muted);margin-bottom:8px}
+.session-instructions{margin-top:20px;line-height:1.65}
+.session-instructions h3{margin-top:14px}
+.session-instructions ol{padding-left:22px}
+.session-instructions li{margin:8px 0}
+.session-reorder{margin-top:12px}
+@media(max-width:480px){.session-attendee{grid-template-columns:minmax(0,1fr) 155px}.session-active .toolbar .btn{flex:1 1 135px}}
