@@ -119,17 +119,29 @@ function tuTrainingBlocksForm(exercises,training,preselectedId){
   }).join("");
 }
 
-async function viewTrainingForm(id,preselectedId){
+async function viewTrainingForm(id,preselectedId,sourceMatchId){
   const team=await HeadCoachMemory.ensureTeam();
   const old=id?await DB.obter("treinos",id):null;
-  const training=TrainingPlanner.normalizeTraining(old||{data:today(),hora:"19:15",status:"draft"});
-  const exercises=await tuExercises();
   const matches=(await DB.porIndice("jogos","team_id",DEFAULT_TEAM_ID)).sort((a,b)=>String(b.data).localeCompare(String(a.data)));
+  const sourceMatch=!old&&sourceMatchId?matches.find((m)=>String(m.id)===String(sourceMatchId)):null;
+  const sourcePost=sourceMatch?VisionCalendar.normalizeMatch(sourceMatch).post_game:null;
+  const sourceObjective=sourcePost&&(sourcePost.melhorar||sourcePost.conclusoes)||"";
+  const sourceNotes=sourcePost&&Array.isArray(sourcePost.acoes_proximo_treino)&&sourcePost.acoes_proximo_treino.length
+    ? "Ações da análise:\n"+sourcePost.acoes_proximo_treino.map((x)=>"- "+x).join("\n")
+    : "";
+  const training=TrainingPlanner.normalizeTraining(old||{
+    data:today(),hora:"19:15",status:"draft",
+    objetivo:sourceObjective,
+    notas:sourceNotes,
+    source_match_ref:sourceMatch?tuMatchRef(sourceMatch):null
+  });
+  const exercises=await tuExercises();
   const matchOptions='<option value="">Sem ligação a jogo</option>'+matches.map((m)=>{
     const ref=tuMatchRef(m);
     return '<option value="'+tuEsc(ref)+'" '+(String(training.source_match_ref||"")===ref?"selected":"")+'> '+fmtDate(m.data)+' · '+tuEsc(m.adversario||"Jogo")+'</option>';
   }).join("");
   let html='<section class="panel hero-main"><form class="form" data-form="training-plan" data-id="'+(id||"")+'">';
+  if(sourceMatch) html+='<div class="notice">Treino criado a partir da análise do jogo de '+fmtDate(sourceMatch.data)+' vs '+tuEsc(sourceMatch.adversario||"adversário")+'. Ajusta objetivo, exercícios e duração antes de guardar.</div>';
   html+='<div class="form-grid"><label class="field"><span>Data</span><input type="date" name="data" required value="'+tuEsc(training.data||today())+'"></label><label class="field"><span>Hora</span><input type="time" name="hora" value="'+tuEsc(training.hora||"")+'"></label></div>';
   html+='<label class="field"><span>Objetivo da sessão</span><textarea name="objetivo">'+tuEsc(training.objetivo)+'</textarea></label>';
   html+='<div class="form-grid"><label class="field"><span>Local</span><input name="local" value="'+tuEsc(training.local||"")+'"></label><label class="field"><span>Origem / jogo relacionado</span><select name="source_match_ref">'+matchOptions+'</select></label></div>';
