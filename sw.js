@@ -1,5 +1,5 @@
 // Service worker - app shell offline.
-const CACHE = "vision-coach-v53";
+const CACHE = "vision-coach-v54";
 const ASSETS = [
   "./",
   "./index.html",
