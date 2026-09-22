@@ -306,16 +306,12 @@ async function viewTeam(){
   var retiredCards=retiredPlayers.length?retiredPlayers.map(function(p){
     return '<a class="card player-card" href="#/equipa/jogador/'+p.id+'">'+avatarHTML(p)+'<span class="grow"><span class="title">'+esc(p.nome)+'</span><span class="meta">Fora do plantel</span></span><span class="badge system">Retirado</span></a>';
   }).join(""):"";
-  var games=s.matches.slice().sort(function(a,b){return String(b.data).localeCompare(String(a.data));}).slice(0,8);
-  var gameRows=games.length?games.map(function(m){
-    return '<tr><td>'+fmtDate(m.data)+'</td><td><a class="link" href="#/equipa/jogo/'+m.id+'">'+esc(m.adversario||"Jogo")+'</a></td><td>'+esc(m.casa_fora==="fora"?"Fora":"Casa")+'</td><td>'+resultText(m)+'</td></tr>';
-  }).join(""):'<tr><td colspan="4">Sem jogos registados.</td></tr>';
   var html='<div class="profile-grid">';
   html+='<section class="panel hero-main"><div class="kicker">Perfil da equipa</div><h2 class="display" style="font-size:28px">'+esc(team.nome||"Equipa")+'</h2><p class="lead">'+esc([team.clube,team.escalao,team.epoca,team.competicao,team.formato].filter(Boolean).join(" · ")||"Completa os dados base da equipa.")+'</p><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/editar">Editar equipa</a><a class="btn" href="#/equipa/jogador/novo">Adicionar jogador</a></div></section>';
   html+='<section class="panel hero-side"><div class="metric-label">Modelo de trabalho</div><p class="lead">A equipa é a fonte factual do workspace. O agente deve ler estes dados, nunca inventá-los.</p><div class="notice" style="margin-top:14px">A ligação externa do agente ainda não está ativa. Esta estrutura já está preparada para autoria separada.</div></section></div>';
   html+='<section class="section"><div class="section-head"><div><h2>Plantel</h2><p>'+players.length+' jogador(es) · '+availableCount+' disponível(eis) · '+(players.length-availableCount)+' não disponível(eis)</p></div><a class="link" href="#/equipa/jogador/novo">Adicionar</a></div><div class="player-grid">'+playerCards+'</div></section>';
   if(retiredPlayers.length) html+='<section class="section"><div class="section-head"><div><h2>Fora do plantel</h2><p>'+retiredPlayers.length+' jogador(es) retirado(s)</p></div></div><div class="player-grid">'+retiredCards+'</div></section>';
-  html+='<section class="section"><div class="section-head"><div><h2>Jogos</h2><p>Calendário e resultados</p></div><a class="btn small" href="#/equipa/jogo/novo">Novo jogo</a></div><div class="table-wrap"><table><thead><tr><th>Data</th><th>Adversário</th><th>Local</th><th>Resultado</th></tr></thead><tbody>'+gameRows+'</tbody></table></div></section>';
+
   setView(team.nome||"Equipa",html,"Equipa");
 }
 
@@ -410,7 +406,7 @@ async function viewMatch(id){
   var lineupPlayers=called.size?availablePlayers.filter(function(p){return called.has(stablePlayerRef(p));}):availablePlayers;
   var keeperOptions='<option value="">Por definir</option>'+lineupPlayers.map(function(p){var ref=stablePlayerRef(p);return '<option value="'+esc(ref)+'" '+(String(match.lineup.goalkeeper_id||"")===ref?"selected":"")+'>'+esc(p.nome)+'</option>';}).join("");
   var context=memory.length?'<div class="list">'+memory.map(function(m){return '<div class="list-item"><div class="title">'+esc(m.title)+'</div><div class="body-copy">'+esc(m.content)+'</div></div>';}).join("")+'</div>':'<div class="empty">Ainda sem observações associadas.</div>';
-  var html='<div class="profile-grid"><section class="panel hero-main"><div class="kicker">'+esc(match.casa_fora==="fora"?"Fora":"Casa")+' · '+fmtDate(match.data)+(match.hora?' · '+esc(match.hora):'')+'</div><h2 class="display">'+esc(match.adversario)+'</h2><div class="metric-value" style="margin-top:18px">'+resultText(match)+'</div><p class="lead">'+esc(match.local||"Local por definir")+(match.hora_saida?' · saída '+esc(match.hora_saida):'')+'</p><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/jogo/'+id+'/editar">Editar dados</a><a class="btn" href="#/capturar/match/'+id+'">Observação</a><a class="btn secondary" href="#/media/novo/match/'+id+'">Media</a></div></section>';
+  var html='<div class="profile-grid"><section class="panel hero-main"><div class="kicker">'+esc(match.casa_fora==="fora"?"Fora":"Casa")+' · '+fmtDate(match.data)+(match.hora?' · '+esc(match.hora):'')+'</div><h2 class="display">'+esc(match.adversario)+'</h2><div class="metric-value" style="margin-top:18px">'+resultText(match)+'</div><p class="lead">'+esc(match.local||"Local por definir")+(match.hora_saida?' · saída '+esc(match.hora_saida):'')+'</p><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/jogo/'+id+'/editar">Editar dados</a><a class="btn" href="#/capturar/match/'+id+'">Observação</a><a class="btn secondary" href="#/media/novo/match/'+id+'">Media</a><button class="btn danger" type="button" data-action="delete-match" data-id="'+id+'" data-name="'+esc(match.adversario||"jogo")+'">Apagar jogo</button></div></section>';
   html+='<aside class="panel hero-side"><div class="metric-label">Preparação</div><div class="match-progress"><span class="'+(progress.pre_game?"done":"")+'">Plano</span><span class="'+(progress.callup?"done":"")+'">Convocados</span><span class="'+(progress.lineup?"done":"")+'">5v5</span><span class="'+(progress.post_game?"done":"")+'">Análise</span></div><div class="meta" style="margin-top:16px">'+memory.length+' observações · '+media.length+' media</div></aside></div>';
   html+='<div class="match-stage-nav"><button type="button" data-action="jump-match" data-target="match-before">Antes</button><button type="button" data-action="jump-match" data-target="match-during">Durante</button><button type="button" data-action="jump-match" data-target="match-after">Depois</button></div>';
   html+='<section class="section match-stage" id="match-before"><div class="section-head"><div><h2>Antes do jogo</h2><p>Plano, convocatória e alinhamento</p></div></div><div class="grid cols-2">';
@@ -475,7 +471,7 @@ async function viewDocument(id){
   }
   audit+='<span class="meta">· '+fmtDate(doc.updated_at)+'</span></div>';
   html+=audit;
-  html+='<div class="toolbar" style="margin-top:18px"><a class="btn" href="#/planos/'+id+'/editar">Editar</a><a class="btn secondary" href="#/media/novo/document/'+id+'">Associar media</a><button class="btn danger" data-action="archive-document" data-id="'+id+'">Arquivar</button></div></section>';
+  html+='<div class="toolbar" style="margin-top:18px"><a class="btn" href="#/planos/'+id+'/editar">Editar</a><a class="btn secondary" href="#/media/novo/document/'+id+'">Associar media</a><button class="btn danger" data-action="delete-document" data-id="'+id+'">Apagar</button></div></section>';
   html+='<section class="section"><div class="section-head"><div><h2>Media associado</h2><p>'+media.length+' item(ns)</p></div></div>'+renderMediaCards(media)+'</section>';
   setView(doc.title,html,"Planos");
 }
@@ -738,10 +734,20 @@ app.addEventListener("click",async function(event){
     if(section) section.scrollIntoView({behavior:"smooth",block:"start"});
     return;
   }
-  if(action==="archive-document"){
-    if(!confirm("Arquivar este documento?")) return;
-    await WorkspaceStore.archiveDocument(target.dataset.id,"human");
+  if(action==="delete-document"){
+    if(!confirm("Apagar este documento? Esta ação remove-o da lista e sincroniza a remoção.")) return;
+    await DB.apagar("workspace_documents",Number(target.dataset.id));
+    await logHuman("deleted_document","Apagou documento","document",target.dataset.id);
     return go("#/planos");
+  }
+  if(action==="delete-match"){
+    var matchId=Number(target.dataset.id);
+    var matchRow=await DB.obter("jogos",matchId);
+    if(!matchRow) return go("#/calendario");
+    if(!confirm("Apagar o jogo contra "+(matchRow.adversario||"este adversário")+"?")) return;
+    await DB.apagar("jogos",matchId);
+    await logHuman("deleted_match","Apagou jogo · "+(matchRow.adversario||"Jogo"),"match",matchRow.sync_id||matchId);
+    return go("#/calendario");
   }
   if(action==="delete-media"){
     if(!confirm("Remover este item de media?")) return;

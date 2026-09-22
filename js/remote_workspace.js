@@ -967,7 +967,29 @@ const RemoteWorkspace = {
       }
       result.pulled++;
     }
+    await this._refreshPlayerProfilePhotos();
     return result;
+  },
+
+  async _refreshPlayerProfilePhotos() {
+    const [players, media] = await Promise.all([
+      DB.porIndice("jogadores", "team_id", DEFAULT_TEAM_ID),
+      DB.porIndice("media_items", "team_id", DEFAULT_TEAM_ID),
+    ]);
+    const profilePhotos = media
+      .filter((item) =>
+        item.subject_type === "player" &&
+        item.type === "photo" &&
+        String(item.note || "").toLowerCase().includes("foto de perfil")
+      )
+      .sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || "")));
+
+    for (const player of players) {
+      const photo = profilePhotos.find((item) => String(item.subject_id) === String(player.id));
+      const nextPhoto = photo ? (photo.data_url || photo.url || null) : null;
+      if (!nextPhoto || player.foto === nextPhoto) continue;
+      await DB.atualizar("jogadores", { ...player, foto: nextPhoto }, { remote: true });
+    }
   },
 
   async _syncTombstones() {
