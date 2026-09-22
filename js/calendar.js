@@ -75,9 +75,9 @@ function visionCalendarEvents(snapshot, options) {
     type: "training", planned: false, date: vcIsoDate(t.data), time: t.hora || null,
     end_time: t.hora_fim || null, title: "Treino " + (t.escalao || ""), id: t.id, item: t,
   }));
-  const actualTrainingKeys = new Set(trainings.map((x) => x.date + "|" + (x.time || "")));
+  const actualTrainingDates = new Set(trainings.map((x) => x.date));
   const planned = visionPlannedTrainings(snapshot?.team, from, weeks)
-    .filter((x) => !actualTrainingKeys.has(x.date + "|" + (x.time || "")));
+    .filter((x) => !actualTrainingDates.has(x.date));
   return matches.concat(trainings, planned)
     .filter((x) => x.date && (!from || x.date >= from))
     .sort((a, b) => (a.date + "T" + (a.time || "99:99")).localeCompare(b.date + "T" + (b.time || "99:99")));
