@@ -66,3 +66,14 @@ Para uma IA que tenha uma lista de ferramentas antiga, renovar `tools/list`/reab
 - https://supabase.com/docs/reference/javascript/file-buckets-createsigneduploadurl
 - https://supabase.com/docs/reference/javascript/file-buckets-uploadtosignedurl
 - https://supabase.com/docs/reference/javascript/file-buckets-createsignedurls
+
+## Verificação desta entrega — 22/09/2026
+- 80 testes unitários passaram, incluindo 12 testes específicos do novo percurso.
+- 3 testes de navegador passaram: vistas de 390 px e 1440 px, cache offline, ampliação original, limpeza da cache e recusa de equipa errada. São testes em navegador, não observação nos aparelhos físicos do treinador.
+- O servidor de pré-validação efetuou um envio binário real para o Supabase, associou-o a um exercício temporário e voltou a descarregar exatamente os 1 754 859 bytes do PNG original de 1448 × 1086.
+- O SHA-256 foi igual antes e depois; repetir a operação devolveu `already_linked` sem criar outro exercício ou substituir bytes.
+- Acesso sem autenticação devolveu 401. O conector temporário de teste tem expiração e será revogado após a confirmação em produção.
+- Não foram alteradas as cinco imagens aprovadas do treino. A suíte geral de navegador tinha falhas anteriores a esta entrega; não se declara toda a aplicação isenta de erros.
+- O advisor do Supabase não indicou problemas de RLS nesta entrega; continua o aviso de configuração anterior sobre proteção de passwords comprometidas. Essa configuração de Auth não foi alterada.
+
+O deploy desta versão utiliza um import HTTPS de código deste repositório fixo num SHA de commit revisto, nunca numa branch mutável. A fonte completa e as dependências relativas ficam nesse commit, mesmo quando `get_edge_function` mostra apenas o pequeno entrypoint de import. A CLI Supabase também pode publicar diretamente a pasta `supabase/functions/vision-coach-mcp`, respeitando a autenticação própria já existente.
