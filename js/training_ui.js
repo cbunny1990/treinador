@@ -33,6 +33,43 @@ async function tuExercises(){
     .sort((a,b)=>String(a.nome).localeCompare(String(b.nome),"pt-PT"));
 }
 
+function tuVisualKind(exercise){
+  const text=[exercise?.nome,exercise?.objetivo,...(exercise?.tags||[])].join(" ").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+  if(text.includes("saida curta")||text.includes("guarda-redes")||text.includes("pressao")) return "build";
+  if(text.includes("jogo condicionado")||text.includes("acelerar")) return "conditioned";
+  if(text.includes("jogo livre")||text.includes("avaliacao")) return "free";
+  if(text.includes("terceiro homem")||text.includes("apoiar")) return "pass";
+  return "activation";
+}
+
+function tuExerciseVisualSVG(exercise,compact){
+  const kind=tuVisualKind(exercise);
+  const title=tuEsc(exercise?.nome||"Exercício");
+  const duration=Number(exercise?.duracao_total_min||exercise?.duracao_serie_min||0);
+  const space=tuEsc(exercise?.espaco||"Campo");
+  const player=(x,y,c,label)=>'<g><circle cx="'+x+'" cy="'+y+'" r="18" fill="'+c+'" stroke="#fff" stroke-width="4"/><circle cx="'+x+'" cy="'+(y-23)+'" r="8" fill="#f2c6a0"/>'+(label?'<text x="'+x+'" y="'+(y+5)+'" text-anchor="middle" fill="#fff" font-size="11" font-weight="800">'+label+'</text>':'')+'</g>';
+  const cone=(x,y)=>'<path d="M '+(x-8)+' '+(y+8)+' L '+x+' '+(y-10)+' L '+(x+8)+' '+(y+8)+' Z" fill="#f97316"/>';
+  const ball=(x,y)=>'<circle cx="'+x+'" cy="'+y+'" r="7" fill="#fff" stroke="#0f172a" stroke-width="2"/>';
+  const arrow=(x1,y1,x2,y2,dash)=>'<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" stroke="#fff" stroke-width="5" '+(dash?'stroke-dasharray="10 8"':'')+' marker-end="url(#arr)"/>';
+  let field='';
+  if(kind==="activation"){
+    field=cone(125,175)+cone(675,175)+cone(125,425)+cone(675,425)+player(160,210,"#2563eb")+player(640,210,"#dc2626")+player(160,390,"#16a34a")+player(640,390,"#eab308")+ball(185,220)+arrow(205,220,565,220,false)+arrow(615,245,615,350,true)+arrow(570,385,230,385,true);
+  }else if(kind==="pass"){
+    field=cone(150,410)+cone(650,410)+cone(400,165)+player(190,380,"#2563eb","A")+player(610,380,"#dc2626","B")+player(400,205,"#eab308","C")+ball(220,380)+arrow(235,380,555,380,false)+arrow(585,350,430,235,false)+arrow(215,350,360,235,true);
+  }else if(kind==="build"){
+    field='<rect x="70" y="130" width="330" height="330" fill="rgba(255,255,255,.08)"/><line x1="400" y1="130" x2="400" y2="460" stroke="#fff" stroke-width="4" stroke-dasharray="12 10"/><rect x="48" y="250" width="36" height="90" fill="none" stroke="#fff" stroke-width="5"/>'+player(120,295,"#16a34a","GR")+ball(145,300)+player(230,185,"#2563eb")+player(230,405,"#2563eb")+player(330,295,"#2563eb")+player(470,205,"#dc2626")+player(480,300,"#dc2626")+player(470,395,"#dc2626")+player(650,295,"#2563eb")+arrow(155,290,210,200,false)+arrow(155,310,210,395,false)+arrow(255,205,315,280,false)+arrow(350,295,620,295,true);
+  }else{
+    const zone=kind==="conditioned"?'<rect x="70" y="130" width="240" height="330" fill="rgba(255,255,255,.10)"/><line x1="310" y1="130" x2="310" y2="460" stroke="#fff" stroke-width="4" stroke-dasharray="12 10"/>':'';
+    field=zone+'<rect x="48" y="250" width="36" height="90" fill="none" stroke="#fff" stroke-width="5"/><rect x="716" y="250" width="36" height="90" fill="none" stroke="#fff" stroke-width="5"/>'+player(105,295,"#16a34a","GR")+player(215,190,"#2563eb")+player(215,400,"#2563eb")+player(365,235,"#2563eb")+player(380,365,"#2563eb")+player(685,295,"#eab308","GR")+player(560,185,"#dc2626")+player(560,405,"#dc2626")+player(455,225,"#dc2626")+player(455,370,"#dc2626")+ball(245,300)+arrow(130,295,195,205,false)+arrow(245,205,345,230,true)+arrow(395,245,535,195,true)+arrow(570,205,660,285,false);
+  }
+  return '<svg class="exercise-diagram-svg" viewBox="0 0 800 600" role="img" aria-label="Diagrama de '+title+'"><defs><marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#fff"/></marker></defs><rect width="800" height="600" rx="22" fill="#fff"/><rect x="0" y="0" width="800" height="82" rx="22" fill="#fff"/><rect x="28" y="18" width="54" height="54" rx="14" fill="#16a3a5"/><text x="55" y="55" text-anchor="middle" fill="#fff" font-size="28" font-weight="900">'+tuEsc(String(exercise?.visual_order||""))+'</text><text x="100" y="42" fill="#0f2744" font-size="'+(compact?18:22)+'" font-weight="900">'+title.slice(0,48)+'</text><text x="100" y="66" fill="#64748b" font-size="13">'+tuEsc(exercise?.escalao||"Sub-8")+' · '+duration+' min · '+space+'</text><rect x="40" y="105" width="720" height="380" rx="18" fill="#2f8f46"/><path d="M40 295 H760 M400 105 V485" stroke="rgba(255,255,255,.18)" stroke-width="2"/>'+field+'<rect x="40" y="505" width="720" height="70" rx="14" fill="#f8fafc"/><text x="60" y="532" fill="#0f2744" font-size="13" font-weight="900">OBJETIVO</text><text x="60" y="554" fill="#334155" font-size="12">'+tuEsc(String(exercise?.objetivo||"").slice(0,92))+'</text></svg>';
+}
+
+function tuExerciseVisualHTML(exercise,compact){
+  if(exercise?.visual_data_url) return '<img class="'+(compact?"exercise-visual-thumb-img":"exercise-visual-full")+'" loading="lazy" src="'+tuEsc(exercise.visual_data_url)+'" alt="Imagem do exercício '+tuEsc(exercise.nome)+'">';
+  return '<div class="'+(compact?"exercise-visual-auto compact":"exercise-visual-auto")+'">'+tuExerciseVisualSVG(exercise,compact)+'</div>';
+}
+
 function tuExerciseCard(exercise){
   const search = [
     exercise.nome, exercise.objetivo, exercise.escalao,
