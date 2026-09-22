@@ -1,4 +1,5 @@
 "use strict";
+let tuTrainingViewEpoch=0;
 
 function tuEsc(value){
   return String(value == null ? "" : value).replace(/[&<>"']/g,(ch)=>({
@@ -252,6 +253,7 @@ async function viewTrainings(){
 }
 
 async function viewTraining(id){
+  const viewEpoch=++tuTrainingViewEpoch;
   const raw=await DB.obter("treinos",id);
   if(!raw) return go("#/treinos");
   const t=TrainingPlanner.normalizeTraining(raw);
@@ -268,6 +270,7 @@ async function viewTraining(id){
   html+='<section class="section"><div class="section-head"><div><h2>Blocos</h2><p>Sequência da sessão</p></div></div><div class="list">'+blocks+'</div></section>';
   html+='<section class="section"><div class="section-head"><div><h2>Avaliação pós-treino</h2><p>Fecha o ciclo com o jogo que originou esta sessão</p></div></div><form class="panel match-form form" data-form="training-review" data-id="'+id+'" data-review-key="'+tuEsc(VisionTrainingContinuity.reviewKey(t.review))+'"><div class="form-grid"><label class="field"><span>O que melhorou</span><textarea name="melhorou">'+tuEsc(t.review.melhorou||"")+'</textarea></label><label class="field"><span>O que continua por corrigir</span><textarea name="continua">'+tuEsc(t.review.continua||"")+'</textarea></label></div><label class="field"><span>Conclusão</span><textarea name="conclusao">'+tuEsc(t.review.conclusao||"")+'</textarea></label><label class="field"><span>Próxima ação</span><textarea name="proxima_acao">'+tuEsc(t.review.proxima_acao||"")+'</textarea></label><label class="field"><span>Resultado do foco trabalhado</span><select name="focus_outcome">'+Object.entries(VisionTrainingContinuity.outcomes).map(([k,label])=>'<option value="'+k+'" '+((t.review.focus_outcome||'pending')===k?'selected':'')+'>'+tuEsc(label)+'</option>').join('')+'</select><small>Assinalado por ti; não é inferido das presenças ou do resultado do jogo.</small></label><p class="notice" data-review-feedback role="status" hidden></p><div class="toolbar"><button class="btn accent" type="submit">Guardar avaliação</button><button class="btn danger" type="button" data-action="clear-training-review" data-id="'+id+'">Apagar avaliação</button>'+(linked?'<a class="btn secondary" href="#/equipa/jogo/'+linked.id+'">Voltar ao jogo de origem</a>':'')+'</div></form></section>';
   html+=await TrainingContinuityUI.summary(t);
+  if(viewEpoch!==tuTrainingViewEpoch || location.hash!=="#/treinos/"+id)return;
   setView("Treino · "+fmtDate(t.data),html,"Planos");
 }
 

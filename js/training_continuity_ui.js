@@ -25,7 +25,7 @@
   }
   async function view(id){
     const token=++turn,training=await DB.obter('treinos',id);if(!training)return setView('Continuidade indisponível','<div class="notice">O treino não está disponível.</div>','Treino');
-    const all=await tuExercises(),rows=await DB.porIndice('treinos','team_id',DEFAULT_TEAM_ID);if(token!==turn||!location.hash.startsWith('#/continuidade/'))return;
+    const all=await tuExercises(),rows=await DB.porIndice('treinos','team_id',DEFAULT_TEAM_ID);if(token!==turn||location.hash!=='#/continuidade/'+id)return;
     const s=C.state(training),p=s.proposal,target=p&&rows.find(t=>t.sync_id===p.target_ref),progress=C.progress(training,target);current={id:training.id,revision:s.revision,review_key:C.reviewKey(training.review)};
     let html='<div data-training-continuity><section class="panel hero-main"><div class="kicker">Treino · '+fmtDate(training.data)+'</div><h2>Do que observámos ao próximo treino</h2><p class="lead">Uma proposta não é um treino aprovado. Revê o foco, os exercícios e o critério de avaliação antes de criar a sessão.</p><a class="link" href="#/treinos/'+id+'">Voltar ao treino e à avaliação</a><p class="notice" data-continuity-feedback role="alert" hidden></p><p class="hint">'+(!navigator.onLine?'Offline · alterações guardadas localmente e pendentes de envio.':training.sync_dirty?'Existem alterações locais pendentes de sincronização.':'Sem alterações locais pendentes.')+'</p></section>';
     html+='<section class="panel hero-main section"><h3>O que está registado</h3>'+(C.evidence(training).length?evidenceHTML(C.evidence(training)):'<p class="empty">Ainda não existe uma avaliação com conteúdo. Não será inventado um foco.</p>')+'</section>';
@@ -44,7 +44,7 @@
   async function run(operation,args={}){
     if(!current||busy)return;busy=true;const id=current.id;
     document.querySelectorAll('[data-continuity-action], [data-continuity-form] [type="submit"]').forEach(b=>b.disabled=true);
-    try{const result=await Store.commit(id,operation,{expected_revision:current.revision,...args});try{await logHuman('training_continuity_'+operation,'Atualizou continuidade de treino','training',id);}catch(_){};await view(id);if(operation==='save_proposal')error('Proposta guardada. Podes agora aprovar.');return result;}
+    try{const result=await Store.commit(id,operation,{expected_revision:current.revision,...args});try{await logHuman('training_continuity_'+operation,'Atualizou continuidade de treino','training',id);}catch(_){};if(location.hash!=='#/continuidade/'+id)return result;await view(id);if(operation==='save_proposal')error('Proposta guardada. Podes agora aprovar.');return result;}
     catch(err){error(err.message);document.querySelectorAll('[data-continuity-action], [data-continuity-form] [type="submit"]').forEach(b=>b.disabled=false);}finally{busy=false;}
   }
   document.addEventListener('input',event=>{const form=event.target.closest('[data-continuity-form]');if(form)form.dataset.dirty='true';});

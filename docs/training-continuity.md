@@ -55,7 +55,7 @@ Um pedido de desenvolvimento da app não autoriza aprovar uma sessão real. Nunc
 O guia de imagens continua em `docs/ai-image-workflow.md`; originais e carregamento não são alterados por esta fase.
 
 ## Validação
-Passaram 124 testes unitários e 31 testes de navegador durante o desenvolvimento, incluindo 390 × 844 e 1440 × 900.
+Passaram 124 testes unitários e 32 testes de navegador durante o desenvolvimento, incluindo 390 × 844 e 1440 × 900.
 Cobertura: memória única, evidências exatas, identidade determinística, aprovação explícita, revisões antigas, concorrência, não ressurreição, preservação de texto e arquivo da avaliação.
 Testes transacionais PostgreSQL com rollback confirmaram a negação de acesso público à RPC, recusa de versão antiga, reversão integral de uma falha após tentativa de criar o treino e memória única. Esses testes não gravaram dados de treino de forma persistente.
 Emulação de ecrã móvel não constitui teste no telemóvel físico do treinador.
@@ -63,3 +63,6 @@ Emulação de ecrã móvel não constitui teste no telemóvel físico do treinad
 ## Referências técnicas
 https://supabase.com/docs/guides/database/functions
 https://www.postgresql.org/docs/current/explicit-locking.html
+
+A validação de CI detetou uma corrida de navegação após guardar uma avaliação. A ficha agora rejeita uma renderização tardia quando o treinador já mudou para a continuidade; um teste determinístico protege esse caso.
+O fluxo MCP foi também exercitado no endpoint de pré-validação com registos técnicos temporários: avaliação parcial preservada, rascunho sem criação de sessão, confirmação explícita, criação atómica e repetição sem duplicação. O acesso sem autenticação devolveu 401.
