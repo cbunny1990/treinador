@@ -85,6 +85,7 @@ function remotePayload(row) {
   ]) {
     delete payload[key];
   }
+  if (String(payload.foto || "").startsWith("data:")) delete payload.foto;
   return payload;
 }
 function remoteFreshLocalRecord(row) {
