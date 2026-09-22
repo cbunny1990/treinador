@@ -75,7 +75,16 @@
   <script src="js/app.js"></script>
   <script>
     if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => navigator.serviceWorker.register("sw.js"));
+      window.addEventListener("load", async () => {
+        const registration = await navigator.serviceWorker.register("sw.js?v=51");
+        registration.update();
+        navigator.serviceWorker.addEventListener("controllerchange", () => {
+          const key = "vision-sw-reloaded-v51";
+          if (sessionStorage.getItem(key)) return;
+          sessionStorage.setItem(key, "1");
+          location.reload();
+        });
+      });
     }
     const badge = document.getElementById("badge-off");
     const syncNetworkBadge = () => { badge.hidden = navigator.onLine; };
