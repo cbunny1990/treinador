@@ -204,7 +204,15 @@ RemoteWorkspace.init().then(function(client){
   client.auth.onAuthStateChange(function(event,session){
     refreshRemoteIndicator();
     if(session && (event==="SIGNED_IN" || event==="INITIAL_SESSION" || event==="TOKEN_REFRESHED")){
-      setTimeout(function(){ RemoteWorkspace.scheduleSync(0); },0);
+      setTimeout(async function(){
+        try{
+          var consolidated=await RemoteWorkspace.consolidateIfNeeded();
+          if(!consolidated) RemoteWorkspace.scheduleSync(0);
+        }catch(error){
+          console.warn("Consolidação automática adiada:",error.message);
+          RemoteWorkspace.scheduleSync(250);
+        }
+      },0);
     }
     if(event==="SIGNED_IN" && session && new URLSearchParams(location.search).get("auth")==="1"){
       history.replaceState(null,"",location.pathname+"#/definicoes");
@@ -580,7 +588,8 @@ function remoteAccountHTML(status,teams,options){
   html+='<button class="btn secondary" type="button" data-action="remote-create-team">Criar a partir desta equipa</button>';
   if(status.remoteTeamId){
     html+='<div class="row" style="margin:4px 0 8px"><span class="badge ready">Sync automático</span><span class="meta">Este dispositivo usa o workspace remoto partilhado.</span></div>';
-    html+='<button class="btn accent" type="button" data-action="remote-sync">Sincronizar agora</button>';
+    html+='<div class="toolbar"><button class="btn accent" type="button" data-action="remote-sync">Sincronizar agora</button><button class="btn secondary" type="button" data-action="remote-consolidate">Consolidar dispositivos</button></div>';
+    html+='<div class="hint">Consolidar faz uma união segura dos dados locais deste dispositivo com o workspace remoto, sem apagar conteúdo durante a reconciliação.</div>';
     html+='<div class="hint">ID remoto: '+esc(status.remoteTeamId)+'</div>';
     if(status.lastSyncAt) html+='<div class="hint">Última sincronização: '+esc(new Date(status.lastSyncAt).toLocaleString("pt-PT"))+'</div>';
     if(status.conflicts&&status.conflicts.length) html+='<div class="notice" style="margin-top:12px">'+status.conflicts.length+' conflito(s) aguardam revisão. Nenhum dado foi sobrescrito.</div>';
@@ -817,6 +826,17 @@ app.addEventListener("click",async function(event){
     if(!select?.value){ alert("Escolhe uma equipa remota."); return; }
     await RemoteWorkspace.useTeam(select.value);
     return router();
+  }
+  if(action==="remote-consolidate"){
+    target.disabled=true;
+    try{
+      var consolidateResult=await RemoteWorkspace.consolidateNow();
+      var consolidateMsg="Consolidação concluída: "+consolidateResult.repaired+" registo(s) local(is) reparado(s), "+consolidateResult.pushed+" enviados e "+consolidateResult.pulled+" recebidos.";
+      if(consolidateResult.conflicts.length) consolidateMsg+=" "+consolidateResult.conflicts.length+" conflito(s) ficaram preservados para revisão.";
+      alert(consolidateMsg);
+      return router();
+    }catch(error){ alert("Consolidação falhou: "+error.message); return; }
+    finally{ target.disabled=false; }
   }
   if(action==="remote-sync"){
     target.disabled=true;

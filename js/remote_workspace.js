@@ -1050,6 +1050,84 @@ const RemoteWorkspace = {
     return result;
   },
 
+  async consolidateNow() {
+    if (!navigator.onLine) throw new Error("Sem ligação à Internet.");
+    const client = await this.init();
+    const session = await this.getSession();
+    const remoteTeamId = await this.ensureSelectedTeam();
+    if (!client || !session || !remoteTeamId) throw new Error("Liga primeiro o workspace remoto.");
+
+    const remoteRecordsRes = await client.from("workspace_records")
+      .select("id,kind,deleted_at").eq("team_id", remoteTeamId);
+    if (remoteRecordsRes.error) throw remoteRecordsRes.error;
+    const remoteRecordIds = new Set((remoteRecordsRes.data || []).map((x) => x.id));
+
+    let repaired = 0;
+    for (const store of Object.keys(REMOTE_STORE_KINDS)) {
+      const rows = (await DB.listar(store))
+        .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID)
+        .filter((x) => store !== "exercicios" || x.workspace_v2 || x.sync_id);
+      for (const original of rows) {
+        let local = original;
+        if (!local.sync_id) {
+          local = await this._ensureSyncId(store, local);
+          repaired++;
+          continue;
+        }
+        if (!remoteRecordIds.has(local.sync_id)) {
+          await DB.atualizar(store, {
+            ...local,
+            sync_dirty: true,
+            sync_local_updated_at: new Date().toISOString(),
+          }, { remote: true });
+          repaired++;
+        }
+      }
+    }
+
+    const remoteMediaRes = await client.from("media_assets")
+      .select("id,deleted_at").eq("team_id", remoteTeamId);
+    if (remoteMediaRes.error) throw remoteMediaRes.error;
+    const remoteMediaIds = new Set((remoteMediaRes.data || []).map((x) => x.id));
+    const mediaRows = (await DB.listar("media_items"))
+      .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID);
+    for (const original of mediaRows) {
+      let local = original;
+      if (!local.sync_id) {
+        local = await this._ensureSyncId("media_items", local);
+        repaired++;
+        continue;
+      }
+      if (!remoteMediaIds.has(local.sync_id)) {
+        await DB.atualizar("media_items", {
+          ...local,
+          sync_dirty: true,
+          sync_local_updated_at: new Date().toISOString(),
+        }, { remote: true });
+        repaired++;
+      }
+    }
+
+    const first = await this.syncNow();
+    const second = await this.syncNow();
+    const result = {
+      repaired,
+      pushed: (first.pushed || 0) + (second.pushed || 0),
+      pulled: (first.pulled || 0) + (second.pulled || 0),
+      deleted: (first.deleted || 0) + (second.deleted || 0),
+      conflicts: [...(first.conflicts || []), ...(second.conflicts || [])],
+    };
+    localStorage.setItem("treinador.workspace.consolidated.v1", new Date().toISOString());
+    return result;
+  },
+
+  async consolidateIfNeeded() {
+    if (localStorage.getItem("treinador.workspace.consolidated.v1")) return null;
+    const status = await this.status();
+    if (!navigator.onLine || !status.signedIn || !status.remoteTeamId) return null;
+    return this.consolidateNow();
+  },
+
   async syncNow() {
     if (!navigator.onLine) throw new Error("Sem ligação à Internet.");
     let config = remoteLoadConfig();
