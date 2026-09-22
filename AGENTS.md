@@ -28,3 +28,6 @@ Preserva as revisões, UUIDs dos atletas, plano original e registo realizado. A 
 
 ## Continuidade de treino
 Lê `docs/training-continuity.md`. Usa as sete operações MCP com versões atuais; não escreve diretamente várias linhas para simular uma aprovação. Distingue registos do treinador, propostas e resultados assinalados. Nunca marca uma melhoria por inferência.
+
+## Jogo visual e utilização
+Lê `docs/match-visual.md`. Usa o jogo existente e UUIDs estáveis. Planear uma rotação não executa a substituição. Só inicia cronómetros ou regista entradas/saídas mediante pedido explícito; nunca atribui minutos por inferência. Preserva convocatória/alinhamento iniciais e usa movimentos para mudanças em jogo.

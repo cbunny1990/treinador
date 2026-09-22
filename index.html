@@ -66,6 +66,8 @@
   <script src="js/head_coach_media.js"></script>
   <script src="js/workspace.js"></script>
   <script src="js/calendar.js"></script>
+  <script src="js/match_visual.js"></script>
+  <script src="js/match_visual_ui.js"></script>
   <script src="js/player_status.js"></script>
   <script src="js/training_planner.js"></script>
   <script src="js/training_session.js"></script>
@@ -84,15 +86,15 @@
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
         let hadController = !!navigator.serviceWorker.controller;
-        const registration = await navigator.serviceWorker.register("sw.js?v=66").catch(() => null);
+        const registration = await navigator.serviceWorker.register("sw.js?v=67").catch(() => null);
         if(!registration) return;
         registration.update().catch(() => {});
         navigator.serviceWorker.addEventListener("controllerchange", () => {
           if(!hadController){hadController=true;return;}
-          if(document.querySelector('form, [data-training-session]')){
+          if(document.querySelector('form, [data-training-session], [data-match-visual]')){
             const notice=document.createElement('p');notice.className='notice';notice.textContent='Atualização disponível. Guarda o que estás a fazer e reabre a app para atualizar.';document.body.appendChild(notice);return;
           }
-          const key = "vision-sw-reloaded-v66";
+          const key = "vision-sw-reloaded-v67";
           if (sessionStorage.getItem(key)) return;
           sessionStorage.setItem(key, "1");
           location.reload();
