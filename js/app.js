@@ -338,6 +338,8 @@ async function viewPlayerForm(id){
   html+='<div class="form-grid"><label class="field"><span>Nome</span><input name="nome" required value="'+esc(player&&player.nome)+'"></label><label class="field"><span>Número</span><input type="number" name="numero" min="1" value="'+esc(player&&player.numero!=null?player.numero:"")+'"></label></div>';
   html+='<div class="form-grid"><label class="field"><span>Escalão</span><select name="escalao">'+opts+'</select></label><label class="field"><span>Posição</span><input name="posicao" value="'+esc(player&&player.posicao)+'"></label></div>';
   html+='<label class="field"><span>Disponibilidade</span><select name="estado_disponibilidade">'+statusOpts+'</select><small>Usa apenas o estado operacional. Não registes diagnósticos médicos.</small></label>';
+  html+='<label class="field"><span>Foto do atleta</span><input name="foto_file" type="file" accept="image/*"><small>Podes escolher uma fotografia da galeria ou tirar uma nova no telemóvel.</small></label>';
+  if(player&&player.foto) html+='<div class="row" style="margin-bottom:12px">'+avatarHTML(player,72)+'<span class="meta">Foto atual</span></div>';
   html+='<label class="field"><span>Notas factuais</span><textarea name="notas">'+esc(player&&player.notas)+'</textarea></label>';
   html+='<div class="toolbar"><button class="btn accent" type="submit">Guardar</button><a class="btn secondary" href="'+(id?'#/equipa/jogador/'+id:'#/equipa')+'">Cancelar</a></div></form></section>';
   setView(id?"Editar jogador":"Novo jogador",html,"Equipa");
@@ -895,6 +897,39 @@ app.addEventListener("submit",async function(event){
       notas:fd.get("notas")||null
     });
     var savedPlayer=await DB.obter("jogadores",playerId);
+    var photoFile=fd.get("foto_file");
+    if(photoFile&&photoFile.size){
+      if(!String(photoFile.type||"").startsWith("image/")){
+        alert("Escolhe um ficheiro de imagem para a foto do atleta.");
+        return;
+      }
+      var localPhoto=await fileToDataURL(photoFile,5*1024*1024);
+      await DB.atualizar("jogadores",Object.assign({},savedPlayer,{foto:localPhoto}));
+      savedPlayer=await DB.obter("jogadores",playerId);
+      if(await RemoteWorkspace.canUpload()){
+        await RemoteWorkspace.uploadFileMedia(photoFile,{
+          subject_type:"player",
+          subject_id:playerId,
+          type:"photo",
+          title:"Foto · "+fd.get("nome"),
+          note:"Foto de perfil do atleta"
+        });
+      }else{
+        await HeadCoachMedia.create({
+          team_id:DEFAULT_TEAM_ID,
+          subject_type:"player",
+          subject_id:playerId,
+          type:"photo",
+          title:"Foto · "+fd.get("nome"),
+          data_url:localPhoto,
+          file_name:photoFile.name||null,
+          mime_type:photoFile.type||null,
+          size:photoFile.size,
+          note:"Foto de perfil do atleta"
+        });
+      }
+      await logHuman("updated_player_photo","Atualizou foto do atleta · "+fd.get("nome"),"player",savedPlayer.sync_id||playerId);
+    }
     if(id&&previousPlayer&&PlayerStatus.normalize(previousPlayer.estado_disponibilidade)!==nextAvailability){
       if(nextAvailability!=="disponivel") await removePlayerFromOpenMatches(savedPlayer);
       await logHuman("updated_player_availability","Alterou disponibilidade · "+fd.get("nome")+" · "+PlayerStatus.label(nextAvailability),"player",savedPlayer.sync_id||playerId);
