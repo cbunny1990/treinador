@@ -223,6 +223,8 @@ function remoteActivityRow(local, teamId, userId) {
 const RemoteWorkspace = {
   _client: null,
   _syncTimer: null,
+  _realtimeChannel: null,
+  _realtimeTeamId: null,
 
   scheduleSync(delay = 1400) {
     clearTimeout(this._syncTimer);
@@ -236,6 +238,40 @@ const RemoteWorkspace = {
         console.warn("Remote sync adiado:", error.message);
       }
     }, delay);
+  },
+
+  async startRealtime(teamId) {
+    const client = await this.init();
+    if (!client || !teamId) return null;
+    if (this._realtimeChannel && this._realtimeTeamId === teamId) return this._realtimeChannel;
+    if (this._realtimeChannel) {
+      try { await client.removeChannel(this._realtimeChannel); } catch (_) {}
+      this._realtimeChannel = null;
+      this._realtimeTeamId = null;
+    }
+    const schedule = () => this.scheduleSync(120);
+    const channel = client
+      .channel("vision-coach-" + teamId)
+      .on("postgres_changes", { event:"*", schema:"public", table:"workspace_records", filter:"team_id=eq." + teamId }, schedule)
+      .on("postgres_changes", { event:"*", schema:"public", table:"media_assets", filter:"team_id=eq." + teamId }, schedule)
+      .on("postgres_changes", { event:"*", schema:"public", table:"teams", filter:"id=eq." + teamId }, schedule)
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") this.scheduleSync(0);
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.warn("Realtime Vision Coach:", status);
+        }
+      });
+    this._realtimeChannel = channel;
+    this._realtimeTeamId = teamId;
+    return channel;
+  },
+  async stopRealtime() {
+    const client = await this.init();
+    if (client && this._realtimeChannel) {
+      try { await client.removeChannel(this._realtimeChannel); } catch (_) {}
+    }
+    this._realtimeChannel = null;
+    this._realtimeTeamId = null;
   },
 
   getConfig() {
@@ -309,6 +345,7 @@ const RemoteWorkspace = {
     return true;
   },
   async signOut() {
+    await this.stopRealtime();
     const client = await this.init();
     if (client) await client.auth.signOut();
   },
@@ -331,6 +368,7 @@ const RemoteWorkspace = {
     if ((config.remoteTeamId || null) !== selected) {
       remoteSaveConfig({ ...config, remoteTeamId: selected });
     }
+    if (selected) await this.startRealtime(selected);
     return selected;
   },
 
