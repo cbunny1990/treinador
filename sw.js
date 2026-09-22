@@ -1,5 +1,5 @@
 // Service worker - app shell offline.
-const CACHE = "vision-coach-v62";
+const CACHE = "vision-coach-v63";
 const ASSETS = [
   "./",
   "./index.html",
@@ -15,12 +15,18 @@ const ASSETS = [
   "./js/training_planner.js",
   "./js/remote_workspace.js",
   "./js/mcp_connectors.js",
+  "./js/exercise_visuals.js",
   "./js/training_ui.js",
   "./js/agent_contract.js",
   "./js/app.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
-  "./icons/icon-512.png"
+  "./icons/icon-512.png",
+  "./assets/exercises/approved-20260922/01_ativacao_conduzir_passar_dar_opcao.png",
+  "./assets/exercises/approved-20260922/02_passar_apoiar_terceiro_homem.png",
+  "./assets/exercises/approved-20260922/03_saida_curta_gr_3_vs_3.png",
+  "./assets/exercises/approved-20260922/04_jogo_condicionado_sair_acelerar.png",
+  "./assets/exercises/approved-20260922/05_jogo_livre_observar_saida.png"
 ];
 
 self.addEventListener("install", (event) => {
@@ -37,6 +43,16 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  const url=new URL(event.request.url);
+  if(url.origin===self.location.origin&&url.pathname.includes("/assets/exercises/approved-20260922/")){
+    event.respondWith(caches.open(CACHE).then(async(cache)=>{
+      const saved=await cache.match(event.request);if(saved) return saved;
+      const response=await fetch(event.request);
+      if(response.ok) await cache.put(event.request,response.clone());
+      return response;
+    }));
+    return;
+  }
   event.respondWith(
     fetch(event.request, { cache: "no-store" }).then((response) => {
       const copy = response.clone();

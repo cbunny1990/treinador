@@ -66,7 +66,8 @@ function tuExerciseVisualSVG(exercise,compact){
 }
 
 function tuExerciseVisualHTML(exercise,compact){
-  if(exercise?.visual_data_url) return '<img class="'+(compact?"exercise-visual-thumb-img":"exercise-visual-full")+'" loading="lazy" src="'+tuEsc(exercise.visual_data_url)+'" alt="Imagem do exercício '+tuEsc(exercise.nome)+'">';
+  const original=globalThis.VisionExerciseVisuals?.render(exercise,compact);
+  if(original) return original;
   return '<div class="'+(compact?"exercise-visual-auto compact":"exercise-visual-auto")+'">'+tuExerciseVisualSVG(exercise,compact)+'</div>';
 }
 
