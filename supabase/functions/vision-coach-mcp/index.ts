@@ -68,6 +68,13 @@ function requireScope(connector: any, scope: string) {
   }
 }
 
+function normalizePlayerAvailability(value: unknown) {
+  const status = String(value || "disponivel").trim().toLowerCase();
+  const allowed = new Set(["disponivel","indisponivel","lesionado","castigado","ausente"]);
+  if (!allowed.has(status)) throw new Error("invalid_player_availability");
+  return status;
+}
+
 const TOOLS = [
   {
     name: "workspace_summary",
@@ -86,6 +93,20 @@ const TOOLS = [
         limit: { type: "integer", minimum: 1, maximum: 50 },
       },
       required: ["query"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false },
+  },
+  {
+    name: "list_players",
+    description: "Lista o plantel atual e o estado operacional de disponibilidade de cada jogador. Não devolve diagnósticos médicos.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        availability: { type: "string", enum: ["disponivel","indisponivel","lesionado","castigado","ausente"] },
+        include_retired: { type: "boolean", default: false },
+        limit: { type: "integer", minimum: 1, maximum: 100 },
+      },
       additionalProperties: false,
     },
     annotations: { readOnlyHint: true, destructiveHint: false },
@@ -139,6 +160,21 @@ const TOOLS = [
       additionalProperties: false,
     },
     annotations: { readOnlyHint: true, destructiveHint: false },
+  },
+  {
+    name: "update_player_availability",
+    description: "Altera apenas o estado operacional de disponibilidade de um jogador do plantel. Não regista diagnósticos médicos.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "UUID remoto do jogador." },
+        external_key: { type: "string" },
+        availability: { type: "string", enum: ["disponivel","indisponivel","lesionado","castigado","ausente"] },
+      },
+      required: ["availability"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
     name: "create_exercise",
@@ -310,6 +346,36 @@ async function executeTool(admin: any, connector: any, name: string, args: any, 
       .slice(0, limit);
   }
 
+  if (name === "list_players") {
+    requireScope(connector, "read");
+    const limit = clampLimit(args?.limit, 50, 100);
+    const requested = args?.availability ? normalizePlayerAvailability(args.availability) : null;
+    const { data, error } = await admin.from("workspace_records")
+      .select("id,payload,actor_type,actor_label,updated_at")
+      .eq("team_id", teamId).eq("kind", "player").is("deleted_at", null);
+    if (error) throw error;
+    return (data || [])
+      .filter((row: any) => args?.include_retired || row.payload?.plantel_ativo !== false)
+      .filter((row: any) => !requested || normalizePlayerAvailability(row.payload?.estado_disponibilidade) === requested)
+      .sort((a: any,b: any) => String(a.payload?.nome || "").localeCompare(String(b.payload?.nome || "")))
+      .slice(0, limit)
+      .map((row: any) => ({
+        id: row.id,
+        updated_at: row.updated_at,
+        actor_type: row.actor_type,
+        actor_label: row.actor_label,
+        player: {
+          nome: row.payload?.nome || null,
+          numero: row.payload?.numero ?? null,
+          escalao: row.payload?.escalao || null,
+          posicao: row.payload?.posicao || null,
+          estado_disponibilidade: normalizePlayerAvailability(row.payload?.estado_disponibilidade),
+          plantel_ativo: row.payload?.plantel_ativo !== false,
+          external_key: row.payload?.external_key || null,
+        },
+      }));
+  }
+
   if (name === "list_matches") {
     requireScope(connector, "read");
     const limit = clampLimit(args?.limit, 20, 50);
@@ -354,6 +420,29 @@ async function executeTool(admin: any, connector: any, name: string, args: any, 
     return (data || []).sort((a: any,b: any) =>
       String(b.payload?.data || "").localeCompare(String(a.payload?.data || ""))
     ).slice(0, limit);
+  }
+
+  if (name === "update_player_availability") {
+    requireScope(connector, "write");
+    const availability = normalizePlayerAvailability(args?.availability);
+    const existing = await findRecord(admin, teamId, "player", args);
+    if (!existing) throw new Error("player_not_found");
+    if (existing.payload?.plantel_ativo === false) throw new Error("player_not_in_roster");
+    const payload = {
+      ...(existing.payload || {}),
+      estado_disponibilidade: availability,
+    };
+    const record = await putRecord(admin, teamId, "player", payload, existing,
+      "mcp:" + connector.id + ":player-availability:" + existing.id + ":" + availability);
+    return {
+      updated: true,
+      player: {
+        id: existing.id,
+        nome: payload.nome || null,
+        estado_disponibilidade: availability,
+      },
+      record,
+    };
   }
 
   if (name === "create_exercise") {

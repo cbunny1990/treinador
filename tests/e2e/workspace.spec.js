@@ -447,3 +447,54 @@ test("sync remoto atualiza o ecrã aberto sem refresh manual", async ({ page }) 
 
   await expect(page.getByText("Jogador recebido do remoto", { exact: true })).toBeVisible();
 });
+
+test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {
+  await page.goto("/#/equipa/jogador/novo");
+  await page.getByLabel("Nome").fill("Jogador Estado E2E");
+  await page.getByLabel("Disponibilidade").selectOption("lesionado");
+  await page.getByRole("button", { name: "Guardar", exact: true }).click();
+
+  await expect(page.getByText("Lesionado", { exact: true })).toBeVisible();
+
+  const ids = await page.evaluate(async () => {
+    const player = (await DB.listar("jogadores")).find((row) => row.nome === "Jogador Estado E2E");
+    const ref = stablePlayerRef(player);
+    const matchId = await DB.criar("jogos", {
+      team_id: DEFAULT_TEAM_ID,
+      data: "2026-10-20",
+      adversario: "Adversário E2E",
+      estado: "agendado",
+      callup: { status: "ready", player_ids: [ref], notes: null },
+      lineup: { status: "draft", system: "1-2-1", goalkeeper_id: null, starters: [], substitutes: [ref] },
+    });
+    return { playerId: player.id, playerRef: ref, matchId };
+  });
+
+  await page.goto("/#/equipa/jogo/" + ids.matchId);
+  await expect(page.getByText("Lesionado · não convocável", { exact: true })).toBeVisible();
+  await expect(page.locator('input[name="player_ids"][disabled]')).toHaveCount(1);
+  await expect(page.getByText(/deixaram de estar disponíveis/)).toBeVisible();
+
+  await page.goto("/#/equipa/jogador/" + ids.playerId);
+  page.on("dialog", async (dialog) => {
+    if (dialog.type() === "prompt") await dialog.accept("Jogador Estado E2E");
+    else await dialog.accept();
+  });
+  await page.getByRole("button", { name: "Retirar definitivamente" }).click();
+  await expect(page.getByText("Jogador Estado E2E", { exact: true })).toHaveCount(0);
+
+  const stored = await page.evaluate(async ({ playerId, matchId, playerRef }) => {
+    const player = await DB.obter("jogadores", playerId);
+    const match = await DB.obter("jogos", matchId);
+    return {
+      inRoster: player.plantel_ativo !== false,
+      retiredAt: player.retirado_em,
+      stillCalled: (match.callup?.player_ids || []).map(String).includes(String(playerRef)),
+      stillSubstitute: (match.lineup?.substitutes || []).map(String).includes(String(playerRef)),
+    };
+  }, ids);
+  expect(stored.inRoster).toBe(false);
+  expect(stored.retiredAt).toBeTruthy();
+  expect(stored.stillCalled).toBe(false);
+  expect(stored.stillSubstitute).toBe(false);
+});

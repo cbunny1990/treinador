@@ -42,8 +42,8 @@ test("gestor exige JWT e MCP usa autenticação própria", () => {
 
 test("MCP expõe ferramentas Vision Coach essenciais", () => {
   for (const tool of [
-    "workspace_summary", "search_workspace", "list_matches", "get_match",
-    "list_exercises", "list_trainings", "create_exercise", "create_training",
+    "workspace_summary", "search_workspace", "list_players", "list_matches", "get_match",
+    "list_exercises", "list_trainings", "update_player_availability", "create_exercise", "create_training",
     "update_match_pre_game", "add_external_media",
   ]) assert.match(mcp, new RegExp('name: "' + tool + '"'));
   assert.match(mcp, /2026-07-28/);
@@ -66,4 +66,14 @@ test("Edge Functions não contêm credenciais privadas hardcoded", () => {
 
 test("gestor MCP aceita todos os headers CORS usados pelo supabase-js", () => {
   assert.match(manager, /authorization, x-client-info, apikey, content-type/i);
+});
+
+
+test("MCP limita gestão de jogadores a disponibilidade operacional", () => {
+  assert.match(mcp, /name: "list_players"/);
+  assert.match(mcp, /name: "update_player_availability"/);
+  assert.match(mcp, /Não devolve diagnósticos médicos/);
+  assert.match(mcp, /player_not_in_roster/);
+  assert.doesNotMatch(mcp, /name: "delete_player"/);
+  assert.doesNotMatch(mcp, /name: "retire_player"/);
 });
