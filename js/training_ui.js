@@ -82,7 +82,7 @@ async function viewExercise(id){
   let html='<section class="panel hero-main"><div class="row"><div class="grow"><div class="kicker">'+tuEsc(e.escalao+' · '+e.modelo)+'</div><h2 class="display" style="font-size:30px">'+tuEsc(e.nome)+'</h2></div><span class="badge '+(e.favorito?"ready":"")+'">'+(e.favorito?"Favorito":"Exercício")+'</span></div>';
   html+='<p class="lead">'+tuEsc(e.objetivo)+'</p><div class="exercise-facts"><span><strong>'+tuEsc(e.organizacao||"—")+'</strong><small>organização</small></span><span><strong>'+tuEsc(e.espaco||"—")+'</strong><small>espaço</small></span><span><strong>'+e.duracao_total_min+' min</strong><small>duração</small></span></div>';
   html+='<div class="grid cols-2 section"><div><h3>Regras</h3><div class="body-copy">'+tuEsc((e.regras||[]).join("\n"))+'</div></div><div><h3>Coaching points</h3><div class="body-copy">'+tuEsc((e.coaching_points||[]).join("\n"))+'</div></div></div>';
-  html+='<div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/treinos/novo/'+id+'">Usar num treino</a><a class="btn secondary" href="#/exercicios/'+id+'/editar">Editar</a><a class="btn secondary" href="#/media/novo/exercise/'+id+'">Adicionar media</a><button class="btn danger" type="button" data-action="delete-exercise" data-id="'+id+'">Arquivar</button></div></section>';
+  html+='<div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/treinos/novo/'+id+'">Usar num treino</a><a class="btn secondary" href="#/exercicios/'+id+'/editar">Editar</a><a class="btn secondary" href="#/media/novo/exercise/'+id+'">Adicionar media</a><button class="btn danger" type="button" data-action="delete-exercise" data-id="'+id+'">Apagar exercício</button></div></section>';
   html+='<section class="section"><div class="section-head"><div><h2>Media</h2><p>'+media.length+' item(ns)</p></div></div>'+renderMediaCards(media)+'</section>';
   setView(e.nome,html,"Planos");
 }
@@ -163,7 +163,7 @@ async function viewTraining(id){
   }).join(""):'<div class="empty">Sem blocos.</div>';
   let html='<section class="panel hero-main"><div class="kicker">'+fmtDate(t.data)+(t.hora?' · '+tuEsc(t.hora):'')+'</div><h2 class="display" style="font-size:30px">Treino</h2><p class="lead">'+tuEsc(t.objetivo||"Sem objetivo definido.")+'</p><div class="exercise-facts"><span><strong>'+t.blocos.length+'</strong><small>blocos</small></span><span><strong>'+t.duracao_min+' min</strong><small>duração</small></span><span><strong>'+tuEsc(t.status)+'</strong><small>estado</small></span></div>';
   if(linked) html+='<div class="notice" style="margin-top:16px">Ligado ao jogo de '+fmtDate(linked.data)+' vs '+tuEsc(linked.adversario||"adversário")+'.</div>';
-  html+='<div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/treinos/'+id+'/editar">Editar planeamento</a><a class="btn secondary" href="#/media/novo/training/'+id+'">Adicionar media</a><button class="btn danger" type="button" data-action="delete-training" data-id="'+id+'">Arquivar treino</button></div></section>';
+  html+='<div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/treinos/'+id+'/editar">Editar planeamento</a><a class="btn secondary" href="#/media/novo/training/'+id+'">Adicionar media</a><button class="btn danger" type="button" data-action="delete-training" data-id="'+id+'">Apagar treino</button></div></section>';
   html+='<section class="section"><div class="section-head"><div><h2>Blocos</h2><p>Sequência da sessão</p></div></div><div class="list">'+blocks+'</div></section>';
   setView("Treino · "+fmtDate(t.data),html,"Planos");
 }
@@ -259,15 +259,15 @@ document.addEventListener("click",async(event)=>{
     return router();
   }
   if(target.dataset.action==="delete-exercise"){
-    if(!confirm("Arquivar este exercício?")) return;
+    if(!confirm("Apagar este exercício? A remoção será sincronizada.")) return;
     await DB.apagar("exercicios",Number(target.dataset.id));
-    await logHuman("archived_exercise","Arquivou exercício","exercise",target.dataset.id);
+    await logHuman("deleted_exercise","Apagou exercício","exercise",target.dataset.id);
     return go("#/exercicios");
   }
   if(target.dataset.action==="delete-training"){
-    if(!confirm("Arquivar este treino?")) return;
+    if(!confirm("Apagar este treino? A remoção será sincronizada.")) return;
     await DB.apagar("treinos",Number(target.dataset.id));
-    await logHuman("archived_training","Arquivou treino","training",target.dataset.id);
+    await logHuman("deleted_training","Apagou treino","training",target.dataset.id);
     return go("#/treinos");
   }
 });
