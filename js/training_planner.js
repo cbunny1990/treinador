@@ -86,6 +86,14 @@ function tpNormalizeTraining(input) {
   row.objetivo = row.objetivo || "";
   row.notas = row.notas || null;
   row.source_match_ref = row.source_match_ref || null;
+  row.review = {
+    status: "pending",
+    melhorou: null,
+    continua: null,
+    proxima_acao: null,
+    conclusao: null,
+    ...((row.review && typeof row.review === "object") ? row.review : {})
+  };
   return row;
 }
 
