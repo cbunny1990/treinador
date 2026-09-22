@@ -3,9 +3,10 @@ import { createClient } from "npm:@supabase/supabase-js@2.116.0";
 
 import { IMAGE_TOOLS, executeImageTool } from "./image_uploads.mjs";
 import { SESSION_TOOLS, executeSessionTool } from "./training_sessions.mjs";
+import { CONTINUITY_TOOLS, executeContinuityTool } from "./training_continuity.mjs";
 
 const SERVER_NAME = "vision-coach";
-const SERVER_VERSION = "1.2.0";
+const SERVER_VERSION = "1.3.0";
 const MODERN_PROTOCOL = "2026-07-28";
 const LEGACY_PROTOCOLS = new Set(["2025-11-25", "2025-06-18", "2025-03-26"]);
 const MAX_BODY_BYTES = 256 * 1024;
@@ -81,6 +82,7 @@ function normalizePlayerAvailability(value: unknown) {
 const TOOLS = [
   ...IMAGE_TOOLS,
   ...SESSION_TOOLS,
+  ...CONTINUITY_TOOLS,
   {
     name: "workspace_summary",
     description: "Resumo atual do workspace Vision Coach: equipa, próximos jogos, exercícios e treinos recentes.",
@@ -321,6 +323,7 @@ async function putRecord(admin: any, teamId: string, kind: string, payload: any,
 
 async function executeTool(admin: any, connector: any, name: string, args: any, requestId: unknown) {
   const teamId = String(connector.team_id);
+  if (CONTINUITY_TOOLS.some((tool) => tool.name === name)) return executeContinuityTool(admin,connector,name,args);
   if (SESSION_TOOLS.some((tool) => tool.name === name)) return executeSessionTool(admin,connector,name,args);
   if (IMAGE_TOOLS.some((tool) => tool.name === name)) return executeImageTool(admin,connector,name,args,Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "");
 

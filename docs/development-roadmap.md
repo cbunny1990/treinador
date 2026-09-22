@@ -5,7 +5,7 @@ Implementação nesta entrega: presenças e histórico individual, iniciar/pausa
 O treino planeado é preservado. Imagens e consulta anteriores não são redesenhadas.
 
 ## Fase 2 — continuidade do Head Coach
-Pendente: ligar avaliações à memória sem duplicar, proposta de foco com fontes, aprovação antes de criar e acompanhamento identificado → trabalhado → avaliado.
+Implementado: avaliação ligada a memória única, rascunho com evidências, revisão pela IA autorizada, aprovação explícita e ligação ao treino seguinte com resultado assinalado. Guia: training-continuity.md. O rascunho inicial é um modelo local, não análise automática de toda a época; agregação de tendências fica para aprofundamento posterior.
 
 ## Fase 3 — jogo e quadro tático
 Pendente: campo visual 5v5, rotações/substituições, minutos, registo estruturado de acontecimentos/zonas, distinção entre dados medidos e estimados, quadro estático e adversário.

@@ -73,6 +73,9 @@
   <script src="js/mcp_connectors.js"></script>
   <script src="js/exercise_visuals.js"></script>
   <script src="js/exercise_image_storage.js"></script>
+  <script src="js/training_continuity.js"></script>
+  <script src="js/training_continuity_store.js"></script>
+  <script src="js/training_continuity_ui.js"></script>
   <script src="js/training_ui.js"></script>
   <script src="js/training_session_ui.js"></script>
   <script src="js/agent_contract.js"></script>
@@ -81,7 +84,7 @@
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
         let hadController = !!navigator.serviceWorker.controller;
-        const registration = await navigator.serviceWorker.register("sw.js?v=65").catch(() => null);
+        const registration = await navigator.serviceWorker.register("sw.js?v=66").catch(() => null);
         if(!registration) return;
         registration.update().catch(() => {});
         navigator.serviceWorker.addEventListener("controllerchange", () => {
@@ -89,7 +92,7 @@
           if(document.querySelector('form, [data-training-session]')){
             const notice=document.createElement('p');notice.className='notice';notice.textContent='Atualização disponível. Guarda o que estás a fazer e reabre a app para atualizar.';document.body.appendChild(notice);return;
           }
-          const key = "vision-sw-reloaded-v65";
+          const key = "vision-sw-reloaded-v66";
           if (sessionStorage.getItem(key)) return;
           sessionStorage.setItem(key, "1");
           location.reload();

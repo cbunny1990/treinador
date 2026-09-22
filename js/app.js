@@ -129,6 +129,7 @@ async function routeOnce(){
       return TrainingUI.viewTrainingConsultation(parts[1]||null,parts[2]||null);
     }
     if(root==="sessao") return TrainingSessionUI.view(parts[1]);
+    if(root==="continuidade") return TrainingContinuityUI.view(parts[1]);
     if(root==="treinos"){
       if(parts[1] && parts[2]==="duplicar") return TrainingSessionUI.duplicateView(parts[1]);
       if(parts[1]==="novo" && parts[2]==="jogo" && parts[3]) return TrainingUI.viewTrainingForm(null,null,parts[3]);
@@ -189,7 +190,7 @@ if(document.readyState!=="loading") router();
 window.addEventListener("visioncoach:sync-complete",async function(){
   refreshRemoteIndicator();
   if(app.querySelector('form[data-form]')) return;
-  if(app.querySelector('[data-training-session], [data-session-duplicate]')) return;
+  if(app.querySelector('[data-training-session], [data-session-duplicate], [data-training-continuity]')) return;
   if(document.querySelector('#exercise-image-viewer[open]')) return;
   var scrollX=window.scrollX;
   var scrollY=window.scrollY;
