@@ -125,6 +125,9 @@ async function routeOnce(){
       return viewTeam();
     }
     if(root==="calendario") return viewCalendar();
+    if(root==="consulta"){
+      return TrainingUI.viewTrainingConsultation(parts[1]||null,parts[2]||null);
+    }
     if(root==="treinos"){
       if(parts[1]==="novo" && parts[2]==="jogo" && parts[3]) return TrainingUI.viewTrainingForm(null,null,parts[3]);
       if(parts[1]==="novo") return TrainingUI.viewTrainingForm(null,parts[2]);
@@ -218,7 +221,7 @@ function nextEventHTML(s){
   }
   if(s.next_training){
     var t=s.next_training;
-    rows.push('<div class="list-item row"><div class="grow"><div class="title">Treino '+esc(t.escalao||"")+'</div><div class="meta">'+fmtDate(t.data)+(t.hora?' · '+esc(t.hora):'')+'</div></div><span class="badge">Sessão</span></div>');
+    rows.push('<a class="list-item row" href="#/consulta/'+t.id+'"><div class="grow"><div class="title">Treino '+esc(t.escalao||"")+'</div><div class="meta">'+fmtDate(t.data)+(t.hora?' · '+esc(t.hora):'')+'</div></div><span class="badge ready">Consultar</span></a>');
   }
   return rows.length?'<div class="list">'+rows.join("")+'</div>':'<div class="empty">Ainda não existem próximos eventos.</div>';
 }
@@ -268,7 +271,7 @@ async function viewWorkspace(){
   html+='<div class="hero">';
   html+='<section class="panel hero-main"><div class="kicker">Human–AI Shared Workspace</div><h2 class="display">O estado da equipa, num único lugar.</h2>';
   html+='<p class="lead">'+esc(context||"Configura a equipa para começar.")+' Dados, planos, media e decisões ficam disponíveis no mesmo workspace para treinador e agente.</p>';
-  html+='<div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/capturar">Registar observação</a><a class="btn secondary" href="#/planos/novo">Novo plano</a><a class="btn secondary" href="#/media/novo">Adicionar media</a></div>';
+  html+='<div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/consulta">Consultar treino</a><a class="btn secondary" href="#/capturar">Registar observação</a><a class="btn secondary" href="#/planos/novo">Novo plano</a><a class="btn secondary" href="#/media/novo">Adicionar media</a></div>';
   html+='<div class="workspace-status '+(remoteReady?"connected":"")+'"><span class="dot"></span>'+esc(remoteLabel)+'</div></section>';
   html+='<aside class="panel hero-side"><div class="section-head"><div><h2>Próximos</h2><p>Agenda operacional</p></div></div>'+nextEventHTML(s)+'</aside></div>';
   html+='<div class="grid cols-4">';
@@ -291,7 +294,8 @@ function calendarEventRow(event){
   }
   var label=event.planned?"Treino previsto":"Treino";
   if(event.end_time) meta+="–"+esc(event.end_time);
-  return '<div class="list-item row calendar-row"><span class="calendar-kind training">T</span><span class="grow"><span class="title">'+esc(label)+'</span><span class="meta">'+meta+'</span></span>'+(event.planned?'<span class="badge draft">Horário</span>':'<span class="badge ready">Registado</span>')+'</div>';
+  if(event.planned) return '<div class="list-item row calendar-row"><span class="calendar-kind training">T</span><span class="grow"><span class="title">'+esc(label)+'</span><span class="meta">'+meta+'</span></span><span class="badge draft">Horário</span></div>';
+  return '<a class="list-item row calendar-row" href="#/consulta/'+event.id+'"><span class="calendar-kind training">T</span><span class="grow"><span class="title">'+esc(label)+'</span><span class="meta">'+meta+'</span></span><span class="badge ready">Consultar</span></a>';
 }
 async function viewCalendar(){
   var s=await WorkspaceStore.buildSnapshot();

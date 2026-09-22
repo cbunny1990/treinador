@@ -152,6 +152,47 @@ async function viewTrainingForm(id,preselectedId,sourceMatchId){
   setView(id?"Editar treino":"Novo treino",html,"Planos");
   tuRefreshTrainingTotal();
 }
+async function viewTrainingConsultation(id,step){
+  try{
+    const status=await RemoteWorkspace.status();
+    if(navigator.onLine && status.signedIn && status.remoteTeamId) await RemoteWorkspace.syncNow();
+  }catch(_){}
+  const rows=(await DB.porIndice("treinos","team_id",DEFAULT_TEAM_ID))
+    .map((x)=>TrainingPlanner.normalizeTraining(x))
+    .sort((a,b)=>String(a.data||"").localeCompare(String(b.data||"")));
+  let t=id?rows.find((x)=>String(x.id)===String(id)):null;
+  if(!t){
+    const todayIso=today();
+    t=rows.find((x)=>String(x.data||"")>=todayIso)||rows[rows.length-1]||null;
+  }
+  if(!t) return setView("Consulta de treino",'<div class="empty">Ainda não existe um treino para consultar.</div>',"Treino");
+  const exercises=await tuExercises();
+  const blocks=t.blocos||[];
+  if(!blocks.length) return setView("Treino · "+fmtDate(t.data),'<div class="empty">Este treino ainda não tem exercícios.</div>',"Treino");
+  let index=Math.max(0,Math.min(blocks.length-1,Number(step||0)));
+  const block=blocks[index];
+  const e=tuExerciseByRef(exercises,block.exercise_ref);
+  const passos=Array.isArray(e?.passos)&&e.passos.length?e.passos:(e?.regras||[]);
+  const material=Array.isArray(e?.material)?e.material.join(" · "):(e?.material||"—");
+  const regras=(e?.regras||[]).map((x)=>'<li>'+tuEsc(x)+'</li>').join("");
+  const coaching=(e?.coaching_points||[]).map((x)=>'<li>'+tuEsc(x)+'</li>').join("");
+  const steps=passos.length?passos.map((x,i)=>'<div class="consult-step"><span>'+(i+1)+'</span><p>'+tuEsc(x)+'</p></div>').join(""):'<div class="empty">Sem passos detalhados.</div>';
+  const timeline=blocks.map((b,i)=>{
+    const ex=tuExerciseByRef(exercises,b.exercise_ref);
+    return '<a class="consult-index '+(i===index?"active":"")+'" href="#/consulta/'+t.id+'/'+i+'"><strong>'+(i+1)+'. '+tuEsc(ex?.nome||b.exercise_name||"Exercício")+'</strong><small>'+b.duration_min+' min · '+tuEsc(b.phase||"")+'</small></a>';
+  }).join("");
+  let html='<section class="panel hero-main consult-hero"><div class="kicker">'+fmtDate(t.data)+(t.hora?' · '+tuEsc(t.hora):'')+'</div><h2 class="display" style="font-size:28px">Consulta do treino</h2><p class="lead">'+tuEsc(t.objetivo||"Sem objetivo definido.")+'</p><div class="row" style="margin-top:14px"><span class="badge ready">'+t.duracao_min+' min</span><span class="badge">'+blocks.length+' exercícios</span></div></section>';
+  html+='<section class="section"><div class="consult-index-list">'+timeline+'</div></section>';
+  html+='<section class="panel hero-main consult-exercise"><div class="kicker">Exercício '+(index+1)+' de '+blocks.length+' · '+block.duration_min+' min</div><h2 class="display" style="font-size:27px">'+tuEsc(e?.nome||block.exercise_name||"Exercício")+'</h2><p class="lead">'+tuEsc(e?.objetivo||block.notes||"")+'</p>';
+  html+='<div class="consult-facts"><div><span>Montagem</span><strong>'+tuEsc(e?.organizacao||"—")+'</strong></div><div><span>Material</span><strong>'+tuEsc(material)+'</strong></div><div><span>Espaço</span><strong>'+tuEsc(e?.espaco||"—")+'</strong></div></div>';
+  html+='<div class="section"><h3>Passo a passo</h3><div class="consult-steps">'+steps+'</div></div>';
+  if(regras) html+='<div class="section"><h3>Regras</h3><ul class="consult-list">'+regras+'</ul></div>';
+  if(coaching) html+='<div class="section"><h3>O que corrigir</h3><ul class="consult-list">'+coaching+'</ul></div>';
+  if(block.notes) html+='<div class="notice" style="margin-top:18px">'+tuEsc(block.notes)+'</div>';
+  html+='<div class="toolbar consult-nav" style="margin-top:22px">'+(index>0?'<a class="btn secondary" href="#/consulta/'+t.id+'/'+(index-1)+'">← Anterior</a>':'')+(index<blocks.length-1?'<a class="btn accent" href="#/consulta/'+t.id+'/'+(index+1)+'">Seguinte →</a>':'<a class="btn accent" href="#/treinos/'+t.id+'">Terminar consulta</a>')+'</div></section>';
+  setView("Treino · "+fmtDate(t.data),html,"Consulta");
+}
+
 async function viewTrainings(){
   const rows=(await DB.porIndice("treinos","team_id",DEFAULT_TEAM_ID))
     .sort((a,b)=>String(b.data).localeCompare(String(a.data)));
@@ -321,6 +362,7 @@ const TrainingUI={
   viewTrainings,
   viewTrainingForm,
   viewTraining,
+  viewTrainingConsultation,
 };
 
 if(typeof globalThis!=="undefined") globalThis.TrainingUI=TrainingUI;
