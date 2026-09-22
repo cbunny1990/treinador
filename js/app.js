@@ -187,6 +187,7 @@ if(document.readyState!=="loading") router();
 window.addEventListener("visioncoach:sync-complete",async function(){
   refreshRemoteIndicator();
   if(app.querySelector('form[data-form]')) return;
+  if(document.querySelector('#exercise-image-viewer[open]')) return;
   var scrollX=window.scrollX;
   var scrollY=window.scrollY;
   await router();

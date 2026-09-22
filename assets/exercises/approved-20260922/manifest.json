@@ -1,0 +1,42 @@
+[
+  {
+    "key": "exercise-ativacao-conduzir-passar-dar-opcao",
+    "src": "assets/exercises/approved-20260922/01_ativacao_conduzir_passar_dar_opcao.png",
+    "width": 1448,
+    "height": 1086,
+    "bytes": 1754859,
+    "sha256": "8a82ac2a8b9f519320160de9b0a4319d1f78b501babbc8f1e6197b8da47f817b"
+  },
+  {
+    "key": "exercise-passar-apoiar-terceiro-homem",
+    "src": "assets/exercises/approved-20260922/02_passar_apoiar_terceiro_homem.png",
+    "width": 1448,
+    "height": 1086,
+    "bytes": 1684995,
+    "sha256": "b9dcf40f03a6bc7f1ac51874b0880858d7cc99e7908c394e1262174792b08c27"
+  },
+  {
+    "key": "exercise-saida-curta-gr-3-vs-3",
+    "src": "assets/exercises/approved-20260922/03_saida_curta_gr_3_vs_3.png",
+    "width": 1448,
+    "height": 1086,
+    "bytes": 1835425,
+    "sha256": "ac9a9f0207821ecf3f71e1693aad6d079b769e85c239b2ca858aa52fbe60030f"
+  },
+  {
+    "key": "exercise-jogo-condicionado-sair-acelerar",
+    "src": "assets/exercises/approved-20260922/04_jogo_condicionado_sair_acelerar.png",
+    "width": 1448,
+    "height": 1086,
+    "bytes": 1831623,
+    "sha256": "12c6706b5fec282f1ce67e7ff1ab1295b689f6ca36a1cb270fe72a6eb80ff72c"
+  },
+  {
+    "key": "exercise-jogo-livre-observar-saida",
+    "src": "assets/exercises/approved-20260922/05_jogo_livre_observar_saida.png",
+    "width": 1448,
+    "height": 1086,
+    "bytes": 1868112,
+    "sha256": "e3ada7e9e2930906f8f753e9a5104561f837316fcf8ec925655e006400a7dc54"
+  }
+]
