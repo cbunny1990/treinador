@@ -166,9 +166,13 @@ window.addEventListener("hashchange",router);
 window.addEventListener("DOMContentLoaded",router);
 if(document.readyState!=="loading") router();
 
-window.addEventListener("visioncoach:sync-complete",function(){
+window.addEventListener("visioncoach:sync-complete",async function(){
   refreshRemoteIndicator();
-  if(!app.querySelector('form[data-form]')) router();
+  if(app.querySelector('form[data-form]')) return;
+  var scrollX=window.scrollX;
+  var scrollY=window.scrollY;
+  await router();
+  requestAnimationFrame(function(){ window.scrollTo(scrollX,scrollY); });
 });
 window.addEventListener("focus",function(){ RemoteWorkspace.scheduleSync(150); });
 document.addEventListener("visibilitychange",function(){
