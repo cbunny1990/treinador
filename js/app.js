@@ -74,6 +74,20 @@ function avatarHTML(player,px){
   if(player && player.foto) return '<span class="avatar" '+size+'><img src="'+esc(player.foto)+'" alt=""></span>';
   return '<span class="avatar" '+size+'>'+esc(player && (player.numero||initials(player.nome)))+'</span>';
 }
+async function applyPlayerProfilePhotos(players){
+  var media=await DB.porIndice("media_items","team_id",DEFAULT_TEAM_ID);
+  var photos=media.filter(function(item){
+    return item.subject_type==="player" && item.type==="photo" &&
+      String(item.note||"").toLowerCase().includes("foto de perfil");
+  }).sort(function(a,b){
+    return String(b.updated_at||b.created_at||"").localeCompare(String(a.updated_at||a.created_at||""));
+  });
+  return (players||[]).map(function(player){
+    var photo=photos.find(function(item){return String(item.subject_id)===String(player.id);});
+    var src=photo&&(photo.data_url||photo.url);
+    return src?Object.assign({},player,{foto:src}):player;
+  });
+}
 function resultText(match){
   if(match && (match.golos_favor==null || match.golos_contra==null)) return "Por jogar";
   return String(match.golos_favor)+"–"+String(match.golos_contra);
@@ -295,7 +309,8 @@ async function viewCalendar(){
 async function viewTeam(){
   var s=await WorkspaceStore.buildSnapshot();
   var team=s.team||{};
-  var allPlayers=(await DB.porIndice("jogadores","team_id",DEFAULT_TEAM_ID)).slice().sort(function(a,b){return String(a.nome).localeCompare(String(b.nome));});
+  var allPlayers=await applyPlayerProfilePhotos((await DB.porIndice("jogadores","team_id",DEFAULT_TEAM_ID)).slice());
+  allPlayers.sort(function(a,b){return String(a.nome).localeCompare(String(b.nome));});
   var players=allPlayers.filter(function(p){return PlayerStatus.inRoster(p);});
   var retiredPlayers=allPlayers.filter(function(p){return !PlayerStatus.inRoster(p);});
   var availableCount=players.filter(function(p){return PlayerStatus.isAvailable(p);}).length;
@@ -347,6 +362,7 @@ async function viewPlayerForm(id){
 async function viewPlayer(id){
   var player=await DB.obter("jogadores",id);
   if(!player) return go("#/equipa");
+  player=(await applyPlayerProfilePhotos([player]))[0];
   var memory=await HeadCoachMemory.list(DEFAULT_TEAM_ID,{subjectType:"player",subjectId:id});
   var media=await HeadCoachMedia.listForSubject("player",id);
   var obs=memory.length?'<div class="list">'+memory.slice(0,8).map(function(m){
