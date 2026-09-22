@@ -63,11 +63,24 @@ function visionPlannedTrainings(team, from, weeks) {
   return events;
 }
 
+function vcMatchKey(match) {
+  const opponent = String(match?.adversario || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]/g, "");
+  return [vcIsoDate(match?.data), String(match?.hora || ""), opponent].join("|");
+}
+
 function visionCalendarEvents(snapshot, options) {
   const cfg = options || {};
   const from = vcIsoDate(cfg.from || new Date().toISOString().slice(0, 10));
   const weeks = Number(cfg.weeks || VISION_CALENDAR_WEEKS);
-  const matches = vcArray(snapshot?.matches).map((m) => ({
+  const seenMatches = new Set();
+  const matches = vcArray(snapshot?.matches).filter((m) => {
+    const key = vcMatchKey(m);
+    if (seenMatches.has(key)) return false;
+    seenMatches.add(key);
+    return true;
+  }).map((m) => ({
     type: "match", planned: false, date: vcIsoDate(m.data), time: m.hora || null,
     title: "Jogo vs " + (m.adversario || "Adversário"), id: m.id, item: normalizeVisionMatch(m),
   }));
