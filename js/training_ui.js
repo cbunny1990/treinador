@@ -76,6 +76,7 @@ function tuExerciseCard(exercise){
     exercise.modelo, ...(exercise.tags || [])
   ].join(" ").toLowerCase();
   return '<article class="card exercise-card" data-exercise-card data-search="'+tuEsc(search)+'" data-favorite="'+(exercise.favorito?"1":"0")+'">'+
+    '<a class="exercise-card-visual-link" href="#/exercicios/'+exercise.id+'">'+tuExerciseVisualHTML(exercise,true)+'</a>'+
     '<div class="row"><a class="grow" style="text-decoration:none" href="#/exercicios/'+exercise.id+'">'+
     '<span class="title">'+tuEsc(exercise.nome)+'</span>'+
     '<span class="meta">'+tuEsc([exercise.escalao,exercise.modelo,exercise.espaco].filter(Boolean).join(" · "))+'</span>'+
@@ -117,6 +118,7 @@ async function viewExercise(id){
   const e=TrainingPlanner.normalizeExercise(raw);
   const media=await HeadCoachMedia.listForSubject("exercise",id);
   let html='<section class="panel hero-main"><div class="row"><div class="grow"><div class="kicker">'+tuEsc(e.escalao+' · '+e.modelo)+'</div><h2 class="display" style="font-size:30px">'+tuEsc(e.nome)+'</h2></div><span class="badge '+(e.favorito?"ready":"")+'">'+(e.favorito?"Favorito":"Exercício")+'</span></div>';
+  html+=tuExerciseVisualHTML(e,false);
   html+='<p class="lead">'+tuEsc(e.objetivo)+'</p><div class="exercise-facts"><span><strong>'+tuEsc(e.organizacao||"—")+'</strong><small>organização</small></span><span><strong>'+tuEsc(e.espaco||"—")+'</strong><small>espaço</small></span><span><strong>'+e.duracao_total_min+' min</strong><small>duração</small></span></div>';
   html+='<div class="grid cols-2 section"><div><h3>Regras</h3><div class="body-copy">'+tuEsc((e.regras||[]).join("\n"))+'</div></div><div><h3>Coaching points</h3><div class="body-copy">'+tuEsc((e.coaching_points||[]).join("\n"))+'</div></div></div>';
   html+='<div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/treinos/novo/'+id+'">Usar num treino</a><a class="btn secondary" href="#/exercicios/'+id+'/editar">Editar</a><a class="btn secondary" href="#/media/novo/exercise/'+id+'">Adicionar media</a><button class="btn danger" type="button" data-action="delete-exercise" data-id="'+id+'">Apagar exercício</button></div></section>';
@@ -221,6 +223,7 @@ async function viewTrainingConsultation(id,step){
   let html='<section class="panel hero-main consult-hero"><div class="kicker">'+fmtDate(t.data)+(t.hora?' · '+tuEsc(t.hora):'')+'</div><h2 class="display" style="font-size:28px">Consulta do treino</h2><p class="lead">'+tuEsc(t.objetivo||"Sem objetivo definido.")+'</p><div class="row" style="margin-top:14px"><span class="badge ready">'+t.duracao_min+' min</span><span class="badge">'+blocks.length+' exercícios</span></div></section>';
   html+='<section class="section"><div class="consult-index-list">'+timeline+'</div></section>';
   html+='<section class="panel hero-main consult-exercise"><div class="kicker">Exercício '+(index+1)+' de '+blocks.length+' · '+block.duration_min+' min</div><h2 class="display" style="font-size:27px">'+tuEsc(e?.nome||block.exercise_name||"Exercício")+'</h2><p class="lead">'+tuEsc(e?.objetivo||block.notes||"")+'</p>';
+  if(e) html+=tuExerciseVisualHTML(e,false);
   html+='<div class="consult-facts"><div><span>Montagem</span><strong>'+tuEsc(e?.organizacao||"—")+'</strong></div><div><span>Material</span><strong>'+tuEsc(material)+'</strong></div><div><span>Espaço</span><strong>'+tuEsc(e?.espaco||"—")+'</strong></div></div>';
   html+='<div class="section"><h3>Passo a passo</h3><div class="consult-steps">'+steps+'</div></div>';
   if(regras) html+='<div class="section"><h3>Regras</h3><ul class="consult-list">'+regras+'</ul></div>';
