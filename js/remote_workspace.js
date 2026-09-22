@@ -558,10 +558,6 @@ const RemoteWorkspace = {
       for (const remote of remoteRows.filter((row) => row.deleted_at)) {
         const local = localBySyncId.get(remote.id);
         if (!local) continue;
-        if (remoteNeedsConflict(local, remote)) {
-          addConflict(remoteConflict(store, local, remote, "remote_deleted"));
-          continue;
-        }
         await DB.apagar(store, local.id, { remote: true });
         result.deleted++;
       }
@@ -584,7 +580,8 @@ const RemoteWorkspace = {
           }
         }
         if (remote?.deleted_at) {
-          if (local.sync_dirty) addConflict(remoteConflict(store, local, remote, "remote_deleted"));
+          await DB.apagar(store, local.id, { remote: true });
+          result.deleted++;
           continue;
         }
         if (!local.sync_dirty) continue;
@@ -658,10 +655,6 @@ const RemoteWorkspace = {
       let local = localMap.get(remote.id) || identityLocal;
       if (remote.deleted_at) {
         if (!local) continue;
-        if (remoteNeedsConflict(local, remote)) {
-          addConflict(remoteConflict(store, local, remote, "remote_deleted"));
-          continue;
-        }
         await DB.apagar(store, local.id, { remote: true });
         result.deleted++;
         continue;
@@ -838,10 +831,6 @@ const RemoteWorkspace = {
     for (const remote of [...remoteMap.values()].filter((row) => row.deleted_at)) {
       const local = localMap.get(remote.id);
       if (!local) continue;
-      if (remoteNeedsConflict(local, remote)) {
-        result.conflicts.push(remoteConflict("media_items", local, remote, "remote_deleted"));
-        continue;
-      }
       await DB.apagar("media_items", local.id, { remote: true });
       result.deleted++;
     }
@@ -852,9 +841,8 @@ const RemoteWorkspace = {
       const local = await this._ensureSyncId("media_items", original);
       const remote = remoteMap.get(local.sync_id);
       if (remote?.deleted_at) {
-        if (local.sync_dirty) {
-          result.conflicts.push(remoteConflict("media_items", local, remote, "remote_deleted"));
-        }
+        await DB.apagar("media_items", local.id, { remote: true });
+        result.deleted++;
         continue;
       }
       if (!local.sync_dirty) continue;
@@ -913,10 +901,6 @@ const RemoteWorkspace = {
       const local = localMap.get(remote.id);
       if (remote.deleted_at) {
         if (!local) continue;
-        if (remoteNeedsConflict(local, remote)) {
-          result.conflicts.push(remoteConflict("media_items", local, remote, "remote_deleted"));
-          continue;
-        }
         await DB.apagar("media_items", local.id, { remote: true });
         result.deleted++;
         continue;
@@ -1013,31 +997,15 @@ const RemoteWorkspace = {
         result.deleted++;
         continue;
       }
-      if (!item.expected_updated_at || current.updated_at !== item.expected_updated_at) {
-        result.conflicts.push(remoteConflict(item.store, {
-          id: null,
-          sync_id: item.sync_id,
-          remote_updated_at: item.expected_updated_at || null,
-        }, current, "delete_conflict"));
-        continue;
-      }
-
       const stamp = new Date().toISOString();
-      const res = await client.from(table)
+      let query = client.from(table)
         .update({ deleted_at: stamp })
         .eq("id", item.sync_id)
-        .eq("updated_at", item.expected_updated_at)
-        .is("deleted_at", null)
-        .select("id");
+        .is("deleted_at", null);
+      if (item.team_id) query = query.eq("team_id", item.team_id);
+      const res = await query.select("id");
       if (res.error) throw res.error;
-      if (!res.data?.length) {
-        result.conflicts.push(remoteConflict(item.store, {
-          id: null,
-          sync_id: item.sync_id,
-          remote_updated_at: item.expected_updated_at,
-        }, current, "delete_conflict"));
-        continue;
-      }
+      if (!res.data?.length) continue;
       await DB.apagar("sync_tombstones", item.id, { remote: true });
       result.deleted++;
     }
