@@ -96,6 +96,35 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     const joined = await admin.from("team_members").insert({ team_id: teamId, user_id: coach.user.id, role: "coach" });
     assert.ifError(joined.error);
 
+    const connectorHash = crypto.createHash("sha256").update(crypto.randomUUID()).digest("hex");
+    const connectorCreated = await admin.rpc("mcp_connector_create", {
+      p_team_id: teamId,
+      p_owner_id: owner.user.id,
+      p_token_hash: connectorHash,
+      p_token_prefix: "vcmcp_test1234",
+      p_label: "RLS local test",
+      p_scopes: ["read"],
+      p_expires_at: null,
+    });
+    assert.ifError(connectorCreated.error);
+    const connectorId = connectorCreated.data.id;
+    const connectorListed = await admin.rpc("mcp_connector_list", { p_team_id: teamId, p_owner_id: owner.user.id });
+    assert.ifError(connectorListed.error);
+    assert.ok(connectorListed.data.some((row) => row.id === connectorId && row.enabled));
+    const connectorLookup = await admin.rpc("mcp_connector_lookup", { p_token_hash: connectorHash });
+    assert.ifError(connectorLookup.error);
+    assert.equal(connectorLookup.data.id, connectorId);
+    const connectorRevoked = await admin.rpc("mcp_connector_revoke", {
+      p_token_id: connectorId,
+      p_team_id: teamId,
+      p_owner_id: owner.user.id,
+    });
+    assert.ifError(connectorRevoked.error);
+    assert.equal(connectorRevoked.data, true);
+    const connectorAfterRevoke = await admin.rpc("mcp_connector_lookup", { p_token_hash: connectorHash });
+    assert.ifError(connectorAfterRevoke.error);
+    assert.equal(connectorAfterRevoke.data, null);
+
     const inaccessible = await outsider.client.from("workspace_records").select("id").eq("team_id", teamId);
     assert.ifError(inaccessible.error);
     assert.deepEqual(inaccessible.data, []);
