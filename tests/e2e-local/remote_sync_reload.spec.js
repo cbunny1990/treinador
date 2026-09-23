@@ -9,7 +9,7 @@ const anonKey = process.env.VISION_COACH_SUPABASE_LOCAL_ANON_KEY || "";
 const serviceKey = process.env.VISION_COACH_SUPABASE_LOCAL_SERVICE_KEY || "";
 const enabled = !!(url && anonKey && serviceKey);
 
-test("duas PWA sincronizam ida e volta após trabalho offline, sem conflitos ou ressurreição", {
+test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não ressuscitam eliminados", {
   skip: !enabled && "requer apenas a stack Supabase local; nunca usar credenciais de produção",
   timeout: 120_000,
 }, async ({ page, context, browser }) => {
@@ -161,6 +161,48 @@ test("duas PWA sincronizam ida e volta após trabalho offline, sem conflitos ou 
     const noResurrection = await phone.evaluate(async (syncId) => (await DB.listar("jogos")).filter((item) => item.sync_id === syncId).length, gameSyncId);
     expect(noResurrection).toBe(0);
 
+    const conflictedSyncId = crypto.randomUUID();
+    await page.evaluate(async (syncId) => {
+      await DB.criar("jogos", {
+        team_id: DEFAULT_TEAM_ID, sync_id: syncId, data: "2026-09-24",
+        adversario: "Base para edição concorrente", estado: "agendado",
+      });
+      const result = await RemoteWorkspace.syncNow();
+      if (result.conflicts.length) throw new Error(JSON.stringify(result.conflicts));
+    }, conflictedSyncId);
+    await phone.evaluate(async (syncId) => {
+      const result = await RemoteWorkspace.syncNow();
+      if (result.conflicts.length) throw new Error(JSON.stringify(result.conflicts));
+    }, conflictedSyncId);
+    const conflictPhoneId = await phone.evaluate(async (syncId) =>
+      (await DB.listar("jogos")).find((item) => item.sync_id === syncId)?.id, conflictedSyncId);
+    const conflictDesktopId = await page.evaluate(async (syncId) =>
+      (await DB.listar("jogos")).find((item) => item.sync_id === syncId)?.id, conflictedSyncId);
+    expect(conflictPhoneId).toBeTruthy();
+    expect(conflictDesktopId).toBeTruthy();
+
+    await context.setOffline(true);
+    await mobileContext.setOffline(true);
+    await page.evaluate((id) => DB.modificar("jogos", id, (row) => ({ ...row, adversario: "Edição offline no PC" })), conflictDesktopId);
+    await phone.evaluate((id) => DB.modificar("jogos", id, (row) => ({ ...row, adversario: "Edição offline no telemóvel" })), conflictPhoneId);
+    await context.setOffline(false);
+    const desktopWrite = await page.evaluate(() => RemoteWorkspace.syncNow());
+    expect(desktopWrite.conflicts).toEqual([]);
+    await mobileContext.setOffline(false);
+    const mobileConflict = await phone.evaluate(async (syncId) => {
+      const result = await RemoteWorkspace.syncNow();
+      const local = (await DB.listar("jogos")).find((item) => item.sync_id === syncId);
+      const remote = await (await RemoteWorkspace.init()).from("workspace_records")
+        .select("payload,updated_at").eq("id", syncId).maybeSingle();
+      if (remote.error) throw remote.error;
+      const status = await RemoteWorkspace.status();
+      return { conflicts: result.conflicts, statusConflicts: status.conflicts, local: local && { adversario: local.adversario, sync_dirty: local.sync_dirty }, remote: remote.data?.payload?.adversario };
+    }, conflictedSyncId);
+    expect(mobileConflict.conflicts.some((item) => item.sync_id === conflictedSyncId && item.reason === "version_mismatch")).toBe(true);
+    expect(mobileConflict.statusConflicts.some((item) => item.sync_id === conflictedSyncId && item.reason === "version_mismatch")).toBe(true);
+    expect(mobileConflict.local).toEqual({ adversario: "Edição offline no telemóvel", sync_dirty: true });
+    expect(mobileConflict.remote).toBe("Edição offline no PC");
+
     const phoneDeletedSyncId = crypto.randomUUID();
     await page.evaluate(async (syncId) => {
       await DB.criar("jogos", {
@@ -172,7 +214,7 @@ test("duas PWA sincronizam ida e volta após trabalho offline, sem conflitos ou 
     }, phoneDeletedSyncId);
     await phone.evaluate(async (syncId) => {
       const result = await RemoteWorkspace.syncNow();
-      if (result.conflicts.length) throw new Error(JSON.stringify(result.conflicts));
+      if (result.conflicts.some((item) => item.sync_id === syncId)) throw new Error(JSON.stringify(result.conflicts));
       const row = (await DB.listar("jogos")).find((item) => item.sync_id === syncId);
       if (!row) throw new Error("O telemóvel não recebeu o jogo de teste.");
     }, phoneDeletedSyncId);
@@ -185,10 +227,10 @@ test("duas PWA sincronizam ida e volta após trabalho offline, sem conflitos ou 
     }, phoneDeletedSyncId);
     expect(phoneLocalDelete).toBe(true);
     await mobileContext.setOffline(false);
-    await phone.evaluate(async () => {
+    await phone.evaluate(async (syncId) => {
       const removal = await RemoteWorkspace.syncNow();
-      if (removal.conflicts.length) throw new Error(JSON.stringify(removal.conflicts));
-    });
+      if (removal.conflicts.some((item) => item.sync_id === syncId)) throw new Error(JSON.stringify(removal.conflicts));
+    }, phoneDeletedSyncId);
     const desktopAfterPhoneDelete = await page.evaluate(async (syncId) => {
       const result = await RemoteWorkspace.syncNow();
       const localCopies = (await DB.listar("jogos")).filter((item) => item.sync_id === syncId).length;
