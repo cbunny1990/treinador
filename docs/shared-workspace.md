@@ -145,6 +145,10 @@ Para o cenário “abro o ChatGPT e ele vai à app sozinho”, falta apenas expo
 
 A migração v3 → v9 é automática. Registos de jogadores, jogos, treinos e memória continuam disponíveis; UUIDs remotos são atribuídos de forma lazy na primeira sincronização.
 
+### Correção de sincronização preparada para v68
+
+Um `sync_id` local legado como `default` recebe UUID apenas quando ainda não existe uma versão remota reconhecida. Se já existe versão remota, a cópia local permanece para reconciliação. Tombstones guardam `team_id = default` porque essa é a equipa local; a eliminação remota consulta primeiro a equipa UUID do próprio registo e exige a versão remota vista antes de apagar. Um conflito mantém o tombstone pendente. Esta correção está isolada no branch `fix/default-sync-id-20260923` para revisão antes da publicação.
+
 A reformulação remove o produto antigo da experiência sem apagar silenciosamente os dados existentes. Stores legados podem ser eliminados numa migração posterior apenas depois de confirmar que nada útil precisa de ser convertido para o novo modelo.
 
 ## Testes
