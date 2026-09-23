@@ -69,7 +69,7 @@ test('biblioteca guarda montagem e passos para consulta e plano exportado', asyn
   await expect(page.getByText('Quatro cones num quadrado de 12 metros.')).toBeVisible();
   await expect(page.getByText('Conduzir até ao cone.')).toBeVisible();
   await page.goto(`/#/treinos/${training.id}/editar`);
-  await expect(page.getByText('Circuito montagem E2E')).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: /Circuito montagem E2E.*removido da biblioteca/ })).toBeChecked();
   await expect(page.getByText(/removido da biblioteca/)).toBeVisible();
   await page.getByRole('button', { name: 'Guardar treino' }).click();
   savedTraining = await page.evaluate(async id => DB.obter('treinos', id), training.id);
