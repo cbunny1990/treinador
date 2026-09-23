@@ -17,6 +17,7 @@ const {
   remoteChooseTeamId,
   remoteRecordRow,
   remoteActivityRow,
+  RemoteWorkspace,
 } = require("../js/remote_workspace.js");
 
 test("configuração remota exige https e publishable key", () => {
@@ -76,6 +77,70 @@ test("conflito exige a versão remota esperada", () => {
   assert.equal(remoteNeedsConflict({ sync_dirty: true, remote_updated_at: "old" }, remote), true);
   assert.equal(remoteNeedsConflict({ sync_dirty: true, remote_updated_at: remote.updated_at }, remote), false);
   assert.equal(remoteNeedsConflict({ sync_dirty: false, remote_updated_at: "old" }, remote), false);
+});
+
+test("sync_id local default recebe UUID sem sobrescrever identidade remota antiga", async () => {
+  const originalDB = globalThis.DB;
+  let saved;
+  globalThis.DB = { async atualizar(_store, row) { saved = row; return row; } };
+  try {
+    const repaired = await RemoteWorkspace._ensureSyncId("jogos", { id: 1, sync_id: "default", sync_dirty: false });
+    assert.match(repaired.sync_id, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    assert.equal(repaired.sync_dirty, true);
+    assert.equal(saved.sync_id, repaired.sync_id);
+    await assert.rejects(RemoteWorkspace._ensureSyncId("jogos", { id: 2, sync_id: "default", remote_updated_at: "v1" }), /reconciliação/);
+    assert.equal(saved.id, 1);
+  } finally { globalThis.DB = originalDB; }
+});
+
+test("tombstone com team_id local default usa equipa UUID remota e versão exata", async () => {
+  const id = "11111111-1111-4111-8111-111111111111", team = "22222222-2222-4222-8222-222222222222";
+  const originalDB = globalThis.DB, originalInit = RemoteWorkspace.init;
+  const tombstones = [{ id: 1, store: "jogos", sync_id: id, team_id: "default", expected_updated_at: "v1" }];
+  const updates = [];
+  globalThis.DB = { async listar() { return tombstones.slice(); }, async apagar(_store, localId) { tombstones.splice(tombstones.findIndex(x => x.id === localId), 1); } };
+  RemoteWorkspace.init = async () => ({ from(table) {
+    assert.equal(table, "workspace_records");
+    return { filters: [], action: "read", select() { return this; }, eq(k,v) { assert.notEqual(v, "default"); this.filters.push([k,v]); return this; }, is() { return this; }, update(row) { this.action = "update"; updates.push({ row, filters: this.filters }); return this; }, async maybeSingle() { return { data: { id, team_id: team, updated_at: "v1", deleted_at: null }, error: null }; }, then(resolve) { return Promise.resolve({ data: this.action === "update" ? [{ id }] : [], error: null }).then(resolve); } };
+  } });
+  try {
+    const result = await RemoteWorkspace._syncTombstones(team);
+    assert.equal(result.deleted, 1);
+    assert.equal(tombstones.length, 0);
+    assert.equal(updates.length, 1);
+    assert.ok(updates[0].filters.some(([key,value]) => key === "team_id" && value === team));
+    assert.ok(updates[0].filters.some(([key,value]) => key === "updated_at" && value === "v1"));
+  } finally { globalThis.DB = originalDB; RemoteWorkspace.init = originalInit; }
+});
+
+test("tombstones inválidos ou com versão alterada permanecem em conflito", async () => {
+  const id = "11111111-1111-4111-8111-111111111111", team = "22222222-2222-4222-8222-222222222222";
+  const originalDB = globalThis.DB, originalInit = RemoteWorkspace.init;
+  const rows = [{ id: 1, store: "jogos", sync_id: "default", team_id: "default" }, { id: 2, store: "jogos", sync_id: id, team_id: "default", expected_updated_at: "v1" }];
+  let queries = 0;
+  globalThis.DB = { async listar() { return rows.slice(); }, async apagar() { throw Error("must preserve tombstones"); } };
+  RemoteWorkspace.init = async () => ({ from() { queries++; return { select() { return this; }, eq(k,v) { assert.notEqual(v,"default"); return this; }, async maybeSingle() { return { data: { id, team_id: team, updated_at: "v2", deleted_at: null }, error: null }; } }; } });
+  try {
+    const result = await RemoteWorkspace._syncTombstones(team);
+    assert.deepEqual(result.conflicts.map(x => x.reason), ["invalid_local_sync_id", "delete_version_mismatch"]);
+    assert.equal(rows.length, 2);
+    assert.equal(queries, 1);
+  } finally { globalThis.DB = originalDB; RemoteWorkspace.init = originalInit; }
+});
+
+test("consolidação com sync_id default repara antes da sincronização", async () => {
+  const originals = { DB: globalThis.DB, DEFAULT_TEAM_ID: globalThis.DEFAULT_TEAM_ID, navigator: Object.getOwnPropertyDescriptor(globalThis,"navigator"), localStorage: globalThis.localStorage, init: RemoteWorkspace.init, getSession: RemoteWorkspace.getSession, ensureSelectedTeam: RemoteWorkspace.ensureSelectedTeam, syncNow: RemoteWorkspace.syncNow };
+  let row = { id: 3, team_id: "default", sync_id: "default", sync_dirty: false }, calls = 0;
+  globalThis.DEFAULT_TEAM_ID = "default";
+  globalThis.DB = { async listar(store) { return store === "jogos" ? [{ ...row }] : []; }, async atualizar(_store, next) { row = { ...next }; return row; } };
+  Object.defineProperty(globalThis,"navigator",{configurable:true,value:{onLine:true}});
+  globalThis.localStorage = { setItem() {} };
+  RemoteWorkspace.init = async () => ({ from() { return { select() { return this; }, eq(_key,value) { assert.notEqual(value,"default"); return this; }, then(resolve) { return Promise.resolve({ data: [], error: null }).then(resolve); } }; } });
+  RemoteWorkspace.getSession = async () => ({ user: { id: "coach" } });
+  RemoteWorkspace.ensureSelectedTeam = async () => "22222222-2222-4222-8222-222222222222";
+  RemoteWorkspace.syncNow = async () => { calls++; assert.match(row.sync_id,/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i); return { pushed:0,pulled:0,deleted:0,conflicts:[] }; };
+  try { const result=await RemoteWorkspace.consolidateNow(); assert.equal(result.repaired,1); assert.equal(calls,2); assert.equal(row.sync_dirty,true); }
+  finally { globalThis.DB=originals.DB; globalThis.DEFAULT_TEAM_ID=originals.DEFAULT_TEAM_ID; if(originals.navigator)Object.defineProperty(globalThis,"navigator",originals.navigator);else delete globalThis.navigator; globalThis.localStorage=originals.localStorage; RemoteWorkspace.init=originals.init; RemoteWorkspace.getSession=originals.getSession; RemoteWorkspace.ensureSelectedTeam=originals.ensureSelectedTeam; RemoteWorkspace.syncNow=originals.syncNow; }
 });
 
 test("external_key impede identidade duplicada entre browsers", () => {

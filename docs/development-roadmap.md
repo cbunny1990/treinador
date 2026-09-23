@@ -23,5 +23,6 @@ Pendente: Workspace operacional com pendentes, objetivos semanais, sessões rela
 Pendente: marcação de momentos e ligação de evidências aos jogos, atletas, análises e propostas.
 
 ## Transversal
+Hotfix local v68 para o erro reportado `invalid input syntax for type uuid: "default"`: reparação de `sync_id` sem versão remota; tombstones verificam a equipa UUID e versão atuais, sem enviar o `team_id` local `default` ao Supabase. Código e testes preparados no branch isolado `fix/default-sync-id-20260923`; ainda não publicados. Validação local: `npm run check`, 151 testes unitários e 40 testes Playwright com um worker passaram. A execução Playwright paralela teve 11 falhas intermitentes que passaram na repetição sequencial; falta confirmar persistência real em dois dispositivos e a versão publicada.
 Continuar a validar sincronização real entre dispositivos, offline/reconexão e conflitos. Um teste com payloads partilhados ou emulação móvel não equivale a observação em dois dispositivos físicos.
 Animação, reconhecimento automático e gestão complexa multiequipa ficam para depois do núcleo.
