@@ -545,6 +545,7 @@ const RemoteWorkspace = {
   },
   async _ensureSyncId(store, row) {
     if (remoteIsUuid(row.sync_id)) return row;
+    if (row.remote_updated_at) throw new Error("Identificador remoto local inválido; é necessária reconciliação antes de sincronizar este registo.");
     const next = {
       ...row,
       sync_id: remoteUuid(),
