@@ -745,6 +745,27 @@ test("conflito de eliminação offline mostra versões e exige uma escolha expl�
   await expect.poll(() => page.evaluate(() => window.__restored)).toBe("media-conflict");
 });
 
+test("IndexedDB recusa eliminação remota quando a ficha local mudou", async ({ page }) => {
+  await page.goto("/");
+  const outcome = await page.evaluate(async () => {
+    const id = await DB.criar("jogos", {
+      team_id: DEFAULT_TEAM_ID, adversario: "Rivais", data: "2026-10-06",
+      sync_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", sync_dirty: false,
+      remote_updated_at: "v1",
+    }, { remote: true });
+    const seen = await DB.obter("jogos", id);
+    await DB.atualizar("jogos", { ...seen, nota_tatica: "Texto escrito durante o pull" });
+    let errorCode = null;
+    try { await DB.apagar("jogos", id, { remote: true, expected: seen }); }
+    catch (error) { errorCode = error.code; }
+    const retained = await DB.obter("jogos", id);
+    return { errorCode, note: retained?.nota_tatica, dirty: retained?.sync_dirty };
+  });
+  expect(outcome).toEqual({
+    errorCode: "LOCAL_DELETE_CHANGED", note: "Texto escrito durante o pull", dirty: true,
+  });
+});
+
 test("service worker não recarrega enquanto existe formulário ou sessão em utilização", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined");
@@ -763,7 +784,7 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
   await expect(page.getByText(/Atualização disponível\. Guarda o que estás a fazer/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeVisible();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v106"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v107"))).toBeNull();
 });
 
 test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
@@ -776,7 +797,7 @@ test("service worker update after an older cached reload does not stay suppresse
   }).catch(() => {});
   await reloaded;
   await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v106"))).toBe("1");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v107"))).toBe("1");
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {

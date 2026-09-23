@@ -1007,6 +1007,11 @@ function createDeviceDatabase() {
       const rows = stores.get(store) || [];
       const index = rows.findIndex((row) => row.id === id);
       if (index < 0) return false;
+      if (options.expected && JSON.stringify(rows[index]) !== JSON.stringify(options.expected)) {
+        const error = new Error("O registo local mudou antes da eliminação remota.");
+        error.code = "LOCAL_DELETE_CHANGED";
+        throw error;
+      }
       const [row] = rows.splice(index, 1);
       if (!options.remote && row.sync_id) await this.criar("sync_tombstones", {
         store, sync_id: row.sync_id, team_id: row.team_id || "default",
@@ -1086,6 +1091,38 @@ test("dois dispositivos sincronizam criação, edição e eliminação sem dupli
     assert.equal(repeated.pulled, 0);
     assert.equal((await devices[1].listar("jogos")).length, 0);
     assert.equal(remote.rows.length, 1);
+  });
+});
+
+test("eliminação remota de jogo não apaga edição local feita antes da transação", async () => {
+  await withTwoDeviceSync(async ({ devices, remoteTeamId, useDevice }) => {
+    useDevice(0);
+    const id = await devices[0].criar("jogos", {
+      team_id: "default", adversario: "Rivais", data: "2026-10-05",
+      external_key: "delete-race-match", nota_tatica: "Inicial", sync_dirty: true,
+    });
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    useDevice(1);
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    useDevice(0);
+    await devices[0].apagar("jogos", id);
+    await RemoteWorkspace._syncTombstones(remoteTeamId);
+
+    const originalDelete = devices[1].apagar;
+    devices[1].apagar = async function (store, rowId, options) {
+      if (store === "jogos" && options?.expected) {
+        const current = await this.obter(store, rowId);
+        if (!current.sync_dirty) await this.atualizar(store, {
+          ...current, nota_tatica: "Edição antes de apagar", sync_dirty: true,
+        });
+      }
+      return originalDelete.call(this, store, rowId, options);
+    };
+    useDevice(1);
+    const result = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(result.deleted, 0);
+    assert.equal(result.conflicts.some((item) => item.reason === "remote_deleted_local_dirty"), true);
+    assert.equal((await devices[1].listar("jogos"))[0].nota_tatica, "Edição antes de apagar");
   });
 });
 
@@ -1183,6 +1220,39 @@ test("tombstone de media pendente impede que a fotografia volte no pull", async 
     assert.equal(removed.deleted, 1);
     await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
     assert.equal((await devices[0].listar("media_items")).length, 0);
+  });
+});
+
+test("eliminação remota de media preserva nota local escrita antes da transação", async () => {
+  await withTwoDeviceSync(async ({ devices, remoteTeamId, useDevice }) => {
+    useDevice(0);
+    const id = await devices[0].criar("media_items", {
+      team_id: "default", subject_type: "team", subject_id: "default",
+      type: "file", title: "Evidência", url: "https://example.org/evidence",
+      sync_dirty: true,
+    });
+    await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+    useDevice(1);
+    await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+    useDevice(0);
+    await devices[0].apagar("media_items", id);
+    await RemoteWorkspace._syncTombstones(remoteTeamId);
+
+    const originalDelete = devices[1].apagar;
+    devices[1].apagar = async function (store, rowId, options) {
+      if (store === "media_items" && options?.expected) {
+        const current = await this.obter(store, rowId);
+        if (!current.sync_dirty) await this.atualizar(store, {
+          ...current, note: "Nota antes de apagar", sync_dirty: true,
+        });
+      }
+      return originalDelete.call(this, store, rowId, options);
+    };
+    useDevice(1);
+    const result = await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+    assert.equal(result.deleted, 0);
+    assert.equal(result.conflicts.some((item) => item.reason === "remote_deleted_local_dirty"), true);
+    assert.equal((await devices[1].listar("media_items"))[0].note, "Nota antes de apagar");
   });
 });
 

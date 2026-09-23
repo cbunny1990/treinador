@@ -798,6 +798,19 @@ const RemoteWorkspace = {
       throw error;
     }
   },
+  async _applyRemoteDeletion(store, local, remote, addConflict) {
+    try {
+      await DB.apagar(store, local.id, { remote: true, expected: local });
+      return true;
+    } catch (error) {
+      if (error.code !== "LOCAL_DELETE_CHANGED") throw error;
+      const current = await DB.obter(store, local.id);
+      if (current?.sync_dirty) {
+        addConflict(remoteConflict(store, current, remote, "remote_deleted_local_dirty"));
+      }
+      return false;
+    }
+  },
   async _syncRecords(remoteTeamId, userId) {
     const client = await this.init();
     const first = await client.from("workspace_records")
@@ -840,8 +853,7 @@ const RemoteWorkspace = {
           addConflict(remoteConflict(store, local, remote, "remote_deleted_local_dirty"));
           continue;
         }
-        await DB.apagar(store, local.id, { remote: true });
-        result.deleted++;
+        if (await this._applyRemoteDeletion(store, local, remote, addConflict)) result.deleted++;
       }
 
       rows = (await DB.listar(store))
@@ -873,8 +885,7 @@ const RemoteWorkspace = {
             addConflict(remoteConflict(store, local, remote, "remote_deleted_local_dirty"));
             continue;
           }
-          await DB.apagar(store, local.id, { remote: true });
-          result.deleted++;
+          if (await this._applyRemoteDeletion(store, local, remote, addConflict)) result.deleted++;
           continue;
         }
         if (!local.sync_dirty) continue;
@@ -956,8 +967,7 @@ const RemoteWorkspace = {
           addConflict(remoteConflict(store, local, remote, "remote_deleted_local_dirty"));
           continue;
         }
-        await DB.apagar(store, local.id, { remote: true });
-        result.deleted++;
+        if (await this._applyRemoteDeletion(store, local, remote, addConflict)) result.deleted++;
         continue;
       }
       if (local?.sync_dirty) {
@@ -1195,8 +1205,7 @@ const RemoteWorkspace = {
         addConflict(remoteConflict("media_items", local, remote, "remote_deleted_local_dirty"));
         continue;
       }
-      await DB.apagar("media_items", local.id, { remote: true });
-      result.deleted++;
+      if (await this._applyRemoteDeletion("media_items", local, remote, addConflict)) result.deleted++;
     }
 
     const currentCandidates = (await DB.listar("media_items"))
@@ -1216,8 +1225,7 @@ const RemoteWorkspace = {
           addConflict(remoteConflict("media_items", local, remote, "remote_deleted_local_dirty"));
           continue;
         }
-        await DB.apagar("media_items", local.id, { remote: true });
-        result.deleted++;
+        if (await this._applyRemoteDeletion("media_items", local, remote, addConflict)) result.deleted++;
         continue;
       }
       if (!local.sync_dirty) continue;
@@ -1288,8 +1296,7 @@ const RemoteWorkspace = {
           addConflict(remoteConflict("media_items", local, remote, "remote_deleted_local_dirty"));
           continue;
         }
-        await DB.apagar("media_items", local.id, { remote: true });
-        result.deleted++;
+        if (await this._applyRemoteDeletion("media_items", local, remote, addConflict)) result.deleted++;
         continue;
       }
       if (remote.storage_path && !remoteStoragePathBelongsToTeam(remote.storage_path, remoteTeamId)) {

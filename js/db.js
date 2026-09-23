@@ -225,6 +225,12 @@ const DB = {
       let failure = null;
       const remove = (anterior) => {
         try {
+          if (options.expected && JSON.stringify(anterior) !== JSON.stringify(options.expected)) {
+            failure = new Error("O registo local mudou antes da eliminação remota.");
+            failure.code = "LOCAL_DELETE_CHANGED";
+            tx.abort();
+            return;
+          }
           if (anterior && store !== "teams" && !options.remote && !_visibleInSelectedRemoteWorkspace(anterior)) {
             failure = new Error("O registo pertence a outro workspace remoto.");
             tx.abort();
@@ -245,7 +251,7 @@ const DB = {
           tx.abort();
         }
       };
-      if (keepTombstone) {
+      if (keepTombstone || options.expected) {
         const request = os.get(key);
         request.onsuccess = () => remove(request.result);
         request.onerror = () => { failure = request.error; };

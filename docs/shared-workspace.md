@@ -178,6 +178,8 @@ Ao descarregar, a app compara dentro da transação IndexedDB a cópia local vis
 
 A fotografia de perfil é atualizada pela media associada sem gravar uma ficha de atleta que tenha mudado no mesmo intervalo. Uma fotografia local mais recente aguarda a criação/receção da sua media; a ausência temporária de media não apaga um `data_url` sem referência gerida.
 
+Ao receber uma eliminação remota, a remoção local também compara a cópia vista com a linha atual dentro da transação IndexedDB. Se houve edição local entretanto, conserva-a e sinaliza o conflito, incluindo em jogos e media.
+
 Depois da v68, uma referência de documento/memória/media já expressa em UUID podia ser interpretada como ID numérico da IndexedDB. A v69 valida o UUID na equipa remota antes de o reutilizar; uma referência local ausente ou inválida fica em conflito, preservando o registo de origem, enquanto a restante sincronização continua.
 
 A reformulação remove o produto antigo da experiência sem apagar silenciosamente os dados existentes. Stores legados podem ser eliminados numa migração posterior apenas depois de confirmar que nada útil precisa de ser convertido para o novo modelo.
