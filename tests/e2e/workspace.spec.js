@@ -478,6 +478,34 @@ test("definições expõem ligação remota sem secret key", async ({ page }) =>
   expect(state.remoteTeamId).toBe(null);
 });
 
+test("definições distinguem Realtime degradado sem voltar a desenhar a página", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(async () => {
+    const teamId = "845aceb7-3350-4e52-9b5e-5279132d3ae9";
+    RemoteWorkspace._realtimeTeamId = teamId;
+    RemoteWorkspace._realtimeStatus = "degraded";
+    RemoteWorkspace.status = async () => ({
+      configured: true, signedIn: true, email: "treinador@example.test", remoteTeamId: teamId,
+      lastSyncAt: "2026-09-23T12:00:00.000Z", realtimeStatus: RemoteWorkspace._realtimeStatus, conflicts: [],
+    });
+    RemoteWorkspace.listTeams = async () => [{ id: teamId, name: "Sub-8 Teste" }];
+    MCPConnectors.list = async () => ({ ok: true, connectors: [] });
+    location.hash = "#/definicoes";
+    await router();
+  });
+
+  const realtimeStatus = page.getByRole("status").filter({ hasText: "Atualizações em tempo real indisponíveis" });
+  await expect(realtimeStatus).toBeVisible();
+  await expect(page.locator("#remote-detail")).toHaveText("Tempo real indisponível · sincroniza ao regressar");
+
+  await page.evaluate(() => {
+    RemoteWorkspace._realtimeStatus = "connected";
+    window.dispatchEvent(new CustomEvent("visioncoach:realtime-status", { detail: { status: "connected" } }));
+  });
+  await expect(page.getByRole("status").filter({ hasText: "Atualizações automáticas em tempo real ligadas." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Definições" })).toBeVisible();
+});
+
 test("alteração offline recebe UUID e eliminação cria tombstone", async ({ page }) => {
   await page.goto("/");
   const state = await page.evaluate(async () => {
@@ -961,7 +989,7 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
   await expect(page.getByText(/Atualização disponível\. Guarda o que estás a fazer/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeVisible();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v119"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v122"))).toBeNull();
 });
 
 test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
@@ -974,7 +1002,7 @@ test("service worker update after an older cached reload does not stay suppresse
   }).catch(() => {});
   await reloaded;
   await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v119"))).toBe("1");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v122"))).toBe("1");
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {

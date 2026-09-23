@@ -31,6 +31,12 @@ function fmtDate(v){
   var p=iso.split("-");
   return p[2]+"/"+p[1]+"/"+p[0];
 }
+function realtimeStatusMessage(status){
+  if(status==="connected")return "Atualizações automáticas em tempo real ligadas.";
+  if(status==="connecting")return "A ligar às atualizações em tempo real…";
+  if(status==="degraded"||status==="closed")return "Atualizações em tempo real indisponíveis. A app tenta sincronizar ao regressar; também podes sincronizar agora.";
+  return "A sincronização acontece ao abrir a app, ao regressar à ligação e quando pedes Sincronizar agora.";
+}
 function today(){return new Date().toISOString().slice(0,10);}
 function go(hash){location.hash=hash;}
 function setView(title,html,eyebrow){
@@ -67,7 +73,9 @@ async function refreshRemoteIndicator(){
       remoteDetailEl.textContent = "Falta escolher a equipa remota";
     } else {
       remoteTitleEl.textContent = "Workspace ligado";
-      remoteDetailEl.textContent = status.lastSyncAt ? "Sincronizado " + fmtDate(status.lastSyncAt) : "Pronto para sincronizar";
+      if(status.realtimeStatus==="degraded"||status.realtimeStatus==="closed")remoteDetailEl.textContent="Tempo real indisponível · sincroniza ao regressar";
+      else if(status.realtimeStatus==="connecting")remoteDetailEl.textContent="A ligar atualizações em tempo real";
+      else remoteDetailEl.textContent = status.lastSyncAt ? "Sincronizado " + fmtDate(status.lastSyncAt) : "Pronto para sincronizar";
     }
   } catch (_) {
     remoteTitleEl.textContent = "Ligação remota";
@@ -240,6 +248,11 @@ window.addEventListener("visioncoach:sync-complete",async function(){
   var scrollY=window.scrollY;
   await router();
   requestAnimationFrame(function(){ window.scrollTo(scrollX,scrollY); });
+});
+window.addEventListener("visioncoach:realtime-status",function(event){
+  refreshRemoteIndicator();
+  var realtimeHint=document.getElementById("remote-realtime-status");
+  if(realtimeHint)realtimeHint.textContent=realtimeStatusMessage(event.detail?.status);
 });
 window.addEventListener("focus",function(){ RemoteWorkspace.scheduleSync(150); });
 document.addEventListener("visibilitychange",function(){
@@ -798,6 +811,7 @@ function remoteAccountHTML(status,teams,options){
   if(status.remoteTeamId){
     html+='<div class="row" style="margin:4px 0 8px"><span class="badge ready">Sync automático</span><span class="meta">Este dispositivo usa o workspace remoto partilhado.</span></div>';
     html+='<div class="toolbar"><button class="btn accent" type="button" data-action="remote-sync">Sincronizar agora</button><button class="btn secondary" type="button" data-action="remote-consolidate">Consolidar dispositivos</button></div>';
+    html+='<div class="hint" id="remote-realtime-status" role="status">'+esc(realtimeStatusMessage(status.realtimeStatus))+'</div>';
     html+='<div class="hint">Consolidar faz uma união segura dos dados locais deste dispositivo com o workspace remoto, sem apagar conteúdo durante a reconciliação.</div>';
     html+='<div class="hint">ID remoto: '+esc(status.remoteTeamId)+'</div>';
     if(status.lastSyncAt) html+='<div class="hint">Última sincronização: '+esc(new Date(status.lastSyncAt).toLocaleString("pt-PT"))+'</div>';
