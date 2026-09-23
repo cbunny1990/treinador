@@ -42,7 +42,20 @@ test("sincronização mantém a posição de leitura quando a página atualiza",
   await page.evaluate(() => window.scrollTo(0, 720));
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(600);
   const before = await page.evaluate(() => window.scrollY);
-  await page.evaluate(() => window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", { detail: { conflicts: [] } })));
+  await page.evaluate(async () => {
+    const originalRouteOnce = routeOnce;
+    routeOnce = async () => {
+      await new Promise(resolve => setTimeout(resolve, 80));
+      return originalRouteOnce();
+    };
+    try {
+      const inFlightRoute = router();
+      setTimeout(() => window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", { detail: { conflicts: [] } })), 10);
+      await inFlightRoute;
+    } finally {
+      routeOnce = originalRouteOnce;
+    }
+  });
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThanOrEqual(before - 4);
   await expect(page.getByRole("heading", { name: "Calendário", exact: true })).toBeVisible();
 });
