@@ -1,8 +1,8 @@
 const {test,expect}=require('@playwright/test');
 test.use({serviceWorkers:'block'});
 async function seed(page){
-  await page.goto('/#/treinos');await expect(page.getByRole('heading',{name:'Planeador de treino'})).toBeVisible();
-  return page.evaluate(async()=>{
+  await page.goto('/#/treinos');await page.waitForFunction(()=>typeof go==='function');await expect(page.getByRole('heading',{name:'Planeador de treino'})).toBeVisible();
+  const result=await page.evaluate(async()=>{
     RemoteWorkspace.scheduleSync=()=>{};
     const a=crypto.randomUUID(),b=crypto.randomUUID(),p=crypto.randomUUID();
     await DB.criar('exercicios',{team_id:DEFAULT_TEAM_ID,workspace_v2:true,sync_id:a,external_key:'exercise-ativacao-conduzir-passar-dar-opcao',nome:'Passe de teste',objetivo:'Dar apoio',series:1,duracao_serie_min:10,passos:['Passar e mudar de posição']});
@@ -11,6 +11,7 @@ async function seed(page){
     const id=await DB.criar('treinos',{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:'2026-09-24',hora:'19:15',status:'ready',objetivo:'Continuidade',notas:'Plano original',blocos:[{order:0,block_id:'first',exercise_ref:a,exercise_name:'Passe de teste',duration_min:10,notes:'Nota original'},{order:1,block_id:'second',exercise_ref:b,exercise_name:'Jogo de teste',duration_min:15}]});
     go('#/sessao/'+id);return {id,player,p,a,b};
   });
+  await expect(page.getByRole('button',{name:'Iniciar treino',exact:true})).toBeVisible();return result;
 }
 for(const viewport of [{width:390,height:844},{width:1440,height:900}]){
   test('session attendance, timer, reload, notes, finish and reset '+viewport.width,async({page,context})=>{

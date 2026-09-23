@@ -1,0 +1,23 @@
+const {test,expect}=require('@playwright/test');test.use({serviceWorkers:'block'});
+test('player history distinguishes call-up from recorded starts, entries, exits and minutes',async({page})=>{
+ await page.goto('/#/equipa');await page.waitForFunction(()=>typeof VisionMatchVisual!=='undefined'&&typeof DB!=='undefined');
+ const fixture=await page.evaluate(async()=>{
+  RemoteWorkspace.scheduleSync=()=>{};const refs=Array.from({length:6},()=>crypto.randomUUID()),players=refs.map((sync_id,i)=>({sync_id,nome:i===0?'Atleta Histórico':'Colega '+i,numero:i+1,estado_disponibilidade:'disponivel'}));
+  const playerId=await DB.criar('jogadores',{team_id:DEFAULT_TEAM_ID,sync_id:refs[0],nome:'Atleta Histórico',estado_disponibilidade:'disponivel'});
+  await DB.criar('jogos',{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:'2026-09-20',adversario:'Convocação sem minutos',estado:'agendado',callup:{player_ids:refs},lineup:{goalkeeper_id:refs[1],starters:[refs[0],refs[2],refs[3],refs[4]],system:'1-2-1'}});
+  let match={team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:'2026-09-22',adversario:'Jogo com rotação',estado:'agendado',callup:{player_ids:refs},lineup:{goalkeeper_id:refs[1],starters:[refs[0],refs[2],refs[3],refs[4]],system:'1-2-1'}};
+  const t=Date.parse('2026-09-22T18:00:00.000Z');
+  match=VisionMatchVisual.apply(match,{type:'start',confirmed:true,expected_revision:0},{controller_id:'history-test',players,now:t});
+  match=VisionMatchVisual.apply(match,{type:'substitute',id:crypto.randomUUID(),confirmed:true,out_ref:refs[0],in_ref:refs[5],expected_revision:VisionMatchVisual.state(match).revision},{controller_id:'history-test',players,now:t+600000});
+  match=VisionMatchVisual.apply(match,{type:'substitute',id:crypto.randomUUID(),confirmed:true,out_ref:refs[5],in_ref:refs[0],expected_revision:VisionMatchVisual.state(match).revision},{controller_id:'history-test',players,now:t+900000});
+  match=VisionMatchVisual.apply(match,{type:'pause',expected_revision:VisionMatchVisual.state(match).revision},{controller_id:'history-test',players,now:t+1200000});
+  const played=await DB.criar('jogos',match);return {playerId,played};
+ });
+ await page.goto('/#/equipa/jogador/'+fixture.playerId);const history=page.locator('section.section').filter({has:page.getByRole('heading',{name:'Histórico de jogos'})});
+ await expect(history.locator('.metric-value').nth(0)).toHaveText('2');await expect(history.locator('.metric-value').nth(1)).toHaveText('1');await expect(history.locator('.metric-value').nth(2)).toHaveText('1 · 1');await expect(history.locator('.metric-value').nth(3)).toHaveText('15:00');await expect(history).toContainText('Entrou aos 15 min');await expect(history).toContainText('Saiu aos 10 min');await expect(history).toContainText('Convocado');await expect(history).toContainText('Minutos não registados');
+});
+test('individual goal retains history through edit and explicit deletion',async({page,context})=>{
+ await page.goto('/#/equipa');await page.waitForFunction(()=>typeof PlayerGoals!=='undefined'&&typeof go==='function');const id=await page.evaluate(()=>{RemoteWorkspace.scheduleSync=()=>{};return DB.criar('jogadores',{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),nome:'Atleta Objetivos',estado_disponibilidade:'disponivel'});});await page.goto('/#/equipa/jogador/'+id);await page.setViewportSize({width:390,height:844});const form=page.locator('form[data-form="player-goal"]');await context.setOffline(true);await form.locator('[name="title"]').fill('Apoio após passe');await form.locator('[name="started_at"]').fill('2026-09-01');await form.locator('[name="notes"]').fill('Criar linha de passe.');await form.getByRole('button',{name:'Guardar objetivo'}).click();await expect.poll(async()=>page.evaluate(id=>DB.obter('jogadores',id).then(p=>PlayerGoals.state(p).items.length),id)).toBe(1);
+ await page.getByRole('button',{name:'Editar',exact:true}).click();await expect(form.locator('[name="goal_id"]')).not.toHaveValue('');await form.locator('[name="status"]').selectOption('improved');await form.locator('[name="notes"]').fill('Melhorou neste treino, confirmado pelo treinador.');await form.getByRole('button',{name:'Guardar objetivo'}).click();await expect.poll(async()=>page.evaluate(id=>DB.obter('jogadores',id).then(p=>PlayerGoals.state(p).items[0]),id)).toMatchObject({status:'improved',history:[{status:'active'}]});
+ page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Apagar',exact:true}).click();await expect.poll(async()=>page.evaluate(id=>DB.obter('jogadores',id).then(p=>PlayerGoals.state(p).items.length),id)).toBe(0);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await context.setOffline(false);
+});

@@ -40,5 +40,9 @@ test('PWA inclui todos os originais e o módulo antes da interface',()=>{
   const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
   for(const item of visuals.approved) assert.ok(sw.includes('./'+item.src));
   assert.ok(html.indexOf('js/exercise_visuals.js')<html.indexOf('js/training_ui.js'));
-  assert.match(sw,/vision-coach-v67/);
+  assert.ok(html.indexOf('js/team_development.js')<html.indexOf('js/app.js'));
+  assert.ok(sw.includes('./js/team_development.js'));
+  assert.match(sw,/vision-coach-v102/);
+  const index=fs.readFileSync(path.join(__dirname,"..","index.html"),"utf8");
+  assert.match(index,/const serviceWorkerVersion = 102;/);
 });

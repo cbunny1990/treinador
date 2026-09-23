@@ -36,16 +36,16 @@ As provas em formato móvel/PC são testes de navegador; não constituem observa
 ## Operações para a IA autorizada
 A ligação MCP existente ganha:
 - `get_training_session`: plano, presenças, execução e resumo; ler não inicia o treino.
-- `update_training_attendance`: estados explícitos para UUIDs de jogadores da mesma equipa; nomes vêm dos registos reais, não de texto inventado pelo agente.
-- `write_training_session_note`: criar/editar uma nota de bloco pelo seu `note_id` estável.
+- `update_training_attendance`: estados explícitos para UUIDs de jogadores da mesma equipa; nomes vêm dos registos reais, não de texto inventado pelo agente. Exige confirmação explícita do treinador.
+- `write_training_session_note`: criar/editar texto factual fornecido pelo treinador numa sessão executada, pelo seu `note_id` estável; exige confirmação explícita.
 - `remove_training_session_note`: remoção explicitamente confirmada.
-- `control_training_session`: iniciar, pausar, retomar, avançar, terminar, assumir controlo em pausa ou apagar o registo, apenas quando o treinador pedir.
-- `duplicate_training_plan`: nova data, plano limpo e `request_key` estável para tentativas repetidas da mesma operação.
+- `control_training_session`: iniciar, pausar, retomar, avançar, terminar, assumir controlo em pausa ou apagar o registo apenas com confirmação explícita do treinador e revisões atuais.
+- `duplicate_training_plan`: nova data, plano limpo e `request_key` estável para tentativas repetidas da mesma operação; exige `confirmed: true`, `expected_updated_at` e `expected_revision` atuais da origem.
 
 Ler primeiro pelo UUID remoto ou `external_key` exato. Para alterar, fornecer `expected_updated_at` e `expected_revision` atuais. Não usar IDs numéricos de outro browser.
 Leitura exige scope `read`; escritas exigem também `write`. O servidor filtra sempre a equipa do conector, usa `head_coach_put_record` e regista autoria do agente.
 O modelo é partilhado com o frontend; não são duas implementações independentes do cronómetro.
-Não enviar comandos para iniciar sessões futuras nem marcar atletas presentes por inferência.
+Não enviar comandos para iniciar sessões futuras nem marcar atletas presentes por inferência. Os schemas MCP também exigem `confirmed: true` para presenças, notas e qualquer controlo do cronómetro; o handler volta a validar essa confirmação, mesmo se um cliente ignorar o schema.
 
 ## Testes e atualização
 `npm run check`, `npm test`, `npx playwright test tests/e2e/training_session.spec.js`, e a suíte geral `npm run test:e2e`.
@@ -53,8 +53,8 @@ Cobertura: estado inicial, presenças, histórico, pausa, retoma, persistência,
 Foi reproduzida na base anterior uma falha de recarga durante a primeira instalação do service worker: interrompia formulários. A primeira instalação deixa de forçar recarga; uma atualização posterior é adiada quando há formulário ou treino em campo aberto.
 A app passa para v65. Imagens originais, procedimentos de upload e a funcionalidade de consulta permanecem intactos.
 
-## Próxima fase (não incluída)
-Ligar avaliação à memória e produzir propostas de continuidade explicadas e aprovadas pelo treinador. Depois: jogo visual/rotações, relatórios PDF e planeamento da época.
+## Continuidade
+O fluxo seguinte avaliação → memória → proposta → aprovação explícita → treino está documentado em [training-continuity.md](training-continuity.md). A análise de jogos e a preparação de prioridades entre jogos/treinos estão em [match-analysis.md](match-analysis.md). As fases de jogo, relatórios e época encontram-se no [roadmap](development-roadmap.md); validação em aparelhos físicos continua separada dos testes de navegador.
 
 ## Referência técnica do temporizador
 https://developer.mozilla.org/en-US/docs/Web/API/Window/setTimeout

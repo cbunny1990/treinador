@@ -1,15 +1,16 @@
 // Evidence and approval use the same pure model as the PWA; multi-record writes use one RPC transaction.
 import '../../../js/training_continuity.js';
 const C=globalThis.VisionTrainingContinuity;
-const idProps={id:{type:'string'},external_key:{type:'string'}};
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const idProps={id:{type:'string',format:'uuid'},external_key:{type:'string'}};
 const select={oneOf:[{required:['id'],not:{required:['external_key']}},{required:['external_key'],not:{required:['id']}}]};
 const baseline={expected_updated_at:{type:'string'},expected_revision:{type:'integer',minimum:0}};
 const review={type:'object',properties:{...Object.fromEntries(Object.keys(C.fields).map(k=>[k,{type:'string',maxLength:5000}])),focus_outcome:{type:'string',enum:Object.keys(C.outcomes)}},additionalProperties:false};
-const changes={type:'object',properties:{objective:{type:'string',maxLength:5000},rationale:{type:'string',maxLength:5000},success_criterion:{type:'string',maxLength:5000},date:{type:'string'},time:{type:'string'},blocks:{type:'array',maxItems:30,items:{type:'object',properties:{exercise_ref:{type:'string'},phase:{type:'string',enum:['ativacao','principal','jogo','retorno']},duration_min:{type:'number',exclusiveMinimum:0,maximum:240},notes:{type:'string',maxLength:5000}},required:['exercise_ref','phase','duration_min'],additionalProperties:false}}},required:['objective','rationale','success_criterion','date','time','blocks'],additionalProperties:false};
+const changes={type:'object',properties:{objective:{type:'string',maxLength:5000},rationale:{type:'string',maxLength:5000},success_criterion:{type:'string',maxLength:5000},date:{type:'string',format:'date'},time:{type:'string',pattern:'^([01]\\d|2[0-3]):[0-5]\\d$'},blocks:{type:'array',maxItems:30,items:{type:'object',properties:{exercise_ref:{type:'string',format:'uuid'},phase:{type:'string',enum:['ativacao','principal','jogo','retorno']},duration_min:{type:'number',exclusiveMinimum:0,maximum:240},notes:{type:'string',maxLength:5000}},required:['exercise_ref','phase','duration_min'],additionalProperties:false}}},required:['objective','rationale','success_criterion','date','time','blocks'],additionalProperties:false};
 function tool(name,description,properties,required,readOnly=false,destructive=false){return {name,description,inputSchema:{type:'object',properties:{...idProps,...properties},required,additionalProperties:false,...select},annotations:{readOnlyHint:readOnly,destructiveHint:destructive}};}
 export const CONTINUITY_TOOLS=[
  tool('get_training_continuity','Read review, original quoted evidence, current proposal/revision and follow-up progress. Read-only: never creates a proposal or training.',{},[],true),
- tool('save_training_review','Save the coach-provided review and upsert ONE linked memory atomically. Do not infer improvement. Preserve existing content not explicitly replaced.',{...baseline,review},['expected_updated_at','expected_revision','review']),
+ tool('save_training_review','Save the explicitly confirmed, coach-provided review and upsert ONE linked memory atomically. Do not infer improvement. Preserve existing content not explicitly replaced.',{...baseline,confirmed:{type:'boolean',const:true},review},['expected_updated_at','expected_revision','confirmed','review']),
  tool('clear_training_review','Remove the explicitly confirmed review and archive its linked memory. Preserves the training, notes and approved follow-up.',{...baseline,confirmed:{type:'boolean',const:true}},['expected_updated_at','expected_revision','confirmed'],false,true),
  tool('prepare_training_continuity','Prepare a DRAFT from the recorded next action or remaining issue. Reuses existing exercises; never invents evidence. An unchanged draft is returned as-is unless replace_existing=true was explicitly requested.',{...baseline,replace_existing:{type:'boolean'}},['expected_updated_at','expected_revision']),
  tool('update_training_continuity','Revise a draft as the authorized Head Coach, using recorded evidence and existing exercises. Explain your reasoning and specify observable success criteria. This does NOT create a training.',{...baseline,changes},['expected_updated_at','expected_revision','changes']),
@@ -18,6 +19,7 @@ export const CONTINUITY_TOOLS=[
 ];
 async function find(admin,c,kind,args,{optional=false}={}){
  if(Boolean(args.id)===Boolean(args.external_key))throw new Error('exactly_one_identifier_required');
+ if(args.id&&!UUID.test(args.id))throw new Error('invalid_training_uuid');
  let q=admin.from('workspace_records').select('*').eq('team_id',c.team_id).eq('kind',kind).is('deleted_at',null);
  q=args.id?q.eq('id',args.id):q.eq('payload->>external_key',args.external_key);
  const {data,error}=await q;if(error)throw error;if(data?.length>1)throw new Error('ambiguous_identity');if(!data?.length&&!optional)throw new Error('training_not_found');return data?.[0]||null;
@@ -30,9 +32,11 @@ async function output(admin,c,row,extra={}){
 }
 export async function executeContinuityTool(admin,c,name,args){
  if(!c.scopes?.includes('read'))throw new Error('connector_scope_read_required');
+ if(!CONTINUITY_TOOLS.some(tool=>tool.name===name))throw new Error('unknown_continuity_tool');
  const source=await find(admin,c,'training',args),row=model(source),state=C.state(row);
  if(name==='get_training_continuity')return output(admin,c,source);
  if(!c.scopes?.includes('write'))throw new Error('connector_scope_write_required');
+ if(name==='save_training_review'&&args.confirmed!==true)throw new Error('explicit_confirmation_required');
  if(name==='approve_training_continuity'&&state.proposal?.status==='approved'){
   if(args.confirmed!==true)throw new Error('explicit_approval_required');
   const out=await output(admin,c,source,{already_approved:true});if(!out.followup)throw new Error('approved_followup_deleted_or_missing');return out;

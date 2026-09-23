@@ -136,6 +136,14 @@ function _syncUuid() {
     return v.toString(16);
   });
 }
+function _selectedRemoteTeamId() {
+  try { return JSON.parse(globalThis.localStorage?.getItem("treinador.remote.supabase.v1") || "{}").remoteTeamId || null; }
+  catch (_) { return null; }
+}
+function _visibleInSelectedRemoteWorkspace(row) {
+  const selected = _selectedRemoteTeamId();
+  return !selected || !row?.remote_team_id || row.remote_team_id === selected;
+}
 function _prepareSyncRecord(store, obj, options = {}) {
   if (!SYNCABLE_STORES.has(store) || options.remote) return { ...obj };
   if (store === "exercicios" && !obj.workspace_v2 && !obj.sync_id) return { ...obj };
@@ -146,6 +154,8 @@ function _prepareSyncRecord(store, obj, options = {}) {
     sync_dirty: true,
     sync_local_updated_at: now,
   };
+  if (store === "teams") delete next.remote_team_id;
+  else next.remote_team_id = obj.remote_team_id || _selectedRemoteTeamId() || null;
   if (store !== "activity_items") {
     next.sync_actor_type = "human";
     next.sync_actor_label = "Treinador";
@@ -156,6 +166,11 @@ function _notifyRemoteSync(store, options = {}) {
   if (options.remote || !SYNCABLE_STORES.has(store)) return;
   if (globalThis.RemoteWorkspace?.scheduleSync) globalThis.RemoteWorkspace.scheduleSync();
 }
+function _remoteTeamIdForTombstone(record) {
+  try {
+    return record?.remote_team_id || JSON.parse(globalThis.localStorage?.getItem("treinador.remote.supabase.v1") || "{}").remoteTeamId || null;
+  } catch (_) { return null; }
+}
 
 const DB = {
   async listar(store) {
@@ -164,7 +179,8 @@ const DB = {
   },
   async obter(store, id) {
     const os = await _tx(store, "readonly");
-    return _prom(os.get(store === "teams" ? String(id) : Number(id)));
+    const row = await _prom(os.get(store === "teams" ? String(id) : Number(id)));
+    return store === "teams" || _visibleInSelectedRemoteWorkspace(row) ? row : undefined;
   },
   async criar(store, obj, options = {}) {
     const os = await _tx(store, "readwrite");
@@ -187,6 +203,7 @@ const DB = {
       req.onsuccess=()=>{
         try{
           if(!req.result) throw new Error("O registo foi apagado ou já não existe.");
+          if(store!=="teams"&&!_visibleInSelectedRemoteWorkspace(req.result)) throw new Error("O registo pertence a outro workspace remoto.");
           result=_prepareSyncRecord(store,transform(req.result));
           if(!result||result.id!==req.result.id||result.then) throw new Error("Alteração local inválida.");
           os.put(result);
@@ -199,24 +216,51 @@ const DB = {
   },
   async apagar(store, id, options = {}) {
     const key = store === "teams" ? String(id) : Number(id);
-    const anterior = SYNCABLE_STORES.has(store) && !options.remote ? await this.obter(store, id) : null;
-    const os = await _tx(store, "readwrite");
-    await _prom(os.delete(key));
-    if (anterior?.sync_id) {
-      await this.criar("sync_tombstones", {
-        store, sync_id: anterior.sync_id, team_id: anterior.team_id || DEFAULT_TEAM_ID,
-        storage_path: anterior.storage_path || null,
-        expected_updated_at: anterior.remote_updated_at || null,
-        created_at: new Date().toISOString(),
-      });
-    }
-    _notifyRemoteSync(store, options);
-    return true;
+    const keepTombstone = SYNCABLE_STORES.has(store) && !options.remote;
+    const db = await abrirDB();
+    return new Promise((resolve, reject) => {
+      const names = keepTombstone ? [store, "sync_tombstones"] : [store];
+      const tx = db.transaction(names, "readwrite");
+      const os = tx.objectStore(store);
+      let failure = null;
+      const remove = (anterior) => {
+        try {
+          if (anterior && store !== "teams" && !options.remote && !_visibleInSelectedRemoteWorkspace(anterior)) {
+            failure = new Error("O registo pertence a outro workspace remoto.");
+            tx.abort();
+            return;
+          }
+          os.delete(key);
+          if (anterior?.sync_id) tx.objectStore("sync_tombstones").add({
+            store,
+            sync_id: anterior.sync_id,
+            team_id: anterior.team_id || DEFAULT_TEAM_ID,
+            remote_team_id: _remoteTeamIdForTombstone(anterior),
+            storage_path: anterior.storage_path || null,
+            expected_updated_at: anterior.remote_updated_at || null,
+            created_at: new Date().toISOString(),
+          });
+        } catch (error) {
+          failure = error;
+          tx.abort();
+        }
+      };
+      if (keepTombstone) {
+        const request = os.get(key);
+        request.onsuccess = () => remove(request.result);
+        request.onerror = () => { failure = request.error; };
+      } else os.delete(key);
+      tx.oncomplete = () => { _notifyRemoteSync(store, options); resolve(true); };
+      tx.onabort = () => reject(failure || tx.error || new Error("Não foi possível apagar o registo."));
+      tx.onerror = () => { failure = failure || tx.error; };
+    });
   },
   async porIndice(store, indice, valor) {
     const os = await _tx(store, "readonly");
-    return _prom(os.index(indice).getAll(valor));
+    const rows = await _prom(os.index(indice).getAll(valor));
+    return store === "teams" ? rows : rows.filter(_visibleInSelectedRemoteWorkspace);
   },
+  visivelNoWorkspaceAtivo(row) { return _visibleInSelectedRemoteWorkspace(row); },
   // Exportar/importar toda a base de dados (cópia de segurança).
   async exportarTudo() {
     const dados = {};

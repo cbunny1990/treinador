@@ -31,3 +31,15 @@ Lê `docs/training-continuity.md`. Usa as sete operações MCP com versões atua
 
 ## Jogo visual e utilização
 Lê `docs/match-visual.md`. Usa o jogo existente e UUIDs estáveis. Planear uma rotação não executa a substituição. Só inicia cronómetros ou regista entradas/saídas mediante pedido explícito; nunca atribui minutos por inferência. Preserva convocatória/alinhamento iniciais e usa movimentos para mudanças em jogo.
+
+## Lances e estatísticas
+Lê `docs/match-events.md`. Regista apenas lances explicitamente confirmados e reportados pelo treinador; nunca inventa observações, remates ou golos. As estatísticas são contadas dos lances registados e a posse é medida/estimada/desconhecida conforme introduzida — nunca apresentar estimativa como medição. Corrigir lances exige pausa ou jogo terminado.
+
+## Análise pós-jogo
+Lê `docs/match-analysis.md` e `docs/match-video-evidence.md`. Mostra só factos presentes nos registos e mantém separados facto, observação, interpretação, hipótese e decisão. Atualizar a memória requer ação explícita do treinador. Uma proposta do Head Coach não é decisão nem cria treino; evidências têm de apontar para registos existentes e escritas têm de usar revisão e `expected_updated_at`.
+
+## Evolução individual
+Lê `docs/player-development.md`. Objetivos e estados são definidos pelo treinador; sessões trabalhadas não são prova automática de melhoria. Preserva evidências, histórico e UUIDs estáveis. Não cria rankings públicos de crianças.
+
+## Relatórios
+Lê `docs/reports.md`. Exporta a partir de dados persistidos atuais, mostra proveniência e dados ausentes, e inclui imagens aprovadas sem as reprocessar. Exportar é leitura; não altera sessões.

@@ -164,10 +164,12 @@ tr:last-child td{border-bottom:0}
 .calendar-kind.match{background:#dbeafe;color:#1d4ed8}
 .calendar-kind.training{background:var(--accent-soft);color:var(--accent)}
 .match-stage-nav{position:sticky;top:78px;z-index:10;display:flex;gap:8px;margin:18px 0;padding:8px;background:rgba(244,247,251,.94);backdrop-filter:blur(12px);border-radius:14px}
-.match-stage-nav button{border:1px solid var(--line);background:#fff;border-radius:10px;padding:8px 12px;font-weight:750;font-size:12px;cursor:pointer}
+.match-stage-nav button{border:1px solid var(--line);background:#fff;border-radius:10px;padding:8px 12px;font-weight:750;font-size:12px;cursor:pointer;min-height:44px}
 .match-stage{scroll-margin-top:142px}
 .match-form{padding:18px}
 .match-form h3{font-size:15px}
+.match-form input,.match-form select{min-height:44px}
+.match-form .btn{min-height:44px}
 .match-progress{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px}
 .match-progress span{padding:8px;border-radius:10px;background:var(--surface-2);border:1px solid var(--line);font-size:11px;font-weight:800;text-align:center;color:var(--muted)}
 .match-progress span.done{background:#ecfdf5;border-color:#a7f3d0;color:#047857}
@@ -297,6 +299,11 @@ tr:last-child td{border-bottom:0}
 .match-visual-grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:18px;align-items:start}
 .match-pitch{position:relative;width:100%;aspect-ratio:3/4;border:3px solid #f8fafc;border-radius:15px;background:repeating-linear-gradient(0deg,#258448 0%,#258448 12.5%,#298c4d 12.5%,#298c4d 25%);box-shadow:0 0 0 1px #166534;overflow:hidden;isolation:isolate}
 .pitch-half{position:absolute;inset:50% 4% auto;height:2px;background:#ffffffb3;pointer-events:none}
+.pitch-zone-grid{position:absolute;inset:0;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);pointer-events:none}
+.pitch-zone-grid span{border:1px dashed #ffffff24}
+.team-goal-detail,.team-week-detail{margin-top:12px;padding-top:10px;border-top:1px solid #dbe5df}
+.team-goal-detail h4,.team-week-detail h4{margin:10px 0 4px}
+.team-goal-detail ul,.team-week-detail ul{margin:4px 0;padding-left:22px}
 .pitch-centre{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:28%;aspect-ratio:1;border:2px solid #ffffffb3;border-radius:50%;pointer-events:none}
 .pitch-box{position:absolute;left:24%;width:52%;height:15%;border:2px solid #ffffffb3;pointer-events:none}
 .pitch-box-top{top:-2px}.pitch-box-bottom{bottom:-2px}
@@ -307,9 +314,17 @@ tr:last-child td{border-bottom:0}
 .pitch-player-name{width:100%;white-space:normal;overflow-wrap:anywhere;font-size:11px;font-weight:800;line-height:1.15;text-shadow:0 1px 3px #000;background:#0b122099;border-radius:5px;padding:2px 3px}
 .pitch-player small{font-size:9px;font-weight:700;text-shadow:0 1px 3px #000}
 .pitch-player.selected,.pitch-player:focus-visible{border-color:#fde047;background:#0b122045;outline:0}
+.pitch-markings{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3;overflow:visible}
+.tactical-cone{position:absolute;transform:translate(-50%,-50%);z-index:4;color:#fb923c;font-size:clamp(20px,6vw,34px);line-height:1;text-shadow:0 1px 4px #111;pointer-events:none}
+.match-visual-grid [aria-pressed="true"]{outline:3px solid #facc15;outline-offset:2px}
 .match-bench{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .match-live-clock{font-size:clamp(44px,12vw,74px);font-weight:850;letter-spacing:-.04em;font-variant-numeric:tabular-nums;margin:10px 0}
 [data-match-visual] .btn{min-height:44px}
+[data-match-visual] input,[data-match-visual] select,[data-match-form] input,[data-match-form] select{min-height:44px}
+[data-match-form] .btn{min-height:44px}
 [data-match-visual] [hidden]{display:none!important}
 [data-match-visual] td{font-variant-numeric:tabular-nums}
+.match-event-quick{grid-template-columns:repeat(4,minmax(0,1fr))}
+.match-event-quick .btn{min-height:48px;text-align:center;white-space:normal}
 @media(max-width:800px){.match-visual-grid{grid-template-columns:1fr}.match-visual-grid .hero-main{padding:16px}.match-pitch{max-width:480px;margin:0 auto}.match-visual-grid .form-grid{grid-template-columns:1fr}}
+@media(max-width:600px){.match-event-quick{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}}

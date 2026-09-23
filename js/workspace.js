@@ -1,10 +1,13 @@
 "use strict";
 
 const WORKSPACE_DEFAULT_TEAM_ID = typeof DEFAULT_TEAM_ID === "undefined" ? "default" : DEFAULT_TEAM_ID;
-const WORKSPACE_DOC_TYPES = ["training_plan", "match_analysis", "note", "brief"];
+const WORKSPACE_DOC_TYPES = ["training_plan", "match_analysis", "weekly_plan", "team_goal", "season_index", "note", "brief"];
 const WORKSPACE_DOC_LABELS = {
   training_plan: "Plano de treino",
   match_analysis: "Análise de jogo",
+  weekly_plan: "Plano semanal",
+  team_goal: "Objetivo da equipa",
+  season_index: "Arquivo de épocas",
   note: "Nota",
   brief: "Briefing",
 };
@@ -198,8 +201,8 @@ const WorkspaceStore = {
       this.listActivity(teamId, 50),
     ]);
     const activePlayers = players.filter((player) => player?.plantel_ativo !== false);
-    const futureMatches = matches.filter((m) => wsDate(m.data) >= today).sort((a, b) => String(a.data).localeCompare(String(b.data)));
-    const futureTrainings = trainings.filter((t) => wsDate(t.data) >= today).sort((a, b) => String(a.data).localeCompare(String(b.data)));
+    const futureMatches = matches.filter((m) => wsDate(m.data) >= today && !["cancelado", "concluido"].includes(String(m.estado || "").toLowerCase())).sort((a, b) => String(a.data).localeCompare(String(b.data)));
+    const futureTrainings = trainings.filter((t) => wsDate(t.data) >= today && t.session?.status !== "completed").sort((a, b) => String(a.data).localeCompare(String(b.data)));
     const data = { team, players: activePlayers, matches, trainings, memory, documents, media, activity };
     return {
       ...data,

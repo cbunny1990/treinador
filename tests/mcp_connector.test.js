@@ -46,8 +46,19 @@ test("MCP expõe ferramentas Vision Coach essenciais", () => {
     "list_exercises", "list_trainings", "update_player_availability", "create_exercise", "create_training",
     "update_match_pre_game", "add_external_media",
   ]) assert.match(mcp, new RegExp('name: "' + tool + '"'));
+  assert.match(mcp, /REPORT_TOOLS, executeReportTool/);
+  assert.match(mcp, /\.\.\.REPORT_TOOLS/);
+  assert.match(mcp, /REPORT_TOOLS\.some\(\(tool\) => tool\.name === name\).*executeReportTool/);
+  assert.match(mcp, /SERVER_VERSION = "1\.11\.0"/);
   assert.match(mcp, /2026-07-28/);
   assert.match(mcp, /2025-11-25/);
+});
+
+test("MCP distingue dados observados do adversário no plano pré-jogo", () => {
+  for (const field of ["opponent_formation", "opponent_style", "opponent_strengths", "opponent_vulnerabilities"])
+    assert.match(mcp, new RegExp(field));
+  assert.match(mcp, /adversario_pontos_fortes/);
+  assert.match(mcp, /adversario_vulnerabilidades/);
 });
 
 test("browser não persiste token MCP", () => {
@@ -76,4 +87,60 @@ test("MCP limita gestão de jogadores a disponibilidade operacional", () => {
   assert.match(mcp, /player_not_in_roster/);
   assert.doesNotMatch(mcp, /name: "delete_player"/);
   assert.doesNotMatch(mcp, /name: "retire_player"/);
+});
+
+test("MCP writes that change attendance, timers or coach decisions require confirmation and source revision", () => {
+  const block = (name) => {
+    const start = mcp.indexOf(`name: "${name}"`);
+    assert.notEqual(start, -1, `${name} schema exists`);
+    const end = mcp.indexOf("\n  {", start + 1);
+    return mcp.slice(start, end < 0 ? undefined : end);
+  };
+  for (const name of ["update_player_availability", "set_player_roster_status", "remove_player_permanently", "update_match_pre_game"]) {
+    const schema = block(name);
+    assert.match(schema, /confirmed:\s*\{\s*type:\s*"boolean",\s*const:\s*true\s*\}/, name);
+    assert.match(schema, /expected_updated_at/, name);
+    assert.match(schema, /oneOf:/, `${name} requires exactly one stable identifier`);
+  }
+  for (const name of ["create_training", "create_exercise"]) {
+    const schema = block(name);
+    assert.match(schema, /confirmed:\s*\{\s*type:\s*"boolean",\s*const:\s*true\s*\}/, name);
+    assert.match(schema, /required:[^\]]*confirmed/, name);
+  }
+  assert.match(mcp, /if \(args\?\.confirmed !== true\) throw new Error\("explicit_confirmation_required"\);[\s\S]{0,220}if \(!args\.expected_updated_at \|\| args\.expected_updated_at !== existing\.updated_at\) throw new Error\("record_conflict_read_again"\);/);
+});
+
+test("MCP external media registration requires explicit coach confirmation", () => {
+  const start = mcp.indexOf('name: "add_external_media"');
+  const block = mcp.slice(start, mcp.indexOf("\n  },", start));
+  assert.match(block, /confirmed:\s*\{\s*type:\s*"boolean",\s*const:\s*true\s*\}/);
+  assert.match(block, /required:[^\]]*confirmed/);
+  assert.match(mcp, /if \(args\?\.confirmed !== true\) throw new Error\("explicit_confirmation_required"\);[\s\S]{0,100}const url = String\(args\?\.url/);
+});
+
+test("MCP rejects ambiguous record selectors and permanently removes athletes through the audited versioned RPC", () => {
+  assert.match(mcp, /Boolean\(args\?\.id\) === Boolean\(args\?\.external_key\)/);
+  assert.match(mcp, /args\?\.id && !validUuid\(args\.id\)/);
+  const start = mcp.indexOf('if (name === "remove_player_permanently")');
+  const end = mcp.indexOf('if (name === "create_exercise")', start);
+  const removal = mcp.slice(start, end);
+  assert.match(removal, /args\?\.confirmed !== true/);
+  assert.match(removal, /args\.expected_updated_at!==existing\.updated_at/);
+  assert.match(removal, /rpc\("head_coach_soft_delete_record"/);
+  assert.match(removal, /p_expected_updated_at:existing\.updated_at/, "permanent removal must compare-and-set the version the coach read");
+  assert.doesNotMatch(removal, /from\("workspace_records"\)\.update/);
+});
+
+test("MCP training creation requires explicit coach confirmation and current source-game revision", () => {
+  const start = mcp.indexOf('name: "create_training"');
+  const end = mcp.indexOf('name: "update_match_pre_game"', start);
+  const schema = mcp.slice(start, end);
+  assert.match(schema, /source_match_expected_updated_at/);
+  assert.match(schema, /confirmed:\s*\{\s*type:\s*"boolean",\s*const:\s*true\s*\}/);
+  assert.match(schema, /required:[^\]]*confirmed/);
+  const handlerStart = mcp.indexOf('if (name === "create_training")');
+  const handlerEnd = mcp.indexOf('if (name === "update_match_pre_game")', handlerStart);
+  const handler = mcp.slice(handlerStart, handlerEnd);
+  assert.match(handler, /args\?\.confirmed !== true/);
+  assert.match(handler, /source_match_expected_updated_at[^;]*record_conflict_read_source_again/);
 });

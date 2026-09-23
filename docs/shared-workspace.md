@@ -27,6 +27,8 @@ A aplicação principal tem cinco áreas:
 - **Planos** — planos de treino, análises de jogo, notas e briefings.
 - **Media** — biblioteca visual partilhada.
 - **Timeline** — histórico de dados, documentos e ações de humano/agente.
+- **Pesquisa e histórico** — pesquisa transversal com filtros de data/época e atalhos para a origem dos registos.
+- **Semana e evolução** — organização semanal e objetivos explícitos da equipa, sem inferir melhoria.
 
 Chat embutido, OpenRouter, gerador de treino IA, biblioteca antiga de exercícios e dashboard Head Coach antigo foram removidos do produto ativo.
 
@@ -55,6 +57,9 @@ Tipos:
 - `match_analysis`
 - `note`
 - `brief`
+- `weekly_plan` — foco semanal, treinos/jogo associados por UUID e avaliação do treinador.
+- `team_goal` — objetivo da equipa com origem, sessões, facto observado, interpretação, hipótese e decisão.
+- `season_index` — épocas, plantéis por UUID estável e limites temporais para relatórios separados, sem mover ou apagar o histórico.
 
 Estados:
 - `draft`
@@ -87,7 +92,7 @@ Campos principais:
 
 O browser expõe `AgentWorkspaceAPI` com schema:
 
-`treinador-agent-workspace@1`
+`treinador-agent-workspace@2`
 
 Operações atuais:
 
@@ -100,7 +105,7 @@ Operações atuais:
 - `listMedia(input)`
 - `addMediaLink(input)`
 
-Estas operações usam exatamente os mesmos stores e regras usados pela interface humana.
+As operações de leitura usam os mesmos stores e UUIDs da interface. A API do browser limita a escrita genérica a `brief` em rascunho. `updateDocument` só edita um brief de agente ainda em rascunho e exige `expected_updated_at`; não pode aprovar ou mudar o tipo do documento. `addHypothesis` só guarda uma hipótese após `confirmed: true`, com citações presentes em registos do workspace e identidade idempotente. Não cria factos nem observações atribuídas ao treinador. `addObservation` é um alias de compatibilidade para `addHypothesis` na versão 2. Para planos, análise de jogo, objetivos e decisões, o Head Coach usa as operações MCP específicas com revisão, evidências e confirmação requeridas por cada módulo.
 
 ### Exemplo conceptual
 
@@ -110,18 +115,21 @@ O agente recebe:
 
 Fluxo pretendido:
 
-1. `snapshot()` — lê equipa, jogadores, jogos, memória, planos e media.
-2. O agente faz a análise.
-3. `createDocument({ type: "match_analysis", ... })`
-4. `createDocument({ type: "training_plan", ... })`
-5. A atividade fica registada com `actor = "agent"`.
-6. O treinador abre a app e encontra os documentos já no workspace.
+1. `snapshot()` e operações MCP de leitura — recolhem os mesmos registos e respetivas versões.
+2. O agente prepara uma análise ou proposta através da operação MCP específica, com as evidências citadas.
+3. Um brief livre pode ser guardado como `draft`; a API genérica não cria análises, objetivos ou planos prontos/aprovados.
+4. Se a proposta originar um treino, o treinador revê e aprova explicitamente através do fluxo de continuidade.
+5. A atividade e a autoria do Head Coach ficam registadas no workspace partilhado.
+
+Uma hipótese só entra na memória depois de confirmação do treinador, validada contra texto que existe nas fontes escolhidas. A chave de idempotência impede repetir a mesma hipótese e as citações ficam ligadas pelos UUIDs remotos.
 
 ## Media e privacidade
 
 O contrato público do agente **não inclui `data_url` local**. Um ficheiro guardado apenas no IndexedDB não deve ser enviado automaticamente para um agente externo.
 
-A fundação remota usa Storage privado Supabase. Ficheiros remotos são acedidos com sessão autorizada ou URLs assinadas temporárias; `data_url` local continua excluído do contrato do agente.
+Exceção explícita por operação: `evaluate_cross_session_relation` envia ao TypeSafe apenas a afirmação escolhida e duas citações textuais selecionadas pelo Head Coach, com tipo de origem e contexto mínimo (data/adversário/zona quando disponíveis). A operação só é executada quando o agente a invoca, revalida as revisões antes do envio, e não transmite media, fotos, o registo completo ou dados de outras equipas. A chamada usa `TYPESAFE_API_KEY` configurada no servidor Edge Function; a chave não é exposta ao browser nem ao treinador. O resultado é uma probabilidade interpretativa sujeita a revisão humana.
+
+A fundação remota usa Storage privado Supabase. Ficheiros remotos são acedidos com sessão autorizada ou URLs assinadas temporárias; `data_url` local continua excluído do contrato do agente. Falhas de sincronização com o dispositivo ainda online são repetidas com espera progressiva limitada (2 s até 60 s); alterações locais mantêm-se na base local até uma passagem posterior sincronizar ou apresentar conflito.
 
 ## Estado atual da ligação remota
 
@@ -137,9 +145,18 @@ A fundação remota está implementada com Supabase:
 8. activity log e tabela de autorizações do agente;
 9. sincronização automática ao alterar dados, abrir a app ou recuperar rede.
 
-O código não contém credenciais privadas. A PWA aceita apenas Project URL + publishable key; secret/service-role ficam reservadas ao futuro servidor do agente.
+O código não contém credenciais privadas. A PWA aceita apenas Project URL + publishable key; secret/service-role ficam reservadas às Edge Functions.
 
-Para o cenário “abro o ChatGPT e ele vai à app sozinho”, falta apenas expor o backend através de um **servidor MCP autenticado** que aplique `agent_authorizations` e as operações do workspace. A base de dados e sincronização usadas por esse servidor já ficam preparadas.
+Eliminações offline guardam a versão remota que o treinador viu. A sincronização usa essa versão numa atualização condicional; se outro dispositivo editou entretanto, mantém o tombstone e apresenta o conflito com as duas versões. Em Definições, o treinador escolhe manter a cópia remota ou confirmar a sua eliminação. Se houver nova edição durante a decisão, a comparação condicional volta a recusar a eliminação e sinaliza o conflito.
+Antes de qualquer consulta por identidade, o cliente verifica que `sync_id` é um UUID remoto. IDs locais legados sem versão remota confirmada são substituídos por um UUID estável e sincronizados; IDs inválidos com versão remota ou tombstone ficam em conflito, sem consulta malformada nem perda de dados.
+O mesmo controlo é aplicado durante a consolidação inicial: um valor local como `default` recebe UUID antes de entrar no fluxo normal de sincronização; uma identidade inválida já associada a uma versão remota não é reatribuída.
+Cada registo sincronizado guarda localmente a UUID do workspace remoto de origem. Ao mudar de workspace, a app não envia registos nem media já associados a outra equipa; tombstones também continuam dirigidos à equipa de origem. Registos antigos sem origem recuperável ficam em conflito para evitar uma cópia silenciosa entre equipas.
+As relações entre media, atletas, jogos, treinos, memórias e documentos usam UUIDs remotos. A conversão para IDs locais só ocorre quando o registo pertence ao workspace remoto ativo; uma referência local que não possa ser resolvida é recusada, em vez de enviar um ID numérico de outro browser.
+Remover media da biblioteca é uma eliminação lógica sincronizada: o registo deixa de aparecer nas vistas ativas, mas o blob permanece no bucket privado para preservar o histórico. A confirmação na interface informa que esta ação não elimina fisicamente o ficheiro.
+Trocar de workspace exige ligação para identificar os dados locais antigos; a seleção não muda offline. A interface filtra registos e media pela equipa remota ativa, mantendo dados locais ainda não associados visíveis no workspace atual.
+Se um registo eliminado remotamente ainda tiver alterações locais por sincronizar, essas alterações ficam preservadas. Em Definições, o treinador pode confirmar o restauro da cópia remota na versão eliminada, usando comparação de versão antes de voltar a enviar as alterações locais.
+
+O MCP do Vision Coach já está exposto como Edge Function autenticada por tokens de conector guardados apenas como hash. Cada conector fica associado a uma equipa e a scopes explícitos; operações de escrita passam pelas RPCs auditadas e verificam a versão esperada do registo. Registar presença, nota factual, criar treino, editar o alinhamento inicial, controlar cronómetros e alterar disponibilidade/plantel exigem `confirmed: true`; o handler repete a validação e recusa versões antigas. O gateway Head Coach usa separadamente `agent_authorizations`. Estas funções estão no repositório e não se considera que estejam publicadas até confirmar o estado remoto do projeto Supabase.
 
 ## Migração da aplicação anterior
 
@@ -159,6 +176,20 @@ A suíte deve validar, no mínimo:
 - escrita do agente através de `AgentWorkspaceAPI`;
 - autoria distinta humano/agente;
 - ausência do chatbot e gerador IA antigos no bundle ativo.
+
+### Verificação multi-dispositivo (23/09/2026)
+
+Os testes de `remote_workspace.test.js` executam o sincronizador do cliente com duas bases locais isoladas e um backend em memória partilhado. Confirmam: criação no dispositivo A e leitura no B; edição no B e atualização no A; eliminação offline com tombstone, propagação da eliminação e ausência de ressurreição; conflito explícito quando A e B editam a mesma revisão; upload de media para um caminho do workspace e leitura no outro por URL assinada. Também confirmam que chamadas simultâneas para o mesmo workspace não correm em paralelo e provocam uma passagem adicional para apanhar alterações durante a sync; uma chamada para outro workspace espera pela execução atual, e a seleção de equipa não muda até essa execução terminar. São testes determinísticos do contrato de sincronização, não uma ligação ao projeto Supabase nem um ensaio em aparelhos físicos.
+
+Cobertura adicional no mesmo teste: ida PC → backend → telemóvel → backend → PC para jogo com o formato real `match_events` + `visual_match`, treino com presenças e exercícios, memória e proposta/documento; os minutos são recalculados pelos movimentos sincronizados e os lances conservam UUIDs. A fotografia de atleta é enviada como media ligada à UUID remota do jogador, descarregada como URL assinada, apresentada no perfil do telemóvel e outra fotografia regressa ao PC sem transportar `data_url`. Apagar a fotografia mais recente offline cria tombstone, remove-a nos dois dispositivos após reconexão, mantém a fotografia anterior e não a ressuscita na passagem seguinte. O teste compara os dados aninhados e confirma uma única cópia por referência estável. O backend continua em memória: isto confirma os mapeamentos do cliente, mas não valida RLS, Realtime, autenticação, Storage real ou sessões em aparelhos.
+
+Validação read-only do projeto Supabase em 23/09/2026: projeto ativo; RLS ligado nas tabelas partilhadas consultadas; bucket `team-media` marcado como privado. Esta consulta verifica configuração, mas não substitui uma tentativa de acesso com sessões reais de treinador em duas equipas/dispositivos.
+
+Auditoria read-only adicional em 23/09/2026: `workspace_records`, `media_assets` e `teams` constam da publicação `supabase_realtime`, mas `activity_log` não constava, embora o cliente sincronize essa tabela. Por isso, alterações que só criem atividade não acordavam imediatamente os outros dispositivos. O cliente agora também subscreve `activity_log`, e a migração local `20260923120000_workspace_activity_realtime.sql` adiciona a tabela à publicação. Verificada com Supabase CLI 2.117.0 numa stack Postgres local sem dados do treinador: todas as migrações locais aplicaram, `db lint --local --schema public --fail-on error` não encontrou erros, reaplicar esta migração funcionou e `pg_publication_tables` devolveu uma linha para `public.activity_log`. Esta migração ainda não foi aplicada ao projeto publicado. O projeto confirmou RLS nas tabelas partilhadas e bucket `team-media` privado; o advisor de segurança também sinalizou que a proteção de palavras-passe comprometidas está desativada.
+
+Teste de integração local (`npm run test:supabase-local`): com duas sessões de treinador sintéticas, usa o cliente Supabase real contra localhost para verificar criação/leitura da equipa, escrita e leitura por membro, isolamento de uma conta externa, conflito por `updated_at`, tombstone, upload privado e URL assinada para foto de atleta. As credenciais são recolhidas da stack local apenas em memória, o runner recusa URLs não locais e as contas sintéticas são removidas no fim. A migração `20260923120100_allow_team_owner_select_during_creation.sql` corrige a criação: permite ao proprietário ler apenas a sua própria linha durante `INSERT ... RETURNING`, antes de o trigger adicionar a membership; membros continuam autorizados pela policy normal. Não foi aplicada ao projeto publicado.
+
+Continuam por verificar com autenticação e aparelhos reais: PC criar → telemóvel receber; telemóvel editar/apagar → PC receber; reconexão após trabalho offline; conflito entre edições feitas nos dois aparelhos; upload e leitura de fotografia/media; confirmação visual após reabrir a PWA e atualizar o service worker. Não declarar a auditoria PC↔telemóvel concluída com base na emulação ou no backend em memória. A sincronização de `activity_log` em produção depende de aplicar a migração pendente.
 
 
 ## Publicação rápida de imagens por IA

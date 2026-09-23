@@ -43,7 +43,7 @@ Ler pelo UUID remoto ou `external_key` exato. `get_training_continuity` devolve 
 Escritas exigem `read` + `write`, `expected_updated_at` e `expected_revision` atuais.
 
 - `get_training_continuity`: leitura, sem criar propostas.
-- `save_training_review`: campos fornecidos pelo treinador; mantém campos não enviados e atualiza a memória ligada.
+- `save_training_review`: campos fornecidos pelo treinador; requer `confirmed: true`, mantém campos não enviados e atualiza a memória ligada.
 - `clear_training_review`: remover a avaliação com confirmação explícita.
 - `prepare_training_continuity`: rascunho identificado como modelo local. Devolve um rascunho inalterado sem o substituir, salvo `replace_existing: true` explicitamente solicitado.
 - `update_training_continuity`: revisão da IA, com foco, justificação, critério observável, data, hora e exercícios existentes.

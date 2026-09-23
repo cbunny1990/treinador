@@ -1,6 +1,6 @@
 "use strict";
 
-const AGENT_WORKSPACE_SCHEMA = "treinador-agent-workspace@1";
+const AGENT_WORKSPACE_SCHEMA = "treinador-agent-workspace@2";
 
 function agentText(value, max) {
   return String(value == null ? "" : value).trim().slice(0, max || 12000);
@@ -39,6 +39,12 @@ function agentPublicDocument(doc) {
     created_at: doc.created_at,
     updated_at: doc.updated_at,
   };
+}
+function agentTextContains(value, quote) {
+  if (typeof value === "string") return value.includes(quote);
+  if (Array.isArray(value)) return value.some((item) => agentTextContains(item, quote));
+  if (value && typeof value === "object") return Object.values(value).some((item) => agentTextContains(item, quote));
+  return false;
 }
 
 const AgentWorkspaceAPI = {
@@ -81,12 +87,16 @@ const AgentWorkspaceAPI = {
   },
 
   async createDocument(input) {
+    if (!input || input.type !== "brief")
+      throw new Error("O agente só pode criar brief de trabalho; usa a operação MCP específica para outros tipos de registo.");
+    if (input.status && input.status !== "draft")
+      throw new Error("O agente só pode preparar documentos em rascunho.");
     return WorkspaceStore.saveDocument({
       team_id: agentTeamId(input && input.team_id),
-      type: input && input.type,
+      type: "brief",
       title: input && input.title,
       body: input && input.body,
-      status: input && input.status || "draft",
+      status: "draft",
       target_date: input && input.target_date || null,
       refs: input && input.refs || [],
       created_by: "agent",
@@ -97,26 +107,59 @@ const AgentWorkspaceAPI = {
   async updateDocument(id, changes) {
     const existing = await WorkspaceStore.getDocument(id);
     if (!existing) throw new Error("Documento não encontrado.");
+    if (existing.type !== "brief" || existing.status !== "draft")
+      throw new Error("O agente só pode editar os seus briefs ainda em rascunho.");
+    if (!changes || !existing.updated_at || changes.expected_updated_at !== existing.updated_at)
+      throw new Error("O documento mudou. Lê a versão atual antes de editar.");
+    const editable = {};
+    for (const key of ["title", "body", "target_date", "refs"])
+      if (Object.prototype.hasOwnProperty.call(changes, key)) editable[key] = changes[key];
     return WorkspaceStore.saveDocument({
       ...existing,
-      ...(changes || {}),
+      ...editable,
       id: existing.id,
       updated_by: "agent",
       updated_by_label: agentText(changes && changes.agent_label, 120) || "Head Coach",
     });
   },
 
-  async addObservation(input) {
-    return WorkspaceStore.captureObservation({
-      team_id: agentTeamId(input && input.team_id),
-      actor: "agent",
-      actor_label: agentText(input && input.agent_label, 120) || "Head Coach",
-      title: input && input.title,
-      content: input && input.content,
-      occurred_at: input && input.occurred_at,
-      refs: input && input.refs || [],
+  async addHypothesis(input) {
+    if (!input || input.confirmed !== true) throw new Error("Uma hipótese só pode ser guardada após confirmação explícita do treinador.");
+    const teamId = agentTeamId(input.team_id), title = agentText(input.title, 180), content = agentText(input.content, 3000);
+    if (!title || !content) throw new Error("A hipótese precisa de título e conteúdo.");
+    const sourceStores = { match: "jogos", training: "treinos", player: "jogadores", exercise: "exercicios", observation: "memory_items" };
+    const evidence = Array.isArray(input.evidence) ? input.evidence : [];
+    if (!evidence.length || evidence.length > 10) throw new Error("A hipótese precisa de uma a dez citações de registos existentes.");
+    const verified = [];
+    for (const ref of evidence) {
+      const type = agentText(ref && ref.type, 40), sourceId = agentText(ref && ref.id, 100), quote = agentText(ref && ref.quote, 1000);
+      if (!sourceStores[type] || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sourceId) || !quote)
+        throw new Error("Cada evidência precisa de tipo, UUID estável e citação textual.");
+      const rows = await DB.porIndice(sourceStores[type], "team_id", teamId);
+      const source = rows.find((row) => String(row.sync_id || "") === sourceId && DB.visivelNoWorkspaceAtivo(row));
+      if (!source || !agentTextContains(source, quote)) throw new Error("Uma citação não corresponde a um registo disponível neste workspace.");
+      verified.push({ type, id: sourceId, quote });
+    }
+    const unique = [...new Map(verified.map((ref) => [ref.type + ":" + ref.id + ":" + ref.quote, ref])).values()];
+    const identity = JSON.stringify([teamId, title.toLowerCase(), content, unique]);
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(identity)));
+    const externalKey = "agent-hypothesis-v1:" + [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const previous = (await HeadCoachMemory.list(teamId, { includeArchived: true })).find((item) => item.external_key === externalKey);
+    if (previous) return previous.id;
+    const first = unique[0], sourceType = ["match", "training", "player"].includes(first.type) ? first.type : "system";
+    const id = await HeadCoachMemory.create({
+      team_id: teamId, kind: "hypothesis", title, content, occurred_at: input.occurred_at,
+      source: { type: sourceType, label: "Head Coach · hipótese", ref_type: first.type, ref_id: first.id },
+      subject_refs: unique.map((ref) => ({ type: ref.type, id: ref.id, relation: "evidence_for" })),
+      external_key: externalKey,
+      metadata: { actor: "agent", actor_label: agentText(input.agent_label, 120) || "Head Coach", classification: "hypothesis", coach_confirmed: true, evidence_refs: unique },
     });
+    await WorkspaceStore.logActivity({ team_id: teamId, actor: "agent", actor_label: "Head Coach", action: "prepared_hypothesis", summary: "Registou hipótese com evidências · " + title, entity_type: "memory", entity_id: id });
+    return id;
   },
+
+  // Compatibility alias: v2 stores a sourced hypothesis, never a coach fact.
+  async addObservation(input) { return this.addHypothesis(input); },
 
   async listMedia(input) {
     input = input || {};
@@ -152,5 +195,5 @@ const AgentWorkspaceAPI = {
 };
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { AGENT_WORKSPACE_SCHEMA, agentPublicDocument, agentPublicMedia };
+  module.exports = { AGENT_WORKSPACE_SCHEMA, agentPublicDocument, agentPublicMedia, agentTextContains };
 }
