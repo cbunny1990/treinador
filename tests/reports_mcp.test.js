@@ -55,3 +55,28 @@ test('report MCP enforces scope, team isolation and one exact match identity',as
  await assert.rejects(api.executeReportTool(f.admin,c,'get_match_report',{id:MATCH,report_type:'training'}),/invalid_match_report_type/);
  assert.equal(f.calls.length,0);
 });
+
+test('training report MCP reads current exercise and approved image metadata without writing',async()=>{
+ const trainingId='11111111-1111-4111-8111-111111111111';
+ const exerciseId='22222222-2222-4222-8222-222222222222';
+ const playerId='33333333-3333-4333-8333-333333333333';
+ const rows=[
+  {id:trainingId,team_id:'team-a',kind:'training',updated_at:'v3',deleted_at:null,payload:{external_key:'thursday',data:'2026-09-24',hora:'18:00',objetivo:'Passe e apoio',blocos:[{exercise_ref:exerciseId,duration_min:15}],session:{status:'not_started',attendance:[{player_ref:playerId,name:'Atleta',status:'present'}]}}},
+  {id:exerciseId,team_id:'team-a',kind:'exercise',updated_at:'v5',deleted_at:null,payload:{nome:'Passe em triângulo',montagem:'Três cones',passos:'Passar e apoiar',visual_image:{sha256:'approved-sha',width:1448,height:1024,source:'approved'}}},
+ ];
+ let writes=0;
+ const admin={from(table){assert.equal(table,'workspace_records');const filters=[];return{select(){return this},eq(k,v){filters.push([k,v]);return this},is(k,v){filters.push([k,v]);return this},in(k,v){filters.push([k,v]);return this},then(resolve){return Promise.resolve({data:rows.filter(row=>filters.every(([k,v])=>k==='payload->>external_key'?row.payload.external_key===v:Array.isArray(v)?v.includes(row[k]):row[k]===v)).map(x=>structuredClone(x)),error:null}).then(resolve)}}},async rpc(){writes++;throw Error('read-only')}};
+ const tool=api.REPORT_TOOLS.find(x=>x.name==='get_training_report');
+ assert.equal(tool.annotations.readOnlyHint,true);
+ const out=await api.executeReportTool(admin,c,'get_training_report',{id:trainingId});
+ assert.equal(out.schema,'vision-training-report@1');
+ assert.equal(out.training.objective,'Passe e apoio');
+ assert.equal(out.attendance.entries[0].player_ref,playerId);
+ assert.equal(out.planned_blocks[0].exercise_name,'Passe em triângulo');
+ assert.equal(out.planned_blocks[0].setup,'Três cones');
+ assert.equal(out.planned_blocks[0].approved_image.sha256,'approved-sha');
+ assert.equal(out.missing_data.execution,true);
+ assert.equal(writes,0);
+ await assert.rejects(api.executeReportTool(admin,{...c,team_id:'team-b'},'get_training_report',{id:trainingId}),/training_not_found/);
+ await assert.rejects(api.executeReportTool(admin,c,'get_training_report',{id:'local-1'}),/invalid_training_uuid/);
+});

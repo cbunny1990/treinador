@@ -11,3 +11,5 @@ Os relatórios só leem dados guardados, não criam nem alteram registos e não 
 ## Head Coach / MCP
 
 `get_match_report` prepara dados estruturados para a ficha do jogo ou para o relatório pós-jogo a partir do mesmo jogo persistido. Devolve resultado com proveniência, convocatória/alinhamento, lances e estatísticas contadas, utilização reconstruída do cronómetro e movimentos, análise do treinador e momentos de vídeo. Campos ausentes são assinalados; posse estimada mantém a origem estimada. A operação é só de leitura, exige scope `read`, identificador remoto UUID ou `external_key` exato e aplica o isolamento da equipa no servidor. Não gera um ficheiro PDF no servidor nem altera a ficha.
+
+`get_training_report` prepara os dados estruturados do plano de treino persistido: data, objetivo, sequência, montagem, passos, presenças marcadas, execução registada e identidade da imagem original aprovada. Também é só de leitura, assinala dados em falta e exige scope `read`, UUID ou `external_key` exato e pertença à equipa. O teste MCP confirma que não escreve dados nem devolve treinos de outra equipa.
