@@ -117,6 +117,33 @@ test("workspace indica falha de sincronização e limpa o aviso após recuperaç
   await expect(page.getByRole("status").filter({ hasText: "Não foi possível confirmar a sincronização." })).toHaveCount(0);
 });
 
+test("Workspace inicia a leitura remota e os três snapshots locais em paralelo", async ({ page }) => {
+  await page.goto("/#/calendario");
+  await expect(page.getByRole("heading", { name: "Calendário" })).toBeVisible();
+  await page.evaluate(() => {
+    const started = [];
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    window.__workspaceReadStarted = started;
+    window.__releaseWorkspaceReads = release;
+    const read = (name, value) => { started.push(name); return gate.then(() => value); };
+    RemoteWorkspace.status = () => read("remote-status", { configured: false, signedIn: false, remoteTeamId: null, conflicts: [] });
+    WorkspaceStore.buildSnapshot = () => read("local-snapshot", {
+      team: { nome: "Equipa de teste" }, players: [], matches: [], trainings: [], memory: [],
+      documents: [], media: [], activity: [], next_match: null, next_training: null,
+      priorities: [], recent_documents: [], recent_activity: [], timeline: [],
+    });
+    WorkspaceStore.listDocuments = () => read("season-documents", []);
+    window.__workspaceRenderPromise = viewWorkspace();
+  });
+  await expect.poll(() => page.evaluate(() => [...window.__workspaceReadStarted].sort())).toEqual([
+    "local-snapshot", "remote-status", "season-documents",
+  ]);
+  await page.evaluate(() => window.__releaseWorkspaceReads());
+  await page.evaluate(async () => window.__workspaceRenderPromise);
+  await expect(page.getByText("Human–AI Shared Workspace")).toBeVisible();
+});
+
 test("sincronização preserva texto por guardar num formulário comum", async ({ page }) => {
   await page.goto("/#/equipa/jogador/novo");
   const form = page.locator('form[data-form="player"]');
@@ -1087,7 +1114,7 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
   await expect(page.getByText(/Atualização disponível\. Guarda o que estás a fazer/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeVisible();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v124"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v125"))).toBeNull();
 });
 
 test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
@@ -1100,7 +1127,7 @@ test("service worker update after an older cached reload does not stay suppresse
   }).catch(() => {});
   await reloaded;
   await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v124"))).toBe("1");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v125"))).toBe("1");
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {

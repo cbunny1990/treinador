@@ -342,9 +342,13 @@ function activityHTML(rows,limit){
 
 async function viewWorkspace(options){
   options=options||{};
-  var remoteStatus=await RemoteWorkspace.status();
-  var s=await WorkspaceStore.buildSnapshot();
-  var reportSeasonDocs=await WorkspaceStore.listDocuments(DEFAULT_TEAM_ID,{includeArchived:true}),reportSeasonState=VisionSeasons.state(reportSeasonDocs.find(function(d){return d.type==='season_index';})),reportSeason=reportSeasonState.items.find(function(x){return x.id===reportSeasonState.active_id;});
+  var workspaceReads=await Promise.all([
+    RemoteWorkspace.status(),
+    WorkspaceStore.buildSnapshot(),
+    WorkspaceStore.listDocuments(DEFAULT_TEAM_ID,{includeArchived:true}),
+  ]);
+  var remoteStatus=workspaceReads[0],s=workspaceReads[1],reportSeasonDocs=workspaceReads[2];
+  var reportSeasonState=VisionSeasons.state(reportSeasonDocs.find(function(d){return d.type==='season_index';})),reportSeason=reportSeasonState.items.find(function(x){return x.id===reportSeasonState.active_id;});
   var teamName=(s.team&&s.team.nome)||"Equipa";
   var context=[s.team&&s.team.clube,s.team&&s.team.escalao,s.team&&s.team.epoca].filter(Boolean).join(" · ");
   var recentDocs=s.recent_documents.length?s.recent_documents.map(documentCard).join(""):'<div class="empty">Ainda não existem planos ou análises partilhadas.</div>';
