@@ -771,12 +771,14 @@ test("treino sincronizado converte exercício local em UUID estável sem alterar
     async obter(store, id) { assert.equal(store, "exercicios"); return id === 7 ? { ...exercise } : null; },
     async atualizar(store, row) { assert.equal(store, "exercicios"); exercise = { ...row }; return row; },
   };
-  const training = { id: 3, team_id: "default", blocos: [{ exercise_ref: "7", duration_min: 12 }] };
+  const training = { id: 3, team_id: "default", blocos: [{ exercise_ref: "7", duration_min: 12 }], session: { blocks: [{ exercise_ref: "7", planned_min: 12, elapsed_ms: 2000 }] } };
   try {
     const payload = await RemoteWorkspace._payloadForRemote("treinos", training, team);
     assert.match(payload.blocos[0].exercise_ref, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     assert.equal(payload.blocos[0].exercise_ref, exercise.sync_id);
+    assert.equal(payload.session.blocks[0].exercise_ref, exercise.sync_id);
     assert.equal(training.blocos[0].exercise_ref, "7");
+    assert.equal(training.session.blocks[0].exercise_ref, "7");
     await assert.rejects(RemoteWorkspace._payloadForRemote("treinos", { ...training, blocos: [{ exercise_ref: "999" }] }, team), error => error.code === "LOCAL_REFERENCE_CONFLICT" && error.reason === "subject_not_found_locally");
     exercise.remote_team_id = "33333333-3333-4333-8333-333333333333";
     await assert.rejects(RemoteWorkspace._payloadForRemote("treinos", training, team), error => error.code === "LOCAL_REFERENCE_CONFLICT" && error.reason === "subject_other_team");

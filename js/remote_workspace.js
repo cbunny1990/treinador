@@ -626,16 +626,22 @@ const RemoteWorkspace = {
   },
   async _payloadForRemote(store, local, remoteTeamId) {
     const payload = remotePayload(local);
-    if (store === "treinos" && Array.isArray(payload.blocos)) {
+    const mapExerciseBlocks = async (source) => {
       const blocks = [];
-      for (const block of payload.blocos) {
+      for (const block of source) {
         if (!block?.exercise_ref) { blocks.push(block); continue; }
         blocks.push({
           ...block,
           exercise_ref: await this._subjectRemoteRef("exercise", block.exercise_ref, remoteTeamId),
         });
       }
-      payload.blocos = blocks;
+      return blocks;
+    };
+    if (store === "treinos") {
+      if (Array.isArray(payload.blocos)) payload.blocos = await mapExerciseBlocks(payload.blocos);
+      if (Array.isArray(payload.session?.blocks)) {
+        payload.session = { ...payload.session, blocks: await mapExerciseBlocks(payload.session.blocks) };
+      }
     }
     if (Array.isArray(payload.subject_refs)) {
       payload.subject_refs = await this._refsForRemote(payload.subject_refs, remoteTeamId);

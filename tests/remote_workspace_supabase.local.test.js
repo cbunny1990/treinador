@@ -154,7 +154,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
       team_id: "local-coach", sync_id: refs.historyTraining, remote_team_id: teamId, sync_dirty: true,
       external_key: "local-player-history-training", data: "2026-09-02", objetivo: "Passe + apoio",
       blocos: [{ exercise_ref: String(exerciseId), duration_min: 12 }],
-      session: { attendance: [{ player_ref: refs.player, name: "Atleta sintético", status: "present" }] },
+      session: { attendance: [{ player_ref: refs.player, name: "Atleta sintético", status: "present" }], blocks: [{ exercise_ref: String(exerciseId), planned_min: 12, elapsed_ms: 60_000 }] },
     });
     const proposalBody = { objective: "Apoio após passe", agent_proposal: { status: "proposed", rationale: "Proposta para revisão do treinador", evidence: [{ type: "match", id: refs.liveMatch }, { type: "training", id: refs.historyTraining }] } };
     await devices[0].criar("workspace_documents", {
@@ -190,6 +190,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.notEqual(phoneLegacyId.sync_id, "default");
     assert.notEqual(phoneDeleted.id, deletedId);
     assert.equal(phoneHistoryTraining.blocos[0].exercise_ref, phoneExercise.sync_id);
+    assert.equal(phoneHistoryTraining.session.blocks[0].exercise_ref, phoneExercise.sync_id);
     assert.equal(JSON.parse(phoneProposal.body).agent_proposal.status, "proposed");
     assert.equal(JSON.parse(phonePcDeletedProposal.body).agent_proposal.status, "proposed");
     assert.equal(phoneLive.match_events.events[0].id, refs.lossEvent);
