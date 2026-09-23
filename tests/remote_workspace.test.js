@@ -65,14 +65,16 @@ test("realtime agenda sincronização para alterações de atividade da equipa",
     scheduleSync: RemoteWorkspace.scheduleSync,
     channel: RemoteWorkspace._realtimeChannel,
     teamId: RemoteWorkspace._realtimeTeamId,
+    status: RemoteWorkspace._realtimeStatus,
   };
   const subscriptions = [];
   const scheduled = [];
+  let onStatus;
   const client = {
     channel() {
       return {
         on(_type, filter, callback) { subscriptions.push({ filter, callback }); return this; },
-        subscribe() { return this; },
+        subscribe(callback) { onStatus = callback; return this; },
       };
     },
   };
@@ -80,18 +82,32 @@ test("realtime agenda sincronização para alterações de atividade da equipa",
   RemoteWorkspace.scheduleSync = (delay) => scheduled.push(delay);
   RemoteWorkspace._realtimeChannel = null;
   RemoteWorkspace._realtimeTeamId = null;
+  RemoteWorkspace._realtimeStatus = "not_started";
   try {
     await RemoteWorkspace.startRealtime("team-1");
+    assert.equal(RemoteWorkspace._realtimeStatus, "connecting");
+    onStatus("SUBSCRIBED");
+    assert.equal(RemoteWorkspace._realtimeStatus, "connected");
+    assert.deepEqual(scheduled, [0]);
     const activity = subscriptions.find(({ filter }) => filter.table === "activity_log");
     assert.ok(activity);
     assert.equal(activity.filter.filter, "team_id=eq.team-1");
     activity.callback();
-    assert.deepEqual(scheduled, [120]);
+    assert.deepEqual(scheduled, [0, 120]);
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    try {
+      onStatus("CHANNEL_ERROR");
+      assert.equal(RemoteWorkspace._realtimeStatus, "degraded");
+    } finally {
+      console.warn = originalWarn;
+    }
   } finally {
     RemoteWorkspace.init = originals.init;
     RemoteWorkspace.scheduleSync = originals.scheduleSync;
     RemoteWorkspace._realtimeChannel = originals.channel;
     RemoteWorkspace._realtimeTeamId = originals.teamId;
+    RemoteWorkspace._realtimeStatus = originals.status;
   }
 });
 

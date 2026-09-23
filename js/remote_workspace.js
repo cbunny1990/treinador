@@ -209,6 +209,12 @@ function remoteEmitSync(result) {
     window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", { detail: result || {} }));
   } catch (_) {}
 }
+function remoteEmitRealtimeStatus(result) {
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return;
+  try {
+    window.dispatchEvent(new CustomEvent("visioncoach:realtime-status", { detail: result || {} }));
+  } catch (_) {}
+}
 
 function remoteDataUrlToBlob(dataUrl) {
   const parts = String(dataUrl || "").split(",");
@@ -298,6 +304,7 @@ const RemoteWorkspace = {
   _syncAgain: false,
   _realtimeChannel: null,
   _realtimeTeamId: null,
+  _realtimeStatus: "not_started",
 
   scheduleSync(delay = 1400) {
     clearTimeout(this._syncTimer);
@@ -340,6 +347,9 @@ const RemoteWorkspace = {
       this._realtimeChannel = null;
       this._realtimeTeamId = null;
     }
+    this._realtimeTeamId = teamId;
+    this._realtimeStatus = "connecting";
+    remoteEmitRealtimeStatus({ teamId, status: this._realtimeStatus });
     const schedule = () => this.scheduleSync(120);
     const channel = client
       .channel("vision-coach-" + teamId)
@@ -348,13 +358,23 @@ const RemoteWorkspace = {
       .on("postgres_changes", { event:"*", schema:"public", table:"activity_log", filter:"team_id=eq." + teamId }, schedule)
       .on("postgres_changes", { event:"*", schema:"public", table:"teams", filter:"id=eq." + teamId }, schedule)
       .subscribe((status) => {
-        if (status === "SUBSCRIBED") this.scheduleSync(0);
+        if (this._realtimeTeamId !== teamId) return;
+        if (status === "SUBSCRIBED") {
+          this._realtimeStatus = "connected";
+          remoteEmitRealtimeStatus({ teamId, status: this._realtimeStatus });
+          this.scheduleSync(0);
+        }
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          this._realtimeStatus = "degraded";
+          remoteEmitRealtimeStatus({ teamId, status: this._realtimeStatus });
           console.warn("Realtime Vision Coach:", status);
+        }
+        if (status === "CLOSED") {
+          this._realtimeStatus = "closed";
+          remoteEmitRealtimeStatus({ teamId, status: this._realtimeStatus });
         }
       });
     this._realtimeChannel = channel;
-    this._realtimeTeamId = teamId;
     return channel;
   },
   async stopRealtime() {
@@ -364,6 +384,8 @@ const RemoteWorkspace = {
     }
     this._realtimeChannel = null;
     this._realtimeTeamId = null;
+    this._realtimeStatus = "not_started";
+    remoteEmitRealtimeStatus({ teamId: null, status: this._realtimeStatus });
   },
 
   getConfig() {
@@ -418,6 +440,7 @@ const RemoteWorkspace = {
       email: session?.user?.email || config.email || null,
       remoteTeamId: config.remoteTeamId || null,
       lastSyncAt: config.lastSyncAt || null,
+      realtimeStatus: this._realtimeTeamId === config.remoteTeamId ? this._realtimeStatus : "not_started",
       conflicts: Array.isArray(config.conflicts) ? config.conflicts : [],
     };
   },
