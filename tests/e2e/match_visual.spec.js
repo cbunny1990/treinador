@@ -39,8 +39,8 @@ test('unsaved rotation survives remote data; stale mutation cannot overwrite',as
  const f=await seed(page);const form=page.locator('[data-match-form="rotation"]');await form.locator('[name="out_ref"]').selectOption(f.refs[1]);await form.locator('[name="in_ref"]').selectOption(f.refs[5]);await form.locator('[name="note"]').fill('Ainda não guardar');
  await page.evaluate(async id=>{await DB.modificar('jogos',id,r=>VisionMatchVisual.apply(r,{type:'position',expected_revision:VisionMatchVisual.state(r).revision,role:'def',x:.5,y:.7}));window.dispatchEvent(new CustomEvent('visioncoach:sync-complete'));},f.id);await expect(page.locator('[data-match-remote]')).toBeVisible();await expect(form.locator('[name="note"]')).toHaveValue('Ainda não guardar');await form.getByRole('button',{name:'Guardar rotação',exact:true}).click();await expect(page.locator('[data-match-feedback]')).toContainText('mudou');await expect(form.locator('[name="note"]')).toHaveValue('Ainda não guardar');
 });
-test('legacy forms cannot reset initial roster after start; independent notes retain latest movements',async({page})=>{
- const f=await seed(page);await start(page);const initial=await page.evaluate(id=>DB.obter('jogos',id).then(r=>r.lineup),f.id);await page.evaluate(id=>go('#/equipa/jogo/'+id),f.id);await page.getByRole('button',{name:'Guardar alinhamento',exact:true}).click();expect((await page.evaluate(id=>DB.obter('jogos',id),f.id)).lineup).toEqual(initial);
+test('match detail uses visual lineup as its single source; independent notes retain latest movements',async({page})=>{
+ const f=await seed(page);await start(page);const initial=await page.evaluate(id=>DB.obter('jogos',id).then(r=>r.lineup),f.id);await page.evaluate(id=>go('#/equipa/jogo/'+id),f.id);await expect(page.locator('[data-form="match-lineup"]')).toHaveCount(0);await expect(page.locator('[data-match-lineup-summary]')).toContainText('Sistema 1-2-1');await expect(page.getByRole('link',{name:'Ver jogo visual'})).toBeVisible();expect((await page.evaluate(id=>DB.obter('jogos',id),f.id)).lineup).toEqual(initial);
  await page.locator('[data-form="match-during"] [name="notes"]').fill('Nota independente');await page.locator('[data-form="match-during"] [type="submit"]').click();await expect.poll(()=>page.evaluate(id=>DB.obter('jogos',id).then(r=>r.during?.notes?.[0]),f.id)).toBe('Nota independente');expect((await page.evaluate(id=>DB.obter('jogos',id),f.id)).visual_match.started_at).toBeTruthy();
 });
 test('deleted match is not recreated; another controller cannot run same clock',async({page})=>{
@@ -76,6 +76,28 @@ test('visual player positions expose the same field zones used by match events',
  await expect(pitch.locator('.pitch-zone-grid span')).toHaveCount(9);
  const row=await page.evaluate(id=>DB.obter('jogos',id),f.id);
  expect(row.visual_match.layout.gr).toMatchObject({x:expect.any(Number),y:expect.any(Number)});
+});
+test('pre-match tactical system selection persists, updates the pitch and survives reload',async({page})=>{
+ const f=await seed(page);let form=page.locator('[data-match-form="lineup"]');
+ await form.locator('[name="system"]').selectOption('3-1');
+ await form.locator('[name="front"]').selectOption(f.refs[5]);
+ await form.getByRole('button',{name:'Guardar alinhamento visual',exact:true}).click();await saved(page);
+ let row=await page.evaluate(id=>DB.obter('jogos',id),f.id);
+ const expectedLayout=await page.evaluate(()=>VisionMatchVisual.systemLayout('3-1'));expect(row.lineup.system).toBe('3-1');expect(row.visual_match.layout).toEqual(expectedLayout);
+ await page.reload();form=page.locator('[data-match-form="lineup"]');await expect(form.locator('[name="system"]')).toHaveValue('3-1');
+ expect(await page.locator('[data-pitch-role="front"]').evaluate(el=>parseFloat(el.style.top))).toBeCloseTo(28);
+ row=await page.evaluate(id=>DB.obter('jogos',id),f.id);expect(row.lineup.system).toBe('3-1');expect(row.lineup.positions.front).toBe(f.refs[5]);
+});
+test('match detail summarizes all tactical systems and preserves legacy lineup positions',async({page})=>{
+ const f=await seed(page),form=page.locator('[data-match-form="lineup"]');
+ await form.locator('[name="system"]').selectOption('2-2');
+ await form.locator('[name="left"]').selectOption(f.refs[2]);
+ await form.getByRole('button',{name:'Guardar alinhamento visual',exact:true}).click();await saved(page);
+ const before=await page.evaluate(id=>DB.obter('jogos',id),f.id);await page.evaluate(id=>go('#/equipa/jogo/'+id),f.id);
+ await expect(page.locator('[data-match-lineup-summary]')).toContainText('Sistema 2-2');
+ await expect(page.locator('[data-match-lineup-summary]')).toContainText('Ala esquerda: Atleta 3');
+ await expect(page.locator('[data-form="match-lineup"]')).toHaveCount(0);
+ expect(await page.evaluate(id=>DB.obter('jogos',id),f.id)).toEqual(before);
 });
 test('paused timeline can edit or void a non-last movement and recalculates usage on mobile',async({page})=>{
  await page.setViewportSize({width:390,height:844});const f=await seed(page);await start(page);await page.evaluate(()=>window._matchTime+=60000);let form=page.locator('[data-match-form="substitution"]');await form.locator('[name="out_ref"]').selectOption(f.refs[1]);await form.locator('[name="in_ref"]').selectOption(f.refs[5]);await form.getByRole('button',{name:'Registar substituição',exact:true}).click();await saved(page);await page.evaluate(()=>window._matchTime+=60000);form=page.locator('[data-match-form="substitution"]');await form.locator('[name="out_ref"]').selectOption(f.refs[5]);await form.locator('[name="in_ref"]').selectOption(f.refs[6]);await form.getByRole('button',{name:'Registar substituição',exact:true}).click();await saved(page);await page.getByRole('button',{name:'Pausar / intervalo',exact:true}).click();await saved(page);

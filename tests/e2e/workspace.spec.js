@@ -145,6 +145,41 @@ test("Workspace includes Head Coach team priority proposals in the review queue"
   await expect(queue.getByRole("link", { name: /Apoio após passe/ })).toHaveAttribute("href", "#/evolucao");
 });
 
+test("Workspace lists each match proposal once, opens Depois, and separates stale proposals", async ({ page }) => {
+  await page.goto("/#/calendario");
+  await page.waitForFunction(() => typeof DB !== "undefined" && typeof VisionMatchAnalysis !== "undefined");
+  const seeded = await page.evaluate(async () => {
+    const freshRef = crypto.randomUUID(), staleRef = crypto.randomUUID(), goalEvent = crypto.randomUUID();
+    const freshProposal = {
+      status: "proposed", prepared_by: "Head Coach", source_analysis_revision: 2, source_events_revision: 1,
+      summary: "Rever o apoio na saída", hypotheses: [], next_priority: "Apoio após passe", evidence_ids: [goalEvent],
+    };
+    const matchFields = { schema: "vision-match-events@1", revision: 1, possession: { kind: "unknown", value: null }, events: [
+      { id: goalEvent, type: "loss", at_ms: 60000, reason: "pass", zone: "def_c", note: "Passe intercetado" },
+    ] };
+    const analysis = (proposal, revision) => ({ schema: "vision-match-analysis@1", revision, status: "done", fields: { summary: "Facto do treinador" }, agent_proposal: proposal });
+    const fresh = await DB.criar("jogos", { team_id: DEFAULT_TEAM_ID, sync_id: freshRef, data: "2026-09-27", adversario: "Rivais E2E", estado: "agendado", match_events: matchFields, post_game: { analysis: analysis(freshProposal, 2) } });
+    const duplicate = await DB.criar("jogos", { team_id: DEFAULT_TEAM_ID, sync_id: freshRef, data: "2026-09-27", adversario: "Rivais duplicado", estado: "agendado", match_events: matchFields, post_game: { analysis: analysis(freshProposal, 2) } });
+    const stale = await DB.criar("jogos", { team_id: DEFAULT_TEAM_ID, sync_id: staleRef, data: "2026-09-28", adversario: "Rivais stale E2E", estado: "agendado", post_game: { analysis: analysis({ ...freshProposal, source_analysis_revision: 1, source_events_revision: 0 }, 2) } });
+    return { freshRef, staleRef, fresh, duplicate, stale, displayDate: fmtDate("2026-09-27") };
+  });
+  await page.goto("/");
+  const queue = page.getByRole("heading", { name: "Propostas por rever · 1" }).locator("xpath=..");
+  const freshLinks = queue.locator('[data-match-proposal-sync="' + seeded.freshRef + '"]');
+  await expect(freshLinks).toHaveCount(1);
+  await expect(freshLinks.first()).toContainText(seeded.displayDate);
+  await expect(freshLinks.first()).toContainText("Rivais");
+  await expect(freshLinks.first()).toHaveAttribute("href", "#/equipa/jogo/" + seeded.duplicate + "?focus=after");
+  const stale = queue.locator('[data-match-proposal-stale="' + seeded.staleRef + '"]');
+  await expect(queue).toContainText("Propostas de jogo desatualizadas · 1");
+  await expect(stale).toContainText("Rivais stale E2E");
+  await expect(stale).toContainText("Desatualizada");
+  await stale.click();
+  await expect(page).toHaveURL(/#\/equipa\/jogo\/\d+\?focus=after$/);
+  await expect(page.locator("#match-after")).toBeVisible();
+  await expect.poll(() => page.locator("#match-after").evaluate(element => element.getBoundingClientRect().top)).toBeLessThan(200);
+});
+
 test("Workspace sends training continuity proposals directly to their review screen", async ({ page }) => {
   await page.goto("/#/treinos");
   await page.waitForFunction(() => typeof DB !== "undefined");
@@ -178,7 +213,8 @@ test("Workspace next events skip cancelled, completed matches and completed sess
     await DB.criar("jogos", { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: day(2), adversario: "Jogo concluído", estado: "concluido" });
     await DB.criar("jogos", { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: day(3), adversario: "Próximo jogo", estado: "agendado" });
     await DB.criar("treinos", { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: day(1), objetivo: "Sessão terminada", session: { status: "completed" } });
-    await DB.criar("treinos", { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: day(2), objetivo: "Próximo treino" });
+    await DB.criar("treinos", { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: day(2), objetivo: "Treino concluído legado", status: "completed" });
+    await DB.criar("treinos", { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: day(3), objetivo: "Próximo treino" });
   });
   await page.goto("/");
   const upcoming = page.locator(".hero-side").filter({ has: page.getByRole("heading", { name: "Próximos" }) });
@@ -187,6 +223,7 @@ test("Workspace next events skip cancelled, completed matches and completed sess
   await expect(upcoming).not.toContainText("Jogo cancelado");
   await expect(upcoming).not.toContainText("Jogo concluído");
   await expect(upcoming).not.toContainText("Sessão terminada");
+  await expect(upcoming).not.toContainText("Treino concluído legado");
 });
 
 test("treinador regista observação e ela entra na atividade partilhada", async ({ page }) => {
@@ -833,7 +870,7 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
   await expect(page.getByText(/Atualização disponível\. Guarda o que estás a fazer/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeVisible();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v110"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v114"))).toBeNull();
 });
 
 test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
@@ -846,7 +883,7 @@ test("service worker update after an older cached reload does not stay suppresse
   }).catch(() => {});
   await reloaded;
   await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v110"))).toBe("1");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v114"))).toBe("1");
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {

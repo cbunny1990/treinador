@@ -15,6 +15,60 @@ function tpExerciseRef(exercise) {
   return String(exercise?.sync_id || exercise?.id || "");
 }
 
+function tpExerciseSnapshot(exercise) {
+  const row = tpNormalizeExercise(exercise);
+  const image = row.visual_image && typeof row.visual_image === "object" ? {
+    sha256: String(row.visual_image.sha256 || ""),
+    width: Number(row.visual_image.width || 0) || null,
+    height: Number(row.visual_image.height || 0) || null,
+    bytes: Number(row.visual_image.bytes || 0) || null,
+  } : null;
+  const visualUrl = /^assets\/exercises\/[a-z0-9_./-]+$/i.test(String(row.visual_url || "")) && !String(row.visual_url).includes("..")
+    ? String(row.visual_url) : null;
+  return {
+    schema: "vision-coach-exercise-snapshot@1",
+    exercise_ref: tpExerciseRef(row),
+    nome: row.nome,
+    objetivo: row.objetivo,
+    montagem: String(row.montagem || row.organizacao || ""),
+    passos: tpArray(row.passos).map(String),
+    organizacao: row.organizacao,
+    espaco: row.espaco,
+    material: tpArray(row.material).map(String),
+    regras: tpArray(row.regras).map(String),
+    coaching_points: tpArray(row.coaching_points).map(String),
+    visual: {
+      external_key: row.external_key || null,
+      removed: Boolean(row.visual_removed),
+      storage_path: row.visual_storage_path || null,
+      image,
+      url: visualUrl,
+    },
+  };
+}
+
+function tpExerciseFromSnapshot(snapshot, exerciseRef, fallbackName) {
+  if (!snapshot || typeof snapshot !== "object") return null;
+  const visual = snapshot.visual && typeof snapshot.visual === "object" ? snapshot.visual : {};
+  return {
+    sync_id: String(exerciseRef || snapshot.exercise_ref || ""),
+    external_key: visual.external_key || null,
+    nome: snapshot.nome || fallbackName || "Exercício",
+    objetivo: snapshot.objetivo || "",
+    montagem: snapshot.montagem || snapshot.organizacao || "",
+    passos: tpArray(snapshot.passos).map(String),
+    organizacao: snapshot.organizacao || "",
+    espaco: snapshot.espaco || "",
+    material: tpArray(snapshot.material).map(String),
+    regras: tpArray(snapshot.regras).map(String),
+    coaching_points: tpArray(snapshot.coaching_points).map(String),
+    visual_removed: Boolean(visual.removed),
+    visual_storage_path: visual.storage_path || null,
+    visual_image: visual.image || null,
+    visual_url: visual.url || null,
+  };
+}
+
 function tpExerciseExternalKey(name) {
   const slug = tpSlug(name);
   return slug ? "exercise-" + slug : null;
@@ -103,6 +157,8 @@ function tpNormalizeTraining(input) {
 const TrainingPlanner = {
   slug: tpSlug,
   exerciseRef: tpExerciseRef,
+  exerciseSnapshot: tpExerciseSnapshot,
+  exerciseFromSnapshot: tpExerciseFromSnapshot,
   exerciseExternalKey: tpExerciseExternalKey,
   normalizeExercise: tpNormalizeExercise,
   visionExercises: tpVisionExercises,

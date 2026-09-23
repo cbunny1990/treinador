@@ -414,6 +414,15 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     globalThis.DB = original.db;
     globalThis.DEFAULT_TEAM_ID = original.team;
     globalThis.mediaSubjectKey = original.subjectKey;
+    if (teamId) {
+      const { data: mediaRows, error: mediaError } = await admin.from("media_assets").select("storage_path").eq("team_id", teamId);
+      assert.ifError(mediaError);
+      const paths = [...new Set((mediaRows || []).map((row) => row.storage_path).filter(Boolean))];
+      if (paths.length) {
+        const removed = await admin.storage.from("team-media").remove(paths);
+        assert.ifError(removed.error);
+      }
+    }
     for (const id of users) await admin.auth.admin.deleteUser(id);
   }
 });

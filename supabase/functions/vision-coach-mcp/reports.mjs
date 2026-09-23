@@ -4,9 +4,13 @@ import '../../../js/match_events.js';
 import '../../../js/match_analysis.js';
 import '../../../js/match_evidence.js';
 import '../../../js/training_session.js';
+import '../../../js/player_goals.js';
+import '../../../js/seasons.js';
+import { executePlayerGoalTool } from './player_goals.mjs';
 
 const M=globalThis.VisionMatchVisual,E=globalThis.VisionMatchEvents,A=globalThis.VisionMatchAnalysis,V=globalThis.VisionMatchEvidence;
 const T=globalThis.VisionTrainingSession;
+const G=globalThis.PlayerGoals,S=globalThis.VisionSeasons;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const selector={id:{type:'string',format:'uuid'},external_key:{type:'string'}};
 const choose={oneOf:[{required:['id'],not:{required:['external_key']}},{required:['external_key'],not:{required:['id']}}]};
@@ -21,7 +25,24 @@ export const REPORT_TOOLS=[{
  description:'Prepare current structured training-plan report data from one persisted training. Includes planned sequence, exercise setup and steps, approved original image identity, explicitly marked attendance and recorded execution. Read-only and scoped to the authorized team.',
  inputSchema:{type:'object',properties:selector,required:[],additionalProperties:false,...choose},
  annotations:{readOnlyHint:true,destructiveHint:false}
+},{
+ name:'get_player_report',
+ description:'Prepare a structured longitudinal report for one athlete from explicit attendance, match call-ups, starts, recorded movements, minutes, positions and coach-entered goals. Unknown participation remains null; read-only and scoped to the authorized team.',
+ inputSchema:{type:'object',properties:{...selector,from_date:{type:'string',format:'date'},to_date:{type:'string',format:'date'},season_id:{type:'string',format:'uuid'}},required:[],additionalProperties:false,...choose},
+ annotations:{readOnlyHint:true,destructiveHint:false}
+},{
+ name:'get_team_report',
+ description:'Prepare a structured team participation and development report for a date period or saved season. Counts only explicit attendance and recorded game usage, includes coach-entered development goals, and does not rank athletes or infer improvement.',
+ inputSchema:{type:'object',properties:{from_date:{type:'string',format:'date'},to_date:{type:'string',format:'date'},season_id:{type:'string',format:'uuid'}},required:[],additionalProperties:false},
+ annotations:{readOnlyHint:true,destructiveHint:false}
 }];
+
+function validDate(value){return value==null||/^\d{4}-\d{2}-\d{2}$/.test(value);}
+function dateFilter(args,season){if(!validDate(args.from_date)||!validDate(args.to_date))throw new Error('invalid_report_date');if(args.from_date&&args.to_date&&args.from_date>args.to_date)throw new Error('invalid_report_period');const from=args.from_date||season?.start_date||null,to=args.to_date||season?.end_date||null;return d=>(!from||d>=from)&&(!to||d<=to);}
+async function seasonFilter(admin,c,args){if(!args.season_id)return null;if(!UUID.test(args.season_id))throw new Error('invalid_season_uuid');const key='season-index:'+c.team_id,{data,error}=await admin.from('workspace_records').select('id,payload').eq('team_id',c.team_id).eq('kind','document').eq('payload->>external_key',key).is('deleted_at',null);if(error)throw error;if(data?.length!==1)throw new Error(data?.length?'ambiguous_season_index':'season_index_not_found');const index=S.state({body:data[0].payload?.body}),season=index.items.find(x=>x.id===args.season_id);if(!season)throw new Error('season_not_found');return season;}
+function filteredHistory(history,include){const training_records=history.training_records.filter(x=>include(x.date||'')),match_records=history.match_records.filter(x=>include(x.date||'')),known=match_records.filter(x=>x.minutes_known);return{...history,summary:{training_records:training_records.length,call_ups:match_records.filter(x=>x.called_up).length,recorded_starts:match_records.filter(x=>x.started_as_starter).length,entries:match_records.reduce((n,x)=>n+x.entries.length,0),exits:match_records.reduce((n,x)=>n+x.exits.length,0),matches_with_recorded_minutes:known.length,total_minutes_ms:known.length?known.reduce((n,x)=>n+x.minutes_ms,0):null},training_records,match_records};}
+async function playerReport(admin,c,args,season,include){const player=await find(admin,c,args,'player');const history=await executePlayerGoalTool(admin,c,'get_player_participation_history',{id:player.id});const goalState=G.state(player.payload);const allowed=season?new Set(season.roster.map(x=>x.ref)):null;if(allowed&&!allowed.has(player.id))throw new Error('player_not_in_selected_season');const filtered=filteredHistory(history,include),goals=goalState.items.filter(x=>include(x.started_at||''));return{schema:'vision-player-report@1',player:{id:player.id,external_key:player.payload?.external_key||null,updated_at:player.updated_at,name:player.payload?.nome||null,number:player.payload?.numero??null},period:{from:args.from_date||season?.start_date||null,to:args.to_date||season?.end_date||null,season:season?{id:season.id,name:season.name}:null},development_goals:{revision:goalState.revision,items:goals},participation:filtered,provenance:{goals:'Coach-entered development goals and status.',attendance:'Explicit saved training attendance; missing or unknown entries are not counted.',matches:'Saved call-up, lineup and substitution records.',minutes:'Recorded match clock and movements only; null means no recorded usage, not zero.',positions:'Saved recorded match roles only.'},missing_data:{training_attendance:filtered.training_records.length===0,match_participation:filtered.match_records.length===0,recorded_minutes:filtered.summary.matches_with_recorded_minutes===0}};}
+async function teamReport(admin,c,args,season,include){const [playersResult,docsResult]=await Promise.all([admin.from('workspace_records').select('id,payload,updated_at').eq('team_id',c.team_id).eq('kind','player').is('deleted_at',null),admin.from('workspace_records').select('id,payload,updated_at').eq('team_id',c.team_id).eq('kind','document').is('deleted_at',null).in('payload->>type',['team_goal','weekly_plan'])]);if(playersResult.error)throw playersResult.error;if(docsResult.error)throw docsResult.error;const roster=season?season.roster:((playersResult.data||[]).filter(x=>x.payload?.plantel_ativo!==false).map(x=>({ref:x.id,name:x.payload?.nome||null,number:x.payload?.numero??null})));const rows=new Map((playersResult.data||[]).map(x=>[x.id,x]));const athletes=[];for(const entry of roster){const player=rows.get(entry.ref);if(!player)continue;const report=await playerReport(admin,c,{id:player.id,from_date:args.from_date,to_date:args.to_date},null,include);athletes.push({player:report.player,participation:report.participation.summary,goals:report.development_goals.items});}const goals=(docsResult.data||[]).filter(x=>x.payload?.type==='team_goal').map(x=>({id:x.id,external_key:x.payload.external_key||null,updated_at:x.updated_at,goal:(()=>{try{return JSON.parse(x.payload.body||'{}');}catch{return null;}})()})).filter(x=>include(x.goal?.identified_at||''));const plans=(docsResult.data||[]).filter(x=>x.payload?.type==='weekly_plan').map(x=>({id:x.id,external_key:x.payload.external_key||null,updated_at:x.updated_at,plan:(()=>{try{return JSON.parse(x.payload.body||'{}');}catch{return null;}})()})).filter(x=>include(x.plan?.week_start||''));return{schema:'vision-team-report@1',team_id:c.team_id,period:{from:args.from_date||season?.start_date||null,to:args.to_date||season?.end_date||null,season:season?{id:season.id,name:season.name}:null},athletes,team_development_goals:goals,weekly_plans:plans,provenance:{attendance:'Explicit saved training attendance only.',minutes:'Recorded match clock and movements only; null means no recorded usage, not zero.',goals:'Coach-entered athlete and team development goals; stages and improvement are not inferred.'},missing_data:{athletes:athletes.length===0,team_goals:goals.length===0,weekly_plans:plans.length===0}};}
 
 async function find(admin,c,args,kind){
  if(Boolean(args.id)===Boolean(args.external_key))throw new Error('exactly_one_'+kind+'_identifier_required');
@@ -55,6 +76,7 @@ async function trainingReport(admin,c,args){
 
 export async function executeReportTool(admin,c,name,args){
  if(!c.scopes?.includes('read'))throw new Error('connector_scope_read_required');
+ if(name==='get_player_report'||name==='get_team_report'){const season=await seasonFilter(admin,c,args);if(season){if(args.from_date&&args.from_date<season.start_date||args.to_date&&args.to_date>season.end_date)throw new Error('report_period_outside_season');}const include=dateFilter(args,season);return name==='get_player_report'?playerReport(admin,c,args,season,include):teamReport(admin,c,args,season,include);}
  if(name==='get_training_report')return trainingReport(admin,c,args);
  if(name!=='get_match_report')throw new Error('unknown_report_tool');
  if(!['match_sheet','post_match'].includes(args.report_type))throw new Error('invalid_match_report_type');

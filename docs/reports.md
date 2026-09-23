@@ -8,8 +8,12 @@ No relatório individual, uma posição na escalação planeada só conta como t
 
 Os relatórios só leem dados guardados, não criam nem alteram registos e não transformam ausências em zero. A sincronização usa o mesmo jogo, treino e atleta já persistidos.
 
+No relatório pós-jogo, as estatísticas mostram perdas por motivo e zona e recuperações por zona quando há lances correspondentes, além da origem contada. A cronologia inclui substituições registadas. Uma causa provável de golo sofrido é ligada ao minuto e ao atleta do lance de golo sofrido quando a análise aponta para um acontecimento ainda existente; um vínculo sem acontecimento disponível é assinalado como tal.
+
 ## Head Coach / MCP
 
 `get_match_report` prepara dados estruturados para a ficha do jogo ou para o relatório pós-jogo a partir do mesmo jogo persistido. Devolve resultado com proveniência, convocatória/alinhamento, lances e estatísticas contadas, utilização reconstruída do cronómetro e movimentos, análise do treinador e momentos de vídeo. Campos ausentes são assinalados; posse estimada mantém a origem estimada. A operação é só de leitura, exige scope `read`, identificador remoto UUID ou `external_key` exato e aplica o isolamento da equipa no servidor. Não gera um ficheiro PDF no servidor nem altera a ficha.
 
 `get_training_report` prepara os dados estruturados do plano de treino persistido: data, objetivo, sequência, montagem, passos, presenças marcadas, execução registada e identidade da imagem original aprovada. Também é só de leitura, assinala dados em falta e exige scope `read`, UUID ou `external_key` exato e pertença à equipa. O teste MCP confirma que não escreve dados nem devolve treinos de outra equipa.
+
+`get_player_report` devolve a evolução longitudinal de um atleta: presenças, convocatórias, titularidades, entradas/saídas, minutos registados, posições e objetivos individuais com proveniência. `get_team_report` devolve objetivos da equipa, planos semanais e resumos por atleta, sem ranking ou melhoria inferida. Ambos aceitam intervalo temporal ou época guardada, exigem scope `read` e identidade remota exata do atleta quando aplicável. Minutos sem relógio continuam `null`; estados de presença desconhecidos não são contados. São operações sem escrita e não geram ficheiro PDF no servidor.

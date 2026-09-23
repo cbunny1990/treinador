@@ -13,6 +13,8 @@ const migrations = fs.readdirSync(path.join(root, "supabase", "migrations"))
   .join("\n");
 const manager = fs.readFileSync(path.join(root, "supabase", "functions", "vision-coach-connectors", "index.ts"), "utf8");
 const mcp = fs.readFileSync(path.join(root, "supabase", "functions", "vision-coach-mcp", "index.ts"), "utf8");
+const gateway = fs.readFileSync(path.join(root, "supabase", "functions", "head-coach-gateway", "index.ts"), "utf8");
+const gatewayWriteMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20260923145609_constrain_head_coach_generic_writes.sql"), "utf8");
 const config = fs.readFileSync(path.join(root, "supabase", "config.toml"), "utf8");
 const browser = fs.readFileSync(path.join(root, "js", "mcp_connectors.js"), "utf8");
 
@@ -88,6 +90,39 @@ test("Edge Functions não contêm credenciais privadas hardcoded", () => {
 
 test("gestor MCP aceita todos os headers CORS usados pelo supabase-js", () => {
   assert.match(manager, /authorization, x-client-info, apikey, content-type/i);
+});
+
+test("gateway genérico do Head Coach exige confirmação explícita e revisão nos writes", () => {
+  assert.match(gateway, /function requireWriteConfirmation\(\)[\s\S]*params\.confirmed !== true/);
+  assert.match(gateway, /function requireCurrentRevision\(\)[\s\S]*expected_updated_at_required/);
+  for (const operation of ["put_record", "soft_delete_record", "restore_record", "register_media", "soft_delete_media"]) {
+    const start = gateway.indexOf(`case "${operation}":`);
+    assert.notEqual(start, -1, `${operation} case exists`);
+    const next = gateway.indexOf("\n      case \"", start + 1);
+    const block = gateway.slice(start, next < 0 ? undefined : next);
+    assert.match(block, /requireWriteConfirmation\(\)/, `${operation} confirmation`);
+    if (["soft_delete_record", "restore_record", "soft_delete_media"].includes(operation)) {
+      assert.match(block, /requireCurrentRevision\(\)/, `${operation} revision`);
+    }
+    if (operation === "put_record" || operation === "register_media") {
+      assert.match(block, /if \(params\.(record_id|media_id) != null\) requireCurrentRevision\(\)/, `${operation} update revision`);
+    }
+  }
+});
+
+test("gateway limita put_record genérico a game_model e capability anuncia o mesmo limite", () => {
+  const start = gateway.indexOf('case "put_record":');
+  const end = gateway.indexOf('\n      case "soft_delete_record":', start);
+  const block = gateway.slice(start, end);
+  assert.match(block, /GENERIC_PUT_RECORD_KINDS\.has\(String\(params\.kind\)\)/);
+  assert.match(block, /use_semantic_operation_for_record_kind/);
+  assert.ok(
+    block.indexOf("GENERIC_PUT_RECORD_KINDS.has") < block.indexOf('rpc("head_coach_put_record"'),
+    "protected kinds must be rejected before reaching the generic RPC",
+  );
+  assert.match(gateway, /GENERIC_PUT_RECORD_KINDS = new Set\(\["game_model"\]\)/);
+  assert.match(gatewayWriteMigration, /'put_record_write_kinds',\s*jsonb_build_array\('game_model'\)/);
+  assert.match(gatewayWriteMigration, /grant execute on function public\.head_coach_capabilities\(uuid,text\)\s+to service_role/i);
 });
 
 

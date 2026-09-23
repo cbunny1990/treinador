@@ -18,6 +18,7 @@ A ficha oferece **Duplicar treino**: escolher outra data e hora, copiar objetivo
 A cópia preserva `source_training_ref`. A sua data é validada antes de criar; não se cria nada só por abrir o formulário.
 No planeador, **Subir / Descer** altera a ordem sem arrastar. As notas próprias de cada bloco ficam preservadas ao guardar.
 Depois de iniciada a sessão, o plano fica protegido; para preparar uma nova sessão a partir dele, deve duplicar-se.
+Cada bloco mantém também um snapshot versionado do conteúdo do exercício (nome, objetivo, montagem, passos, material, regras e pontos de correção) e da referência da imagem aprovada. Editar ou apagar depois o exercício na biblioteca não reescreve silenciosamente o plano; planos antigos sem snapshot continuam a usar o exercício atual quando existe, e mantêm o nome guardado se já não existir. O snapshot só guarda identificadores e metadados de imagem (caminho privado, hash e dimensões); nunca copia bytes da imagem, URL assinada nem blob.
 A ficha de cada atleta inclui o histórico de presenças por treino; apenas estados efetivamente marcados entram no denominador.
 
 ## Dados e sincronização

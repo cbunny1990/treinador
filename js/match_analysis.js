@@ -38,6 +38,7 @@
   return parts.join('\n');
  }
  function fingerprint(analysis){const s=state(analysis);return JSON.stringify({fields:s.fields,goals_conceded:s.goals_conceded});}
- root.VisionMatchAnalysis={schema:SCHEMA,fields:FIELDS,state,fromMatch,save,hasCoachContent,memoryContent,fingerprint};
+ function proposalFreshness(match){const analysis=fromMatch(match),proposal=analysis.agent_proposal,events=Array.isArray(match?.match_events?.events)?match.match_events.events:[],eventRevision=Number.isInteger(match?.match_events?.revision)?match.match_events.revision:0,refs=Array.isArray(proposal?.evidence_ids)?proposal.evidence_ids:[],missing=refs.filter(ref=>!events.some(event=>String(event.id)===String(ref)));if(!proposal||proposal.status!=='proposed')return{fresh:false,reason:'not_pending',missing_event_refs:[]};if(proposal.source_analysis_revision!==analysis.revision)return{fresh:false,reason:'analysis_revision_changed',missing_event_refs:missing};if(proposal.source_events_revision!==eventRevision)return{fresh:false,reason:'events_revision_changed',missing_event_refs:missing};if(missing.length)return{fresh:false,reason:'evidence_missing',missing_event_refs:missing};return{fresh:true,reason:null,missing_event_refs:[]};}
+ root.VisionMatchAnalysis={schema:SCHEMA,fields:FIELDS,state,fromMatch,save,hasCoachContent,memoryContent,fingerprint,proposalFreshness};
  if(typeof module!=='undefined'&&module.exports)module.exports=root.VisionMatchAnalysis;
 })(globalThis);

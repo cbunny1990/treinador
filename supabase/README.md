@@ -20,6 +20,9 @@ o hardening de idempotência e a validação de media. A Edge Function está em
 `supabase/functions/head-coach-gateway/` e mantém `verify_jwt = true` em
 `supabase/config.toml`. A função lê a service-role key apenas das variáveis do
 runtime Supabase; nenhuma credencial privada pertence à PWA ou ao Git.
+No gateway, `put_record` genérico fica limitado a `game_model`; jogos, treinos,
+jogadores, exercícios e documentos usam operações MCP específicas com as
+validações próprias de cada domínio.
 
 ## 2. Configurar Auth
 

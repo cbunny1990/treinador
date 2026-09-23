@@ -8,6 +8,8 @@ O treinador pode registar resumo, pontos positivos, problemas, perdas, recupera�
 
 ## Memória e próximo treino
 
+O Workspace inclui propostas atuais de jogo na fila “Propostas por rever”, com data, adversário e ligação direta à secção “Depois”. Propostas duplicadas com o mesmo UUID do jogo aparecem uma vez. Se a revisão da análise ou dos lances mudar, ou um lance citado deixar de existir, a proposta fica numa lista separada de propostas desatualizadas e não conta como aprovável.
+
 “Guardar análise” guarda apenas o registo do jogo. “Guardar análise e atualizar memória” é a ação explícita que cria ou atualiza a memória ligada ao jogo. O registo tem identidade UUID estável, chave externa determinística e origem; uma memória apagada por tombstone não é recriada, e uma memória com outra proveniência não é substituída. Alterações posteriores assinalam a memória como desatualizada.
 
 “Preparar treino desta análise” preenche um rascunho de treino com a prioridade e decisão existentes. Não cria o treino até o treinador o guardar. Não são contadas sessões como prova de melhoria.
@@ -16,7 +18,7 @@ O treinador pode registar resumo, pontos positivos, problemas, perdas, recupera�
 
 Schema `vision-match-analysis@1` dentro de `jogos.post_game.analysis`. Revisões monotónicas impedem gravação sobre uma revisão já alterada; o conflito apresenta uma mensagem e mantém o formulário aberto. A gravação local é uma transação IndexedDB com o jogo e, apenas quando pedido, a memória.
 
-`get_match_analysis` é somente leitura. `prepare_match_analysis` grava uma proposta marcada como proposta do Head Coach, separada das observações e decisões do treinador; requer permissões de leitura e escrita, confirmação explícita, `expected_updated_at`, revisão e referências a eventos existentes. Não executa ações de jogo, não aprova plano nem cria memória.
+`get_match_analysis` é somente leitura. `prepare_match_analysis` grava uma proposta marcada como proposta do Head Coach, separada das observações e decisões do treinador; requer permissões de leitura e escrita, confirmação explícita, `expected_updated_at`, revisão e referências a eventos existentes. Guarda também as revisões da análise e dos lances usadas para preparar a proposta. A ficha do jogo mostra o resumo, hipóteses, prioridade e lances citados; se uma revisão mudou ou uma fonte foi apagada, a app assinala a proposta como desatualizada e bloqueia a aprovação. O treinador pode copiar a prioridade para o campo editável, alterá-la, acrescentar a sua decisão e aceitar ou rejeitar a proposta com confirmação. Aceitar regista a decisão, mas não cria treino nem atualiza a memória; essas ações continuam separadas e explícitas. `prepare_match_analysis` não executa ações de jogo, não aprova plano nem cria memória.
 
 `get_recurring_match_patterns` agrega perdas registadas nos jogos ativos da equipa. Só agrupa quando motivo e zona foram ambos indicados, conta IDs de evento únicos e exige pelo menos dois jogos distintos para apresentar um padrão. Devolve adversário, data, UUID remoto do jogo e IDs dos lances para abrir as fontes. Perdas sem motivo/zona não entram nesta contagem; texto livre, interpretações e hipóteses não são convertidos em dados estruturados. O resultado é uma relação observada, não uma causa nem uma prioridade recomendada. A análise semântica posterior deve citar estas fontes e manter a hipótese separada da decisão do treinador.
 

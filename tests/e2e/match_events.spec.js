@@ -21,15 +21,16 @@ test('events blocked before start, quick record, counted stats and result notice
  await expect(form.locator('[name="type"]')).toHaveValue('loss');
  await expect(form.locator('[name="at_min"]')).toHaveValue('7');
  await form.locator('[name="player_ref"]').selectOption({label:'Atleta 2 · #2'});
+ await form.locator('[name="opponent_player_name"]').fill('Adversário 9');
  await form.locator('[name="zone"]').selectOption('def_c');
  await form.locator('[name="reason"]').selectOption('pass');
  await form.locator('[name="note"]').fill('Passe errado na saída');
  await form.getByRole('button',{name:'Registar lance',exact:true}).click();await saved(page);
  const raw=await page.evaluate(id=>DB.obter('jogos',id),f.id);
- expect(raw.match_events.events[0]).toMatchObject({type:'loss',at_ms:420000,zone:'def_c',reason:'pass'});
+ expect(raw.match_events.events[0]).toMatchObject({type:'loss',at_ms:420000,zone:'def_c',reason:'pass',opponent_player_name:'Adversário 9'});
  expect(raw.visual_match.status).toBe('running');expect(raw.golos_favor).toBe(0);
  await page.screenshot({path:path.join(os.tmpdir(),'vision-match-events-390.png'),fullPage:true});
- await expect(page.getByText('07:00 · Perda de bola',{exact:false})).toBeVisible();
+ await expect(page.getByText('07:00 · Perda de bola · Atleta 2 · Adversário: Adversário 9',{exact:false})).toBeVisible();
  await expect(page.locator('[data-match-events] table')).toContainText('Perdas de bola');
  await expect(page.locator('[data-match-events] table')).toContainText('Passe errado');
  await page.getByRole('button',{name:'Golo a favor',exact:true}).click();await page.evaluate(()=>window._matchTime+=60000);

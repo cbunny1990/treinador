@@ -21,19 +21,23 @@
  function state(match){
   const old=match?.match_events;if(old?.schema&&old.schema!==SCHEMA)throw new Error('Atualiza a app antes de abrir os lances deste jogo.');
   const s={schema:SCHEMA,revision:0,events:[],possession:{kind:'unknown',value:null,updated_at:null},...(old?clone(old):{})};
-  if(!Number.isInteger(s.revision)||s.revision<0||!Array.isArray(s.events)||!s.possession||!Object.hasOwn(POSESSION_KINDS,s.possession.kind||'unknown'))throw new Error('Registo de lances inválido.');
+  if(!Number.isInteger(s.revision)||s.revision<0||!Array.isArray(s.events)||s.events.length>1000||!s.possession||!Object.hasOwn(POSESSION_KINDS,s.possession.kind||'unknown'))throw new Error('Registo de lances inválido.');
   if(!Number.isFinite(s.possession.value)&&s.possession.value!==null)throw new Error('Registo de lances inválido.');
+  if(s.possession.kind==='unknown'&&s.possession.value!==null||s.possession.kind!=='unknown'&&(s.possession.value===null||s.possession.value<0||s.possession.value>100))throw new Error('Registo de posse inválido. Atualiza a origem do valor antes de o apresentar.');
+  const ids=new Set();for(const event of s.events){validEvent(event);if(ids.has(event.id))throw new Error('Registo de lances inválido: identificador repetido.');ids.add(event.id);}
   return s;
  }
  function validEvent(e){
-  if(!e||!TYPES[e.type]||!text(e.id,100)||e.id.length>100)throw new Error('Acontecimento inválido.');
+  if(!e||typeof e.id!=='string'||!TYPES[e.type]||!text(e.id,100)||e.id.length>100)throw new Error('Acontecimento inválido.');
   if(!Number.isFinite(e.at_ms)||e.at_ms<0||e.at_ms>MAX_MS)throw new Error('Minuto fora do intervalo possível.');
   if(e.reason&&!Object.hasOwn(LOSS_REASONS,e.reason))throw new Error('Motivo de perda desconhecido.');
   if(e.reason&&e.type!=='loss')throw new Error('Motivo só se aplica a perdas de bola.');
   if(e.zone&&!Object.hasOwn(ZONES,e.zone))throw new Error('Zona do campo desconhecida.');
   if(e.player_ref&&!isUid(e.player_ref))throw new Error('Usa o identificador estável do atleta.');
+  if(e.opponent_player_name!=null&&(typeof e.opponent_player_name!=='string'||!text(e.opponent_player_name,100)||e.opponent_player_name.length>100||/[\x00-\x1f\x7f]/.test(e.opponent_player_name)))throw new Error('Nome do atleta adversário inválido.');
   if(e.side&&!Object.hasOwn(SIDES,e.side))throw new Error('Lado inválido.');
   if(e.side&&e.type!=='note'&&!SIDED.includes(e.type))throw new Error('Lado não se aplica a este tipo de lance.');
+  if(e.note!=null&&(typeof e.note!=='string'||e.note.length>300))throw new Error('Observação do lance inválida.');
   if(typeof e.note==='string'&&e.note.length===0)delete e.note;
   }
   function validateAgainstClock(usage,match,at_ms,now){
@@ -41,7 +45,7 @@
  }
  function normalized(command,s){
   const out={};
-  for(const k of ['at_ms','player_ref','zone','reason','side']){
+  for(const k of ['at_ms','player_ref','opponent_player_name','zone','reason','side']){
    const value=command[k];
    if(value!=null&&value!=='')out[k]=k==='at_ms'?Number(value):text(value,100);
   }
@@ -81,7 +85,7 @@
    const base=normalized(command,s);
     if(base.at_ms!=null)validateAgainstClock(usage,row,base.at_ms,at);else delete base.at_ms;
    if(Object.hasOwn(base,'at_ms'))event.at_ms=base.at_ms;
-   for(const k of ['player_ref','zone','reason','side']){const value=base[k];if(value)event[k]=value;else delete event[k];}
+   for(const k of ['player_ref','opponent_player_name','zone','reason','side']){const value=base[k];if(value)event[k]=value;else delete event[k];}
    if(base.note)event.note=base.note;else delete event.note;
    if(event.type==='loss'&&!Object.hasOwn(event,'reason'))event.reason='';
    Object.assign(event,{updated_at:iso,edited_by:actor});

@@ -202,7 +202,7 @@ const WorkspaceStore = {
     ]);
     const activePlayers = players.filter((player) => player?.plantel_ativo !== false);
     const futureMatches = matches.filter((m) => wsDate(m.data) >= today && !["cancelado", "concluido"].includes(String(m.estado || "").toLowerCase())).sort((a, b) => String(a.data).localeCompare(String(b.data)));
-    const futureTrainings = trainings.filter((t) => wsDate(t.data) >= today && t.session?.status !== "completed").sort((a, b) => String(a.data).localeCompare(String(b.data)));
+    const futureTrainings = trainings.filter((t) => wsDate(t.data) >= today && t.status !== "completed" && t.session?.status !== "completed").sort((a, b) => String(a.data).localeCompare(String(b.data)));
     const data = { team, players: activePlayers, matches, trainings, memory, documents, media, activity };
     return {
       ...data,

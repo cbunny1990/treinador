@@ -80,3 +80,24 @@ test('training report MCP reads current exercise and approved image metadata wit
  await assert.rejects(api.executeReportTool(admin,{...c,team_id:'team-b'},'get_training_report',{id:trainingId}),/training_not_found/);
  await assert.rejects(api.executeReportTool(admin,c,'get_training_report',{id:'local-1'}),/invalid_training_uuid/);
 });
+
+test('athlete and team reports expose explicit unknown minutes, exact team scope, and date filtering',async()=>{
+ const playerId='44444444-4444-4444-8444-444444444444',otherId='55555555-5555-4555-8555-555555555555';
+ const rows=[
+  {id:playerId,team_id:'team-a',kind:'player',updated_at:'p1',deleted_at:null,payload:{external_key:'ana',nome:'Ana',numero:7,plantel_ativo:true,development_goals:{schema:'vision-player-goals@1',revision:0,items:[]}}},
+  {id:otherId,team_id:'team-b',kind:'player',updated_at:'p2',deleted_at:null,payload:{external_key:'fora',nome:'Fora',plantel_ativo:true}},
+  {id:'66666666-6666-4666-8666-666666666666',team_id:'team-a',kind:'match',updated_at:'m1',deleted_at:null,payload:{data:'2026-09-10',adversario:'Rivais',callup:{player_ids:[playerId]},visual_match:{schema:'vision-match-visual@1',revision:0,status:'not_started',period:1,elapsed_ms:0,roster:[],events:[]}}},
+  {id:'77777777-7777-4777-8777-777777777777',team_id:'team-a',kind:'training',updated_at:'t1',deleted_at:null,payload:{data:'2026-08-10',objetivo:'Passe',session:{attendance:[{player_ref:playerId,status:'unknown'}]}}},
+  {id:'88888888-8888-4888-8888-888888888888',team_id:'team-a',kind:'document',updated_at:'s1',deleted_at:null,payload:{external_key:'season-index:team-a',type:'season_index',body:JSON.stringify({schema:'vision-seasons@1',revision:1,active_id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',items:[{id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',name:'2026/27',start_date:'2026-08-01',end_date:'2027-07-31',roster:[{ref:playerId,name:'Ana',number:7}]}]})}},
+ ];let writes=0;
+ const admin={from(table){assert.equal(table,'workspace_records');const filters=[];const query={select(){return this},eq(k,v){filters.push([k,v]);return this},is(k,v){filters.push([k,v]);return this},in(k,v){filters.push([k,v]);return this},then(resolve){const data=rows.filter(r=>filters.every(([k,v])=>{if(k==='payload->>external_key')return r.payload.external_key===v;if(k==='payload->>type')return v.includes(r.payload.type);return Array.isArray(v)?v.includes(r[k]):r[k]===v;})).map(r=>structuredClone(r));return Promise.resolve({data,error:null}).then(resolve)}};return query;},async rpc(){writes++;throw Error('read-only')}};
+ const tool=api.REPORT_TOOLS.find(x=>x.name==='get_player_report');assert.equal(tool.annotations.readOnlyHint,true);
+ const athlete=await api.executeReportTool(admin,c,'get_player_report',{external_key:'ana',from_date:'2026-09-01'});
+ assert.equal(athlete.player.id,playerId);assert.equal(athlete.participation.summary.total_minutes_ms,null);assert.equal(athlete.participation.match_records[0].minutes_ms,null);assert.equal(athlete.participation.training_records.length,0);assert.equal(athlete.missing_data.recorded_minutes,true);
+ const team=await api.executeReportTool(admin,c,'get_team_report',{});assert.equal(team.athletes.length,1);assert.equal(team.athletes[0].participation.total_minutes_ms,null);assert.equal(team.athletes[0].participation.training_records,0);assert.equal(writes,0);
+ const season=await api.executeReportTool(admin,c,'get_team_report',{season_id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'});assert.equal(season.period.season.name,'2026/27');assert.equal(season.athletes.length,1);
+ await assert.rejects(api.executeReportTool(admin,{...c,scopes:[]},'get_team_report',{}),/scope_read/);
+ await assert.rejects(api.executeReportTool(admin,c,'get_player_report',{id:otherId}),/player_not_found/);
+ await assert.rejects(api.executeReportTool(admin,c,'get_player_report',{id:playerId,from_date:'2026-10-01',to_date:'2026-09-01'}),/invalid_report_period/);
+ await assert.rejects(api.executeReportTool(admin,c,'get_team_report',{season_id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}),/season_not_found/);
+});

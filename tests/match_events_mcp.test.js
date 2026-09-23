@@ -34,8 +34,9 @@ test('scopes, exact identity and stale revision enforced',async()=>{
 test('record with explicit coach report stores details and minute',async()=>{
  const f=fixture();await f.startUsage();await f.advance(600000);
  await assert.rejects(f.call('record_match_event',{event_type:'shot_on',event_id:'unconfirmed'}),/explicit_confirmation_required/);
- const out=await f.call('record_match_event',{event_type:'loss',event_id:'l1',player_ref:refs[1],zone:'def_c',reason:'pass',note:'Saída de bola',minute:7,confirmed:true});
+ const out=await f.call('record_match_event',{event_type:'loss',event_id:'l1',player_ref:refs[1],opponent_player_name:'Adversário 9',zone:'def_c',reason:'pass',note:'Saída de bola',minute:7,confirmed:true});
  assert.equal(out.events[0].at_ms,420000);assert.equal(out.statistics.losses.by_reason['pass'],1);
+ assert.equal(out.events[0].opponent_player_name,'Adversário 9');
  const write=f.calls.find(x=>x.p_idempotency_key.startsWith('match-events:'));assert.ok(write);
  await assert.rejects(f.call('record_match_event',{event_type:'xxx',event_id:'l2',confirmed:true}),/invalid_event_type/);
 });

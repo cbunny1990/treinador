@@ -38,6 +38,18 @@ test('recording each type stores minute, player, zone, reason and note with prov
  assert.throws(()=>rec(r,'loss',800000,{reason:'duel',side:'adversaria'}),/Lado não se aplica/);
 });
 
+test('opponent athlete is a manual name with separate team identity and is editable',()=>{
+ let r=rec(started(),'goal_against',60000,{opponent_player_name:'Jogador adversário'});
+ assert.equal(E.state(r).events[0].opponent_player_name,'Jogador adversário');
+ assert.equal(E.state(r).events[0].player_ref,undefined);
+ r=act(r,'pause',120000);
+ r=evt(r,'edit',120000,{id:E.state(r).events[0].id,opponent_player_name:'Outro adversário'});
+ assert.equal(E.state(r).events[0].opponent_player_name,'Outro adversário');
+ r=evt(r,'edit',120000,{id:E.state(r).events[0].id,opponent_player_name:''});
+ assert.equal(E.state(r).events[0].opponent_player_name,undefined);
+ assert.throws(()=>rec(started(),'goal_against',60000,{opponent_player_name:'\u0000inválido'}),/Nome do atleta adversário inválido/);
+});
+
 test('field coordinates use the same nine zones as match events',()=>{
  assert.equal(E.zoneFromPoint(.1,.1),'ata_e');
  assert.equal(E.zoneFromPoint(.5,.1),'ata_c');
@@ -102,6 +114,19 @@ test('possession provenance: unknown, measured and estimated stay distinct',()=>
  assert.deepEqual(E.state(r).possession,{kind:'unknown',value:null,updated_at:E.state(r).possession.updated_at});
 });
 
+test('possession state refuses persisted values that contradict their provenance',()=>{
+ assert.throws(()=>E.stats({match_events:{possession:{kind:'unknown',value:55}}}),/posse inválido/);
+ assert.throws(()=>E.stats({match_events:{possession:{kind:'estimated',value:101}}}),/posse inválido/);
+ assert.throws(()=>E.stats({match_events:{possession:{kind:'measured',value:null}}}),/posse inválido/);
+});
+
+test('statistics refuse malformed or duplicate persisted event records instead of counting them',()=>{
+ const malformed={id:'loss-1',type:'loss',reason:'pass',zone:'def_c'};
+ assert.throws(()=>E.stats({match_events:{events:[malformed]}}),/Minuto fora do intervalo/);
+ assert.throws(()=>E.stats({match_events:{events:[{...malformed,at_ms:60000,note:{unexpected:true}}]}}),/Observação do lance inválida/);
+ assert.throws(()=>E.stats({match_events:{events:[{...malformed,at_ms:60000},{...malformed,at_ms:120000}]}}),/identificador repetido/);
+});
+
 test('stale revision refused instead of silently overwriting recorded events',()=>{
  const r=rec(started(),'shot_on',60000,{id:'x'});
  assert.throws(()=>E.apply(r,{type:'record',expected_revision:0,event_type:'shot_on',at_ms:60000,id:'y'}),/mudaram/);
@@ -115,10 +140,10 @@ test('events survive usage reset as history but stop collecting until a new star
 
 test('events round trip through remote payload without browser ids',()=>{
  const {remotePayload}=require('../js/remote_workspace.js');
- let r=rec(started(),'loss',60000,{id:'rt',player_ref:refs[1],zone:'def_c',reason:'pass'});
+ let r=rec(started(),'loss',60000,{id:'rt',player_ref:refs[1],opponent_player_name:'Adversário 9',zone:'def_c',reason:'pass'});
  const payload=remotePayload({...r,sync_dirty:true,remote_updated_at:'before'});
  const other={...payload,id:987,sync_id:r.sync_id,team_id:'default'};
- assert.deepEqual(E.state(other).events,E.state(r).events);assert.deepEqual(E.stats(other).losses.by_reason,E.stats(r).losses.by_reason);
+ assert.deepEqual(E.state(other).events,E.state(r).events);assert.equal(E.state(other).events[0].opponent_player_name,'Adversário 9');assert.deepEqual(E.stats(other).losses.by_reason,E.stats(r).losses.by_reason);
 });
 test('side is only attached when the coach chooses between teams for shots or a free note',()=>{
  const r=started();

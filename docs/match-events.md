@@ -10,7 +10,7 @@ O registo usa o minuto do **cronómetro do jogo**: só é possível registar lan
 
 Tipos: golo a favor, golo sofrido, remate à baliza, remate para fora, canto a favor, canto contra, recuperação de bola, perda de bola, bola em profundidade, bola no pé do avançado, acontecimento livre. O toque no botão “Registar lance” grava a ação explicitamente; não aparece uma confirmação adicional em cada lance.
 
-Cada lance pode guardar: minuto, atleta da nossa equipa, lado (remates e notas livres), zona do campo, motivo (apenas perdas) e observação. Motivos de perda: passe errado, receção, condução, decisão, pressão adversária, duelo, outro. Registar um lance nunca altera o resultado, o alinhamento nem os minutos.
+Cada lance pode guardar: minuto, atleta da nossa equipa por UUID, nome escrito pelo treinador para um atleta adversário quando relevante, lado (remates e notas livres), zona do campo, motivo (apenas perdas) e observação. O nome adversário é texto manual ligado apenas ao lance; não cria um atleta no plantel nem pressupõe que a identidade foi reconhecida automaticamente. Motivos de perda: passe errado, receção, condução, decisão, pressão adversária, duelo, outro. Registar um lance nunca altera o resultado, o alinhamento nem os minutos.
 
 ## Correções
 Editar e apagar lances exige **pausa ou jogo terminado** — o mesmo critério das correções de utilização. Apagar pede confirmação e não pode ser recuperado depois da sincronização. Enquanto o jogo corre, o treinador acrescenta lances; correções cronológicas ficam para a pausa.
@@ -24,7 +24,7 @@ As estatísticas são **contadas a partir dos lances registados**; cada linha da
 **Posse de bola** é sempre introduzida pelo treinador com uma das proveniências: medida, estimada ou desconhecida. Uma estimativa nunca é apresentada como medição exata.
 
 ## Dados e sincronização
-Schema `vision-match-events@1`, campo `match_events` no mesmo registo `jogos`, sincronizado como `kind=match`. Sem novas tabelas, migrações ou relaxamento de RLS. Revisão monotónica; escritas locais usam `DB.modificar` com verificação de revisão. Registos de lances permanecem após *Apagar registo de utilização* (a utilização é apagada; os lances continuam válidos como historial do treinador, com o minuto que tinha sido registado). Formulários com alterações não guardadas não são substituídos por sincronizações.
+Schema `vision-match-events@1`, campo `match_events` no mesmo registo `jogos`, sincronizado como `kind=match`. Sem novas tabelas, migrações ou relaxamento de RLS. Revisão monotónica; escritas locais usam `DB.modificar` com verificação de revisão. Na leitura, cada lance é validado com as mesmas regras da gravação, incluindo minuto, tipo, referências opcionais, observação e ID único; registos malformados ou IDs duplicados são recusados em vez de entrarem nas estatísticas. Registos de lances permanecem após *Apagar registo de utilização* (a utilização é apagada; os lances continuam válidos como historial do treinador, com o minuto que tinha sido registado). Formulários com alterações não guardadas não são substituídos por sincronizações.
 
 ## MCP para a IA autorizada
 Cinco operações no servidor existente (mesma autenticação, `expected_updated_at`/`expected_revision`, scopes `read`/`write`, UUIDs remotos e RPC `head_coach_put_record`):
@@ -37,7 +37,7 @@ Cinco operações no servidor existente (mesma autenticação, `expected_updated
 O tipo de lance não muda em edições: para representar outra coisa, apaga-se e regista-se o correto. Um pedido de desenvolvimento da app não autoriza registar lances de um jogo real sem relato do treinador.
 
 ## Limites desta entrega
-Os lances registam os atletas da nossa equipa; ainda não identificam individualmente atletas adversários. A preparação pode guardar sistema, estilo, pontos fortes e vulnerabilidades observados do adversário. Vídeo/evidências, análise pós-jogo e exportação PDF estão documentados em `match-video-evidence.md`, `match-analysis.md` e `reports.md`. Jogos sem cronómetro iniciado não têm lances.
+Os atletas da nossa equipa usam UUID estável; adversários podem ser identificados manualmente pelo nome em cada lance, sem criar registos de plantel. A preparação pode guardar sistema, estilo, pontos fortes e vulnerabilidades observados do adversário. Vídeo/evidências, análise pós-jogo e exportação PDF estão documentados em `match-video-evidence.md`, `match-analysis.md` e `reports.md`. Jogos sem cronómetro iniciado não têm lances.
 
 ## Verificação
 `npm run check`, `npm test` e `npx playwright test tests/e2e/match_events.spec.js`. A app passa para v69; imagens aprovadas e workflows anteriores permanecem intactos.

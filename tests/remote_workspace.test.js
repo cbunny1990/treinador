@@ -1094,6 +1094,35 @@ test("dois dispositivos sincronizam criação, edição e eliminação sem dupli
   });
 });
 
+test("conflito de external_key preserva UUID e conteúdo da edição local pendente", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    useDevice(0);
+    await devices[0].criar("jogos", {
+      team_id: "default", adversario: "Jogo original", external_key: "match-same-external-key", sync_dirty: true,
+    });
+    const originalPush = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(originalPush.pushed, 1);
+    const originalRemote = { ...remote.rows[0] };
+
+    useDevice(1);
+    const localId = await devices[1].criar("jogos", {
+      team_id: "default", adversario: "Edição local distinta", external_key: "match-same-external-key", sync_dirty: true,
+    });
+    const conflict = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    const localAfter = await devices[1].obter("jogos", localId);
+
+    assert.equal(conflict.pushed, 0);
+    assert.equal(conflict.conflicts.some((item) => item.reason === "duplicate_identity"), true);
+    assert.match(localAfter.sync_id, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    assert.notEqual(localAfter.sync_id, originalRemote.id);
+    assert.equal(localAfter.adversario, "Edição local distinta");
+    assert.equal(localAfter.sync_dirty, true);
+    assert.equal(remote.rows.length, 1);
+    assert.equal(remote.rows[0].id, originalRemote.id);
+    assert.equal(remote.rows[0].payload.adversario, "Jogo original");
+  });
+});
+
 test("eliminação remota de jogo não apaga edição local feita antes da transação", async () => {
   await withTwoDeviceSync(async ({ devices, remoteTeamId, useDevice }) => {
     useDevice(0);

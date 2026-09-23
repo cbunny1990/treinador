@@ -872,13 +872,13 @@ const RemoteWorkspace = {
         const identity = remoteIdentityKey(kind, local);
         const duplicate = !remote && identity ? remoteByIdentity.get(identity) : null;
         if (duplicate) {
+          if (local.sync_dirty) {
+            addConflict(remoteConflict(store, local, duplicate, "duplicate_identity"));
+            continue;
+          }
           local = { ...local, sync_id: duplicate.id };
           await DB.atualizar(store, local, { remote: true });
           remote = duplicate;
-          if (local.sync_dirty) {
-            addConflict(remoteConflict(store, local, remote, "duplicate_identity"));
-            continue;
-          }
         }
         if (remote?.deleted_at) {
           if (remoteDeletionConflictsWithLocalEdit(local, remote)) {

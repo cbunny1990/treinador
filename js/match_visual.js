@@ -3,18 +3,26 @@
 (function(root){
  const SCHEMA='vision-match-visual@1';
  const ROLES={gr:'Guarda-redes',def:'Defesa',left:'Ala esquerda',right:'Ala direita',front:'Avançado'};
- const DEFAULT={gr:{x:.5,y:.86},def:{x:.5,y:.66},left:{x:.22,y:.43},right:{x:.78,y:.43},front:{x:.5,y:.18}};
+ const SYSTEMS={
+  '1-2-1':{label:'1-2-1',layout:{gr:{x:.5,y:.86},def:{x:.5,y:.66},left:{x:.22,y:.43},right:{x:.78,y:.43},front:{x:.5,y:.18}}},
+  '2-2':{label:'2-2',layout:{gr:{x:.5,y:.86},def:{x:.3,y:.65},left:{x:.3,y:.35},right:{x:.7,y:.35},front:{x:.7,y:.65}}},
+  '3-1':{label:'3-1',layout:{gr:{x:.5,y:.86},def:{x:.5,y:.65},left:{x:.2,y:.65},right:{x:.8,y:.65},front:{x:.5,y:.28}}}
+ };
+ const DEFAULT=SYSTEMS['1-2-1'].layout;
  const STATES={not_started:'Por iniciar',running:'Em jogo',paused:'Em pausa / intervalo',completed:'Terminado'};
  const clone=x=>JSON.parse(JSON.stringify(x)),text=(x,n=200)=>String(x??'').trim().slice(0,n);
  const uid=x=>typeof x==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(x);
  const ms=now=>{const n=new Date(now??Date.now()).getTime();if(!Number.isFinite(n))throw new Error('Instante inválido.');return n;};
  function state(match){
   const old=match?.visual_match;if(old?.schema&&old.schema!==SCHEMA)throw new Error('Atualiza a app antes de abrir este jogo.');
-  const s={schema:SCHEMA,revision:0,layout:clone(DEFAULT),rotations:[],markings:[],status:'not_started',period:1,second_half_started_at:null,second_half_started_at_ms:null,controller_id:null,started_at:null,finished_at:null,active_since:null,elapsed_ms:0,roster:[],initial_slots:null,events:[],...(old?clone(old):{})};
+  const fallback=systemLayout(systemFor(match));
+  const s={schema:SCHEMA,revision:0,layout:clone(fallback),rotations:[],markings:[],status:'not_started',period:1,second_half_started_at:null,second_half_started_at_ms:null,controller_id:null,started_at:null,finished_at:null,active_since:null,elapsed_ms:0,roster:[],initial_slots:null,events:[],...(old?clone(old):{})};
   if(!Number.isInteger(s.revision)||s.revision<0||!Object.hasOwn(STATES,s.status)||![1,2].includes(s.period)||s.period===2&&(!s.second_half_started_at||!Number.isInteger(s.second_half_started_at_ms)||s.second_half_started_at_ms<0)||!Array.isArray(s.events)||!Array.isArray(s.rotations)||!Array.isArray(s.roster)||!Array.isArray(s.markings)||s.markings.length>100)throw new Error('Registo de jogo inválido.');
   for(const m of s.markings)if(!uid(m.id)||!['cone','arrow'].includes(m.shape)||![m.x,m.y,...(m.shape==='arrow'?[m.x2,m.y2]:[])].every(v=>typeof v==='number'&&Number.isFinite(v)&&v>=.04&&v<=.96))throw new Error('Marcação tática inválida.');
-  s.layout={...clone(DEFAULT),...s.layout};return s;
+  s.layout={...clone(fallback),...s.layout};return s;
  }
+ function systemFor(match){const value=match?.lineup?.system;return Object.hasOwn(SYSTEMS,value)?value:'1-2-1';}
+ function systemLayout(system){return clone((SYSTEMS[system]||SYSTEMS['1-2-1']).layout);}
  function planKey(match){return JSON.stringify({callup:match.callup||null,lineup:match.lineup||null});}
  function initialSlots(match){
   const l=match.lineup||{},slots={gr:String(l.goalkeeper_id||''),def:'',left:'',right:'',front:''};
@@ -82,14 +90,17 @@
   function playingRef(ref){if(!s.roster.some(p=>p.ref===ref))throw new Error('Atleta não incluído no registo inicial do jogo.');}
   if(type==='save_lineup'){
    if(s.started_at)throw new Error('O alinhamento inicial está preservado. Durante o jogo usa Substituir ou Trocar posições.');
+   const system=command.system==null?systemFor(row):String(command.system);
+   if(!Object.hasOwn(SYSTEMS,system))throw new Error('Escolhe um sistema tático 5v5 válido.');
    const slots=validateSlots(command.slots,row,players),refs=Object.values(slots).filter(Boolean);
-   row.lineup={...(row.lineup||{}),system:'1-2-1',status:refs.length===5?'ready':'draft',goalkeeper_id:slots.gr||null,starters:['def','left','right','front'].map(k=>slots[k]).filter(Boolean),positions:slots,substitutes:pool(row,players).filter(available).map(p=>p.sync_id).filter(x=>!refs.includes(x))};
+   if(system!==systemFor(row))s.layout=systemLayout(system);
+   row.lineup={...(row.lineup||{}),system,status:refs.length===5?'ready':'draft',goalkeeper_id:slots.gr||null,starters:['def','left','right','front'].map(k=>slots[k]).filter(Boolean),positions:slots,substitutes:pool(row,players).filter(available).map(p=>p.sync_id).filter(x=>!refs.includes(x))};
   }else if(type==='clear_lineup'){
    if(s.started_at)throw new Error('O alinhamento inicial já faz parte do histórico.');confirmed();row.lineup={...(row.lineup||{}),status:'draft',goalkeeper_id:null,starters:[],positions:{},substitutes:pool(row,players).filter(available).map(p=>p.sync_id)};
   }else if(type==='position'){
    if(!Object.hasOwn(ROLES,command.role)||![command.x,command.y].every(x=>typeof x==='number'&&Number.isFinite(x)&&x>=.08&&x<=.92))throw new Error('Escolhe uma posição dentro do campo.');
    s.layout[command.role]={x:command.x,y:command.y};
-  }else if(type==='reset_layout'){confirmed();s.layout=clone(DEFAULT);
+  }else if(type==='reset_layout'){confirmed();s.layout=systemLayout(systemFor(row));
   }else if(type==='add_marking'){
    const shape=command.shape,coords=shape==='cone'?[command.x,command.y]:shape==='arrow'?[command.x,command.y,command.x2,command.y2]:[];
    if(!uid(command.id)||s.markings.some(m=>m.id===command.id)||s.markings.length>=100||!['cone','arrow'].includes(shape)||!coords.length||!coords.every(v=>typeof v==='number'&&Number.isFinite(v)&&v>=.04&&v<=.96))throw new Error('Marcação tática inválida.');
@@ -164,6 +175,6 @@
   s.revision++;s.updated_at=iso;row.visual_match=s;
   if(s.started_at)replay(row,at);return row;
  }
- root.VisionMatchVisual={schema:SCHEMA,roles:ROLES,defaults:DEFAULT,states:STATES,state,initialSlots,planKey,pool,available,validateSlots,elapsed,format,replay,positionsPlayed,apply};
+ root.VisionMatchVisual={schema:SCHEMA,roles:ROLES,systems:SYSTEMS,defaults:DEFAULT,systemFor,systemLayout,states:STATES,state,initialSlots,planKey,pool,available,validateSlots,elapsed,format,replay,positionsPlayed,apply};
  if(typeof module!=='undefined'&&module.exports)module.exports=root.VisionMatchVisual;
 })(globalThis);

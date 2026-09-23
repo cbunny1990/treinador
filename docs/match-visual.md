@@ -3,15 +3,16 @@
 ## Acesso
 **Calendário → jogo → Jogo visual / substituições**. Também está disponível ao abrir um jogo pela Equipa.
 O percurso `#/jogo-visual/ID_LOCAL` usa o jogo existente; não cria uma segunda ficha nem outro evento no calendário.
+Na ficha do jogo, a convocatória continua editável; o alinhamento é um resumo com ligação para o Jogo visual. Esse quadro é o único editor do sistema tático e das posições iniciais, evitando gravações divergentes entre formulários. Registos legados sem posições por função mantêm a ordem histórica dos titulares como disposição inicial.
 
 ## Antes do jogo
-Definir a convocatória na ficha do jogo. No novo ecrã, escolher **Guarda-redes, Defesa, Ala esquerda, Ala direita e Avançado**. Os convocados restantes ficam como suplentes.
-Guardar o alinhamento visual. Só atletas convocados e disponíveis podem ser selecionados; um atleta não ocupa duas posições.
+Definir a convocatória na ficha do jogo. No novo ecrã, escolher o sistema **1-2-1, 2-2 ou 3-1** e depois **Guarda-redes, Defesa, Ala esquerda, Ala direita e Avançado**. Os quatro jogadores de campo mantêm posições individuais para substituições e minutos; os restantes convocados ficam como suplentes.
+Guardar o alinhamento visual. O sistema é persistido junto do alinhamento e volta a aparecer ao reabrir o jogo. Se for alterado, o campo recebe a disposição-base desse sistema; **Repor posições no campo** restaura a disposição-base do sistema atual. Um jogo legado sem sistema continua a usar 1-2-1. Só atletas convocados e disponíveis podem ser selecionados; um atleta não ocupa duas posições.
 O campo reutiliza nomes, dorsais e as fotografias existentes quando acessíveis. Não gera nem altera imagens de exercícios.
 Selecionar uma posição e tocar numa zona livre do campo para mover o seu marcador; no teclado, usar as setas. A disposição é guardada em coordenadas normalizadas, com margens de apresentação para não cortar os nomes.
 Mover um marcador altera apenas o desenho: não troca o guarda-redes, não efetua uma substituição e não altera os minutos.
 O modo de desenho também permite colocar cones e setas de movimento. As marcações são partilhadas, permanecem ao limpar a utilização e podem ser apagadas individualmente ou em conjunto com confirmação. Não mudam a convocatória, o alinhamento inicial nem os minutos. O MCP tem uma operação específica para editar estas marcações e verifica revisão e equipa.
-**Repor posições no campo** restaura a disposição 1-2-1; **Apagar alinhamento** limpa a seleção inicial, mantendo a convocatória. Ambas pedem confirmação.
+**Repor posições no campo** restaura a disposição-base do sistema selecionado; **Apagar alinhamento** limpa a seleção inicial, mantendo a convocatória e o sistema escolhido. Ambas pedem confirmação.
 
 No telemóvel (390 px), os marcadores do campo têm pelo menos 44 × 44 px, os seletores e botões dos formulários têm pelo menos 44 px de altura e o quadro não cria rolagem horizontal.
 
@@ -51,7 +52,7 @@ A primeira abertura pode precisar de rede para receber os registos/fotografias. 
 ## MCP para a IA autorizada
 Nove operações no servidor existente:
 - `get_match_visual`: leitura sem iniciar cronómetro; inclui elegibilidade atual e utilização registada, sem fotos privadas no resultado.
-- `save_match_visual_lineup`: guardar/limpar alinhamento inicial antes de iniciar.
+- `save_match_visual_lineup`: guardar/limpar alinhamento inicial antes de iniciar; pode escolher `system` (`1-2-1`, `2-2` ou `3-1`). Se omitido, preserva o sistema existente; em jogos legados sem sistema usa 1-2-1.
 - `set_match_visual_position`: posição no desenho ou reposição, sem modificar a utilização.
 - `edit_match_tactics`: adicionar cone/seta exige confirmação explícita do Head Coach; apagar uma marcação ou limpar o quadro exige também confirmação e não altera alinhamento, cronómetro ou minutos.
 - `save_match_rotation`: criar/editar plano pelo `rotation_id`.

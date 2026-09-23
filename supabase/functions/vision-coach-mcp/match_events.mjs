@@ -12,6 +12,7 @@ const detailProperties={
  event_id:{type:'string',minLength:1,maxLength:100},
  zone:{type:'string',enum:Object.keys(E.zones)},
  player_ref:{type:'string'},
+ opponent_player_name:{type:'string',minLength:1,maxLength:100},
  reason:{type:'string',enum:Object.keys(E.lossReasons)},
  side:{type:'string',enum:Object.keys(E.sides)},
  note:{type:'string',maxLength:300},
@@ -49,13 +50,13 @@ export async function executeMatchEventsTool(admin,c,name,args){
  let cmd;
  if(name==='record_match_event'){
   if(!Object.hasOwn(E.types,args.event_type||''))throw new Error('invalid_event_type');
-  cmd={type:'record',id:String(args.event_id).slice(0,100),event_type:args.event_type,confirmed:true,reason:args.reason,zone:args.zone,player_ref:args.player_ref,side:E.sidedTypes.includes(args.event_type)?args.side:undefined,note:args.note};
+  cmd={type:'record',id:String(args.event_id).slice(0,100),event_type:args.event_type,confirmed:true,reason:args.reason,zone:args.zone,player_ref:args.player_ref,opponent_player_name:args.opponent_player_name,side:E.sidedTypes.includes(args.event_type)?args.side:undefined,note:args.note};
   if(args.minute!=null)cmd.at_ms=Math.round(Number(args.minute)*10)/10*60000;
  }else if(name==='update_match_event'){
   cmd={type:'edit',id:String(args.event_id).slice(0,100),confirmed:true};
   if(args.event_type!=null)throw new Error('event_type_is_immutable');
   if(args.minute!=null)cmd.at_ms=Math.round(Number(args.minute)*10)/10*60000;
-  for(const key of ['zone','player_ref','note','reason'])if(args[key]!=null)cmd[key]=args[key];
+  for(const key of ['zone','player_ref','opponent_player_name','note','reason'])if(args[key]!=null)cmd[key]=args[key];
   if(args.side!=null)cmd.side=args.side;
  }else if(name==='delete_match_event')cmd={type:'delete',id:String(args.event_id).slice(0,100),confirmed:args.confirmed};
  else if(name==='save_match_possession')cmd={type:'save_possession',kind:args.kind,value:args.value??null,confirmed:true};

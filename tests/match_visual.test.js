@@ -8,6 +8,18 @@ const start=()=>act(plan(),'start',0,{confirmed:true});
 test('legacy lineup becomes 5v5 without changing any records or creating minutes',()=>{const r=plan(),before=JSON.stringify(r),v=M.replay(r);assert.equal(v.slots.gr,refs[0]);assert.deepEqual(Object.values(v.slots),refs.slice(0,5));assert.equal(v.players.length,0);assert.equal(JSON.stringify(r),before);});
 test('lineup rejects duplicates, unavailable/non-callup players and incomplete start',()=>{const r=plan(),slots=M.initialSlots(r);slots.front=refs[0];assert.throws(()=>act(r,'save_lineup',0,{slots}),/uma posição/);const p=roster();p[1].estado_disponibilidade='lesionado';assert.throws(()=>act(r,'start',0,{confirmed:true},{players:p}),/disponíveis/);r.lineup.starters=[];assert.throws(()=>act(r,'start',0,{confirmed:true}),/quatro/);});
 test('planned lineup saves and clears only its fields, keeps callup and analysis',()=>{const r=plan(),slots=M.initialSlots(r);slots.front=refs[5];const out=act(r,'save_lineup',0,{slots});assert.equal(out.lineup.positions.front,refs[5]);assert.ok(out.lineup.substitutes.includes(refs[4]));assert.deepEqual(out.callup,r.callup);assert.deepEqual(out.post_game,r.post_game);const cleared=act(out,'clear_lineup',0,{confirmed:true});assert.equal(cleared.lineup.starters.length,0);assert.equal(cleared.visual_match.status,'not_started');});
+test('supported tactical systems persist, set their layout, reopen, and reset without losing legacy defaults',()=>{
+ const r=plan(),slots=M.initialSlots(r);assert.deepEqual(Object.keys(M.systems),['1-2-1','2-2','3-1']);
+ for(const system of Object.keys(M.systems)){
+  const saved=act(r,'save_lineup',0,{slots,system}),reopened=JSON.parse(JSON.stringify(saved));
+  assert.equal(reopened.lineup.system,system);assert.deepEqual(M.state(reopened).layout,M.systemLayout(system));
+  const moved=act(reopened,'position',1,{role:'front',x:.4,y:.3});
+  const reset=act(moved,'reset_layout',2,{confirmed:true});assert.deepEqual(reset.visual_match.layout,M.systemLayout(system));
+ }
+ const legacy=plan();delete legacy.lineup.system;assert.equal(M.systemFor(legacy),'1-2-1');
+ const saved=act(legacy,'save_lineup',0,{slots});assert.equal(saved.lineup.system,'1-2-1');assert.deepEqual(M.state(saved).layout,M.systemLayout('1-2-1'));
+ assert.throws(()=>act(r,'save_lineup',0,{slots,system:'4-0'}),/sistema tático/);
+});
 test('explicit start freezes roster without photos or health details and does not fill scores',()=>{const r=plan(),p=roster();p[0].foto='secret-local-data';const out=act(r,'start',0,{confirmed:true},{players:p});assert.equal(out.visual_match.roster.length,7);assert.equal(out.visual_match.roster[0].foto,undefined);assert.equal(out.golos_favor,2);assert.equal(out.estado,'agendado');assert.throws(()=>act(r,'start'),/confirmação/);for(const estado of ['cancelado','concluido'])assert.throws(()=>act({...r,estado},'start',0,{confirmed:true}),/retroativos/);});
 test('minutes replay correctly across entry, re-entry, role swap, pauses and end',()=>{
  let r=start();r=act(r,'substitute',300000,{id:'sub1',out_ref:refs[1],in_ref:refs[5],confirmed:true});r=act(r,'pause',600000);
