@@ -63,20 +63,17 @@ function visionPlannedTrainings(team, from, weeks) {
   return events;
 }
 
-function vcMatchKey(match) {
-  const opponent = String(match?.adversario || "")
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase().replace(/[^a-z0-9]/g, "");
-  return [vcIsoDate(match?.data), String(match?.hora || ""), opponent].join("|");
-}
-
 function visionCalendarEvents(snapshot, options) {
   const cfg = options || {};
   const from = vcIsoDate(cfg.from || new Date().toISOString().slice(0, 10));
   const weeks = Number(cfg.weeks || VISION_CALENDAR_WEEKS);
   const seenMatches = new Set();
   const matches = vcArray(snapshot?.matches).filter((m) => {
-    const key = vcMatchKey(m);
+    // Deduplicate repeated copies of the same persisted match only. Date,
+    // time and opponent are not an identity: two fixtures can share them.
+    const stableId = m?.sync_id || m?.external_key || (m?.id != null ? "local:" + m.id : "");
+    if (!stableId) return true;
+    const key = String(stableId);
     if (seenMatches.has(key)) return false;
     seenMatches.add(key);
     return true;
@@ -88,11 +85,19 @@ function visionCalendarEvents(snapshot, options) {
     type: "training", planned: false, date: vcIsoDate(t.data), time: t.hora || null,
     end_time: t.hora_fim || null, title: "Treino " + (t.escalao || ""), id: t.id, item: t,
   }));
-  const actualTrainingDates = new Set(trainings.map((x) => x.date));
+  const slotKey = (event) => [event.date, event.time || ""].join("|");
+  const actualTrainingSlots = new Set(trainings.map(slotKey));
+  const plannedSlots = new Set();
   const planned = visionPlannedTrainings(snapshot?.team, from, weeks)
-    .filter((x) => !actualTrainingDates.has(x.date));
+    .filter((event) => {
+      const key = slotKey(event);
+      if (actualTrainingSlots.has(key) || plannedSlots.has(key)) return false;
+      plannedSlots.add(key);
+      return true;
+    });
+  const until = from ? vcAddDays(from, Math.max(1, weeks) * 7) : "";
   return matches.concat(trainings, planned)
-    .filter((x) => x.date && (!from || x.date >= from))
+    .filter((x) => x.date && (!from || (x.date >= from && x.date < until)))
     .sort((a, b) => (a.date + "T" + (a.time || "99:99")).localeCompare(b.date + "T" + (b.time || "99:99")));
 }
 

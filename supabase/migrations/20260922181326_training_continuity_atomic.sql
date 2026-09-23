@@ -75,4 +75,4 @@ begin
 end;
 $$;
 revoke all on function public.head_coach_commit_training_continuity(uuid,uuid,timestamptz,jsonb,text) from public, anon, authenticated;
-grant execute on function public.head_coach_commit_training_continuity(uuid,uuid,timestamptz,jsonb,text) to service_role;
+grant execute on function public.head_coach_commit_training_continuity(uuid,uuid,timestamptz,jsonb,text) to service_role;;

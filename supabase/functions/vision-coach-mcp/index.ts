@@ -5,9 +5,16 @@ import { IMAGE_TOOLS, executeImageTool } from "./image_uploads.mjs";
 import { SESSION_TOOLS, executeSessionTool } from "./training_sessions.mjs";
 import { CONTINUITY_TOOLS, executeContinuityTool } from "./training_continuity.mjs";
 import { MATCH_VISUAL_TOOLS, executeMatchVisualTool } from "./match_visual.mjs";
+import { MATCH_EVENTS_TOOLS, executeMatchEventsTool } from "./match_events.mjs";
+import { MATCH_ANALYSIS_TOOLS, executeMatchAnalysisTool } from "./match_analysis.mjs";
+import { MATCH_EVIDENCE_TOOLS, executeMatchEvidenceTool } from "./match_evidence.mjs";
+import { PLAYER_GOAL_TOOLS, executePlayerGoalTool } from "./player_goals.mjs";
+import { TEAM_DEVELOPMENT_TOOLS, executeTeamDevelopmentTool } from "./team_development.mjs";
+import { SEASON_TOOLS, executeSeasonTool } from "./seasons.mjs";
+import { REPORT_TOOLS, executeReportTool } from "./reports.mjs";
 
 const SERVER_NAME = "vision-coach";
-const SERVER_VERSION = "1.4.0";
+const SERVER_VERSION = "1.12.0";
 const MODERN_PROTOCOL = "2026-07-28";
 const LEGACY_PROTOCOLS = new Set(["2025-11-25", "2025-06-18", "2025-03-26"]);
 const MAX_BODY_BYTES = 256 * 1024;
@@ -85,6 +92,13 @@ const TOOLS = [
   ...SESSION_TOOLS,
   ...CONTINUITY_TOOLS,
   ...MATCH_VISUAL_TOOLS,
+  ...MATCH_EVENTS_TOOLS,
+  ...MATCH_ANALYSIS_TOOLS,
+  ...MATCH_EVIDENCE_TOOLS,
+  ...PLAYER_GOAL_TOOLS,
+  ...TEAM_DEVELOPMENT_TOOLS,
+  ...SEASON_TOOLS,
+  ...REPORT_TOOLS,
   {
     name: "workspace_summary",
     description: "Resumo atual do workspace Vision Coach: equipa, próximos jogos, exercícios e treinos recentes.",
@@ -139,10 +153,11 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        id: { type: "string" },
+        id: { type: "string", format: "uuid" },
         external_key: { type: "string" },
       },
       additionalProperties: false,
+      oneOf: [{ required: ["id"], not: { required: ["external_key"] } }, { required: ["external_key"], not: { required: ["id"] } }],
     },
     annotations: { readOnlyHint: true, destructiveHint: false },
   },
@@ -176,25 +191,28 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        id: { type: "string", description: "UUID remoto do jogador." },
+        id: { type: "string", format: "uuid", description: "UUID remoto do jogador." },
         external_key: { type: "string" },
         availability: { type: "string", enum: ["disponivel","indisponivel","lesionado","castigado","ausente"] },
+        expected_updated_at: { type: "string" },
+        confirmed: { type: "boolean", const: true },
       },
-      required: ["availability"],
+      required: ["availability", "expected_updated_at", "confirmed"],
       additionalProperties: false,
+      oneOf: [{ required: ["id"], not: { required: ["external_key"] } }, { required: ["external_key"], not: { required: ["id"] } }],
     },
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
     name: "set_player_roster_status",
     description: "Retira ou reintegra um jogador no plantel, preservando o histórico.",
-    inputSchema: {type:"object",properties:{id:{type:"string"},external_key:{type:"string"},active:{type:"boolean"}},required:["active"],additionalProperties:false},
+    inputSchema: {type:"object",properties:{id:{type:"string",format:"uuid"},external_key:{type:"string"},active:{type:"boolean"},expected_updated_at:{type:"string"},confirmed:{type:"boolean",const:true}},required:["active","expected_updated_at","confirmed"],additionalProperties:false,oneOf:[{required:["id"],not:{required:["external_key"]}},{required:["external_key"],not:{required:["id"]}}]},
     annotations: {readOnlyHint:false,destructiveHint:false},
   },
   {
     name: "remove_player_permanently",
     description: "Retira definitivamente um jogador do workspace ativo, preservando o histórico interno.",
-    inputSchema: {type:"object",properties:{id:{type:"string"},external_key:{type:"string"}},additionalProperties:false},
+    inputSchema: {type:"object",properties:{id:{type:"string",format:"uuid"},external_key:{type:"string"},expected_updated_at:{type:"string"},confirmed:{type:"boolean",const:true}},required:["expected_updated_at","confirmed"],additionalProperties:false,oneOf:[{required:["id"],not:{required:["external_key"]}},{required:["external_key"],not:{required:["id"]}}]},
     annotations: {readOnlyHint:false,destructiveHint:true},
   },
   {
@@ -219,8 +237,9 @@ const TOOLS = [
         tags: { type: "array", items: { type: "string" } },
         favorite: { type: "boolean" },
         external_key: { type: "string" },
+        confirmed: { type: "boolean", const: true },
       },
-      required: ["name", "objective"],
+      required: ["name", "objective", "confirmed"],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false },
@@ -236,7 +255,8 @@ const TOOLS = [
         objective: { type: "string", minLength: 1 },
         location: { type: "string" },
         notes: { type: "string" },
-        source_match_ref: { type: "string", description: "UUID remoto do jogo relacionado." },
+        source_match_ref: { type: "string", format: "uuid", description: "UUID remoto do jogo relacionado." },
+        source_match_expected_updated_at: { type: "string", description: "Revisão atual do jogo de origem; obrigatório quando source_match_ref é usado." },
         external_key: { type: "string" },
         blocks: {
           type: "array",
@@ -253,8 +273,9 @@ const TOOLS = [
             additionalProperties: false,
           },
         },
+        confirmed: { type: "boolean", const: true },
       },
-      required: ["date", "objective", "blocks"],
+      required: ["date", "objective", "blocks", "confirmed"],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false },
@@ -265,13 +286,50 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        id: { type: "string" },
+        id: { type: "string", format: "uuid" },
         external_key: { type: "string" },
+        expected_updated_at: { type: "string" },
+        confirmed: { type: "boolean", const: true },
         main_objective: { type: "string" },
         game_plan: { type: "string" },
         opponent_notes: { type: "string" },
+        opponent_formation: { type: "string", maxLength: 40 },
+        opponent_style: { type: "string", enum: ["posse","direto","pressao_alta","bloco_baixo","transicoes"] },
+        opponent_strengths: { type: "array", items: { type: "string", maxLength: 500 }, maxItems: 20 },
+        opponent_vulnerabilities: { type: "array", items: { type: "string", maxLength: 500 }, maxItems: 20 },
         observation_points: { type: "array", items: { type: "string" } },
       },
+      additionalProperties: false,
+      required: ["expected_updated_at", "confirmed"],
+      oneOf: [{ required: ["id"], not: { required: ["external_key"] } }, { required: ["external_key"], not: { required: ["id"] } }],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "get_media",
+    description: "Lê um media do workspace pelo UUID estável, incluindo a revisão atual e a associação.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string", format: "uuid" } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false },
+  },
+  {
+    name: "update_external_media",
+    description: "Atualiza metadados ou URL HTTPS de um media externo após leitura e confirmação explícita do treinador. Não altera ficheiros privados.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", format: "uuid" },
+        expected_updated_at: { type: "string", minLength: 1 },
+        title: { type: "string", minLength: 1, maxLength: 160 },
+        note: { type: "string", maxLength: 2000 },
+        url: { type: "string", minLength: 8, maxLength: 8000 },
+        confirmed: { type: "boolean", const: true },
+      },
+      required: ["id", "expected_updated_at", "confirmed"],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false },
@@ -288,8 +346,9 @@ const TOOLS = [
         title: { type: "string", minLength: 1 },
         url: { type: "string", minLength: 8 },
         note: { type: "string" },
+        confirmed: { type: "boolean", const: true },
       },
-      required: ["subject_type","subject_ref","media_type","title","url"],
+      required: ["subject_type","subject_ref","media_type","title","url","confirmed"],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false },
@@ -297,6 +356,9 @@ const TOOLS = [
 ];
 
 async function findRecord(admin: any, teamId: string, kind: string, args: any) {
+  if (Boolean(args?.id) === Boolean(args?.external_key)) throw new Error("exactly_one_record_identifier_required");
+  if (args?.id && !validUuid(args.id)) throw new Error("invalid_record_uuid");
+  if (args?.external_key && !String(args.external_key).trim()) throw new Error("invalid_external_key");
   const { data, error } = await admin.from("workspace_records")
     .select("*").eq("team_id", teamId).eq("kind", kind).is("deleted_at", null);
   if (error) throw error;
@@ -326,6 +388,13 @@ async function putRecord(admin: any, teamId: string, kind: string, payload: any,
 async function executeTool(admin: any, connector: any, name: string, args: any, requestId: unknown) {
   const teamId = String(connector.team_id);
   if (MATCH_VISUAL_TOOLS.some((tool) => tool.name === name)) return executeMatchVisualTool(admin,connector,name,args);
+  if (MATCH_EVENTS_TOOLS.some((tool) => tool.name === name)) return executeMatchEventsTool(admin,connector,name,args);
+  if (MATCH_ANALYSIS_TOOLS.some((tool) => tool.name === name)) return executeMatchAnalysisTool(admin,connector,name,args);
+  if (MATCH_EVIDENCE_TOOLS.some((tool) => tool.name === name)) return executeMatchEvidenceTool(admin,connector,name,args);
+  if (PLAYER_GOAL_TOOLS.some((tool) => tool.name === name)) return executePlayerGoalTool(admin,connector,name,args);
+  if (TEAM_DEVELOPMENT_TOOLS.some((tool) => tool.name === name)) return executeTeamDevelopmentTool(admin,connector,name,args);
+  if (SEASON_TOOLS.some((tool) => tool.name === name)) return executeSeasonTool(admin,connector,name,args);
+  if (REPORT_TOOLS.some((tool) => tool.name === name)) return executeReportTool(admin,connector,name,args);
   if (CONTINUITY_TOOLS.some((tool) => tool.name === name)) return executeContinuityTool(admin,connector,name,args);
   if (SESSION_TOOLS.some((tool) => tool.name === name)) return executeSessionTool(admin,connector,name,args);
   if (IMAGE_TOOLS.some((tool) => tool.name === name)) return executeImageTool(admin,connector,name,args,Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "");
@@ -449,16 +518,18 @@ async function executeTool(admin: any, connector: any, name: string, args: any, 
 
   if (name === "update_player_availability") {
     requireScope(connector, "write");
+    if (args?.confirmed !== true) throw new Error("explicit_confirmation_required");
     const availability = normalizePlayerAvailability(args?.availability);
     const existing = await findRecord(admin, teamId, "player", args);
     if (!existing) throw new Error("player_not_found");
+    if (!args.expected_updated_at || args.expected_updated_at !== existing.updated_at) throw new Error("record_conflict_read_again");
     if (existing.payload?.plantel_ativo === false) throw new Error("player_not_in_roster");
     const payload = {
       ...(existing.payload || {}),
       estado_disponibilidade: availability,
     };
     const record = await putRecord(admin, teamId, "player", payload, existing,
-      "mcp:" + connector.id + ":player-availability:" + existing.id + ":" + availability);
+      "mcp:" + connector.id + ":player-availability:" + existing.id + ":" + existing.updated_at + ":" + availability);
     return {
       updated: true,
       player: {
@@ -472,28 +543,30 @@ async function executeTool(admin: any, connector: any, name: string, args: any, 
 
   if (name === "set_player_roster_status") {
     requireScope(connector,"write");
+    if (args?.confirmed !== true) throw new Error("explicit_confirmation_required");
     const existing=await findRecord(admin,teamId,"player",args);
     if(!existing) throw new Error("player_not_found");
+    if(!args.expected_updated_at||args.expected_updated_at!==existing.updated_at) throw new Error("record_conflict_read_again");
     const active=Boolean(args?.active);
     const payload={...(existing.payload||{}),plantel_ativo:active,estado_disponibilidade:active?normalizePlayerAvailability(existing.payload?.estado_disponibilidade):"indisponivel"};
-    const record=await putRecord(admin,teamId,"player",payload,existing,"mcp:"+connector.id+":player-roster:"+existing.id+":"+String(active));
+    const record=await putRecord(admin,teamId,"player",payload,existing,"mcp:"+connector.id+":player-roster:"+existing.id+":"+existing.updated_at+":"+String(active));
     return {updated:true,player:{id:existing.id,nome:payload.nome||null,plantel_ativo:active,estado_disponibilidade:payload.estado_disponibilidade},record};
   }
   if (name === "remove_player_permanently") {
     requireScope(connector,"write");
+    if (args?.confirmed !== true) throw new Error("explicit_confirmation_required");
     const existing=await findRecord(admin,teamId,"player",args);
     if(!existing) throw new Error("player_not_found");
-    const removedAt=new Date().toISOString();
-    const {data,error}=await admin.from("workspace_records").update({deleted_at:removedAt,updated_at:removedAt,payload:{...(existing.payload||{}),plantel_ativo:false,estado_disponibilidade:"indisponivel",removido_definitivamente_em:removedAt}}).eq("id",existing.id).eq("team_id",teamId).eq("kind","player").is("deleted_at",null).select("id,payload,deleted_at,updated_at").maybeSingle();
+    if(!args.expected_updated_at||args.expected_updated_at!==existing.updated_at) throw new Error("record_conflict_read_again");
+    const {data,error}=await admin.rpc("head_coach_soft_delete_record",{p_team_id:teamId,p_record_id:existing.id,p_expected_updated_at:existing.updated_at,p_idempotency_key:"mcp:"+connector.id+":player-remove:"+existing.id+":"+existing.updated_at,p_agent_subject:"head-coach"});
     if(error) throw error;
     if(!data) throw new Error("player_remove_conflict");
-    const {error:logError}=await admin.from("activity_log").insert({team_id:teamId,actor_type:"agent",actor_label:"head-coach",action:"player_removed_permanently",summary:"Jogador retirado definitivamente do plantel ativo.",entity_type:"player",entity_ref:existing.id,metadata:{nome:existing.payload?.nome||null}});
-    if(logError) throw logError;
-    return {removed:true,player:{id:existing.id,nome:existing.payload?.nome||null,deleted_at:removedAt}};
+    return {removed:true,player:{id:existing.id,nome:existing.payload?.nome||null,deleted_at:data.deleted_at||null},record:data};
   }
 
   if (name === "create_exercise") {
     requireScope(connector, "write");
+    if (args?.confirmed !== true) throw new Error("explicit_confirmation_required");
     const exerciseName = String(args?.name || "").trim();
     const objective = String(args?.objective || "").trim();
     if (!exerciseName || !objective) throw new Error("name_and_objective_required");
@@ -532,6 +605,7 @@ async function executeTool(admin: any, connector: any, name: string, args: any, 
 
   if (name === "create_training") {
     requireScope(connector, "write");
+    if (args?.confirmed !== true) throw new Error("explicit_confirmation_required");
     const date = String(args?.date || "");
     const objective = String(args?.objective || "").trim();
     const blocksInput = Array.isArray(args?.blocks) ? args.blocks : [];
@@ -563,6 +637,7 @@ async function executeTool(admin: any, connector: any, name: string, args: any, 
       if (!validUuid(args.source_match_ref)) throw new Error("invalid_source_match_ref");
       const source = await findRecord(admin, teamId, "match", { id: args.source_match_ref });
       if (!source) throw new Error("source_match_not_found");
+      if (!args.source_match_expected_updated_at || args.source_match_expected_updated_at !== source.updated_at) throw new Error("record_conflict_read_source_again");
     }
 
     const externalKey = String(args?.external_key ||
@@ -594,8 +669,10 @@ async function executeTool(admin: any, connector: any, name: string, args: any, 
 
   if (name === "update_match_pre_game") {
     requireScope(connector, "write");
+    if (args?.confirmed !== true) throw new Error("explicit_confirmation_required");
     const existing = await findRecord(admin, teamId, "match", args);
     if (!existing) throw new Error("match_not_found");
+    if (!args.expected_updated_at || args.expected_updated_at !== existing.updated_at) throw new Error("record_conflict_read_again");
     const payload = { ...(existing.payload || {}) };
     payload.pre_game = {
       ...(payload.pre_game || {}),
@@ -603,17 +680,26 @@ async function executeTool(admin: any, connector: any, name: string, args: any, 
       objetivo_principal: args?.main_objective ?? payload.pre_game?.objetivo_principal ?? null,
       plano_jogo: args?.game_plan ?? payload.pre_game?.plano_jogo ?? null,
       adversario_notas: args?.opponent_notes ?? payload.pre_game?.adversario_notas ?? null,
+      adversario_sistema: args?.opponent_formation ?? payload.pre_game?.adversario_sistema ?? null,
+      adversario_estilo: args?.opponent_style ?? payload.pre_game?.adversario_estilo ?? null,
+      adversario_pontos_fortes: Array.isArray(args?.opponent_strengths)
+        ? args.opponent_strengths.map((x: unknown) => String(x).trim().slice(0, 500)).filter(Boolean).slice(0, 20)
+        : (payload.pre_game?.adversario_pontos_fortes || []),
+      adversario_vulnerabilidades: Array.isArray(args?.opponent_vulnerabilities)
+        ? args.opponent_vulnerabilities.map((x: unknown) => String(x).trim().slice(0, 500)).filter(Boolean).slice(0, 20)
+        : (payload.pre_game?.adversario_vulnerabilidades || []),
       pontos_observar: Array.isArray(args?.observation_points)
         ? args.observation_points.map(String)
         : (payload.pre_game?.pontos_observar || []),
     };
     const record = await putRecord(admin, teamId, "match", payload, existing,
-      "mcp:" + connector.id + ":match-pre:" + existing.id + ":" + String(requestId ?? crypto.randomUUID()));
+      "mcp:" + connector.id + ":match-pre:" + existing.id + ":" + existing.updated_at);
     return { updated: true, record };
   }
 
   if (name === "add_external_media") {
     requireScope(connector, "media");
+    if (args?.confirmed !== true) throw new Error("explicit_confirmation_required");
     const url = String(args?.url || "").trim();
     if (!/^https:\/\//i.test(url)) throw new Error("https_url_required");
     if (!validUuid(args?.subject_ref)) throw new Error("invalid_subject_ref");
@@ -636,6 +722,59 @@ async function executeTool(admin: any, connector: any, name: string, args: any, 
     });
     if (error) throw error;
     return { created: true, media: data };
+  }
+
+  if (name === "get_media") {
+    requireScope(connector, "read");
+    if (!validUuid(args?.id)) throw new Error("invalid_media_uuid");
+    const { data, error } = await admin.from("media_assets")
+      .select("id,team_id,subject_type,subject_ref,media_type,title,note,external_url,storage_path,file_name,mime_type,size_bytes,actor_type,actor_label,created_at,updated_at,deleted_at")
+      .eq("team_id", teamId).eq("id", args.id).maybeSingle();
+    if (error) throw error;
+    if (!data || data.deleted_at) throw new Error("media_not_found");
+    return data;
+  }
+
+  if (name === "update_external_media") {
+    requireScope(connector, "media");
+    if (args?.confirmed !== true) throw new Error("explicit_confirmation_required");
+    if (!validUuid(args?.id)) throw new Error("invalid_media_uuid");
+    if (!args?.expected_updated_at) throw new Error("expected_updated_at_required");
+    if (!["title", "note", "url"].some((key) => Object.prototype.hasOwnProperty.call(args, key))) {
+      throw new Error("media_update_field_required");
+    }
+    const { data: existing, error: readError } = await admin.from("media_assets")
+      .select("id,team_id,subject_type,subject_ref,media_type,title,note,external_url,storage_path,file_name,mime_type,size_bytes,updated_at,deleted_at")
+      .eq("team_id", teamId).eq("id", args.id).maybeSingle();
+    if (readError) throw readError;
+    if (!existing || existing.deleted_at) throw new Error("media_not_found");
+    if (!existing.external_url || existing.storage_path) throw new Error("private_or_local_media_is_not_editable_via_agent");
+    if (existing.updated_at !== args.expected_updated_at) throw new Error("record_conflict_read_again");
+    const url = Object.prototype.hasOwnProperty.call(args, "url") ? String(args.url || "").trim() : existing.external_url;
+    if (!/^https:\/\//i.test(url)) throw new Error("https_url_required");
+    const title = Object.prototype.hasOwnProperty.call(args, "title") ? String(args.title || "").trim() : existing.title;
+    if (!title) throw new Error("media_title_required");
+    const note = Object.prototype.hasOwnProperty.call(args, "note") ? String(args.note || "") : existing.note;
+    if (title.length > 160 || note.length > 2000 || url.length > 8000) throw new Error("media_field_too_long");
+    const { data, error } = await admin.rpc("head_coach_register_media", {
+      p_team_id: teamId,
+      p_subject_type: existing.subject_type,
+      p_subject_ref: existing.subject_ref,
+      p_media_type: existing.media_type,
+      p_title: title,
+      p_note: note,
+      p_external_url: url,
+      p_storage_path: existing.storage_path,
+      p_file_name: existing.file_name,
+      p_mime_type: existing.mime_type,
+      p_size_bytes: existing.size_bytes,
+      p_media_id: existing.id,
+      p_expected_updated_at: existing.updated_at,
+      p_idempotency_key: "mcp:" + connector.id + ":media-update:" + String(requestId ?? crypto.randomUUID()),
+      p_agent_subject: "head-coach",
+    });
+    if (error) throw error;
+    return { updated: true, media: data };
   }
 
   throw new Error("unknown_tool");

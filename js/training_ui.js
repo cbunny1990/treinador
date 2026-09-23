@@ -32,6 +32,7 @@ async function tuExercises(){
   await globalThis.VisionExerciseImageStorage?.resolve(rows);
   return TrainingPlanner.visionExercises(rows)
     .filter((x)=>(x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID)
+    .filter((x)=>DB.visivelNoWorkspaceAtivo(x))
     .sort((a,b)=>String(a.nome).localeCompare(String(b.nome),"pt-PT"));
 }
 
@@ -105,6 +106,8 @@ async function viewExerciseForm(id){
   html+='<div class="form-grid"><label class="field"><span>Nome</span><input name="nome" required value="'+tuEsc(e.nome)+'"></label><label class="field"><span>Escalão</span><input name="escalao" value="'+tuEsc(e.escalao)+'"></label></div>';
   html+='<div class="form-grid"><label class="field"><span>Modelo</span><input name="modelo" value="'+tuEsc(e.modelo)+'"></label><label class="field"><span>Espaço</span><input name="espaco" placeholder="20x15" value="'+tuEsc(e.espaco)+'"></label></div>';
   html+='<label class="field"><span>Objetivo</span><textarea name="objetivo">'+tuEsc(e.objetivo)+'</textarea></label>';
+  html+='<label class="field"><span>Montagem / organização do exercício</span><textarea name="montagem" placeholder="Como preparar o espaço e posicionar atletas e material">'+tuEsc(e.montagem||e.organizacao)+'</textarea></label>';
+  html+='<label class="field"><span>Passo a passo · um passo por linha</span><textarea name="passos" placeholder="Descreve a sequência de execução">'+tuEsc(tuListText(e.passos))+'</textarea></label>';
   html+='<label class="field"><span>Organização</span><input name="organizacao" value="'+tuEsc(e.organizacao)+'"></label>';
   html+='<div class="form-grid"><label class="field"><span>Séries</span><input type="number" min="1" name="series" value="'+tuEsc(e.series)+'"></label><label class="field"><span>Minutos por série</span><input type="number" min="0" name="duracao_serie_min" value="'+tuEsc(e.duracao_serie_min)+'"></label></div>';
   html+='<label class="field"><span>Material · separado por vírgulas</span><input name="material" value="'+tuEsc(tuCsvText(e.material))+'"></label>';
@@ -126,7 +129,7 @@ async function viewExercise(id){
   let html='<section class="panel hero-main"><div class="row"><div class="grow"><div class="kicker">'+tuEsc(e.escalao+' · '+e.modelo)+'</div><h2 class="display" style="font-size:30px">'+tuEsc(e.nome)+'</h2></div><span class="badge '+(e.favorito?"ready":"")+'">'+(e.favorito?"Favorito":"Exercício")+'</span></div>';
   html+=tuExerciseVisualHTML(e,false);
   html+='<p class="lead">'+tuEsc(e.objetivo)+'</p><div class="exercise-facts"><span><strong>'+tuEsc(e.organizacao||"—")+'</strong><small>organização</small></span><span><strong>'+tuEsc(e.espaco||"—")+'</strong><small>espaço</small></span><span><strong>'+e.duracao_total_min+' min</strong><small>duração</small></span></div>';
-  html+='<div class="grid cols-2 section"><div><h3>Regras</h3><div class="body-copy">'+tuEsc((e.regras||[]).join("\n"))+'</div></div><div><h3>Coaching points</h3><div class="body-copy">'+tuEsc((e.coaching_points||[]).join("\n"))+'</div></div></div>';
+  html+='<div class="grid cols-2 section"><div><h3>Montagem</h3><div class="body-copy">'+tuEsc(e.montagem||e.organizacao||"—")+'</div><h3>Passo a passo</h3><div class="body-copy">'+tuEsc((e.passos||[]).join("\n")||"—")+'</div></div><div><h3>Regras</h3><div class="body-copy">'+tuEsc((e.regras||[]).join("\n"))+'</div><h3>Coaching points</h3><div class="body-copy">'+tuEsc((e.coaching_points||[]).join("\n"))+'</div></div></div>';
   html+='<div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/treinos/novo/'+id+'">Usar num treino</a><a class="btn secondary" href="#/exercicios/'+id+'/editar">Editar</a><a class="btn secondary" href="#/media/novo/exercise/'+id+'">Adicionar media</a><button class="btn danger" type="button" data-action="delete-exercise" data-id="'+id+'">Apagar exercício</button></div></section>';
   html+='<section class="section"><div class="section-head"><div><h2>Media</h2><p>'+media.length+' item(ns)</p></div></div>'+renderMediaCards(media)+'</section>';
   setView(e.nome,html,"Planos");
@@ -135,6 +138,11 @@ async function viewExercise(id){
 function tuExerciseByRef(exercises,ref){
   const wanted=String(ref||"");
   return exercises.find((x)=>tuExerciseRef(x)===wanted || String(x.id)===wanted) || null;
+}
+
+function tuTrainingExercise(block,exercises){
+  if(block?.exercise_snapshot) return TrainingPlanner.exerciseFromSnapshot(block.exercise_snapshot,block.exercise_ref,block.exercise_name);
+  return tuExerciseByRef(exercises,block?.exercise_ref);
 }
 
 function tuMatchRef(match){
@@ -150,7 +158,19 @@ function tuTrainingBlocksForm(exercises,training,preselectedId){
     });
   }
   const selected=[...existing.keys()];
-  const ordered=exercises.slice().sort((a,b)=>{
+  const rows=exercises.map((exercise)=>{
+    const ref=tuExerciseRef(exercise),block=existing.get(ref);
+    if(!block?.exercise_snapshot) return exercise;
+    return {...exercise,...TrainingPlanner.exerciseFromSnapshot(block.exercise_snapshot,ref,block.exercise_name),id:exercise.id,sync_id:exercise.sync_id,status:exercise.status,workspace_v2:exercise.workspace_v2,favorito:exercise.favorito};
+  });
+  for(const [ref,block] of existing){
+    if(tuExerciseByRef(rows,ref)) continue;
+    const saved=TrainingPlanner.exerciseFromSnapshot(block.exercise_snapshot,ref,block.exercise_name);
+    rows.push(saved?{...saved,unavailable_from_library:true}:{
+      sync_id:ref,nome:block.exercise_name||"Exercício removido da biblioteca",objetivo:"",montagem:"",passos:[],organizacao:"",espaco:"",material:[],regras:[],coaching_points:[],unavailable_from_library:true
+    });
+  }
+  const ordered=rows.sort((a,b)=>{
     const ia=selected.indexOf(tuExerciseRef(a)), ib=selected.indexOf(tuExerciseRef(b));
     if(ia>=0 || ib>=0) return (ia<0?999:ia)-(ib<0?999:ib);
     return String(a.nome).localeCompare(String(b.nome),"pt-PT");
@@ -159,7 +179,7 @@ function tuTrainingBlocksForm(exercises,training,preselectedId){
     const ref=tuExerciseRef(e), block=existing.get(ref), checked=!!block;
     const duration=block?.duration_min ?? e.duracao_total_min ?? 10;
     const phase=block?.phase || "principal";
-    return '<article class="training-block-choice"><label class="row"><input type="checkbox" name="exercise_refs" value="'+tuEsc(ref)+'" '+(checked?"checked":"")+'><span class="grow"><strong>'+tuEsc(e.nome)+'</strong><small>'+tuEsc(e.objetivo||"")+'</small></span></label>'+
+    return '<article class="training-block-choice"><label class="row"><input type="checkbox" name="exercise_refs" value="'+tuEsc(ref)+'" '+(checked?"checked":"")+'><span class="grow"><strong>'+tuEsc(e.nome)+'</strong><small>'+tuEsc(e.objetivo||"")+(e.unavailable_from_library?' · removido da biblioteca':'')+'</small></span></label>'+
       '<div class="toolbar session-reorder"><button type="button" class="btn secondary small" data-action="training-block-up">↑ Subir</button><button type="button" class="btn secondary small" data-action="training-block-down">↓ Descer</button></div>'+
       '<div class="form-grid compact"><label class="field"><span>Fase</span><select name="phase__'+tuEsc(ref)+'"><option value="ativacao" '+(phase==="ativacao"?"selected":"")+'>Ativação</option><option value="principal" '+(phase==="principal"?"selected":"")+'>Principal</option><option value="jogo" '+(phase==="jogo"?"selected":"")+'>Jogo</option><option value="retorno" '+(phase==="retorno"?"selected":"")+'>Retorno</option></select></label><label class="field"><span>Minutos</span><input data-block-duration type="number" min="0" name="duration__'+tuEsc(ref)+'" value="'+tuEsc(duration)+'"></label></div><label class="field"><span>Notas deste exercício</span><textarea name="notes__'+tuEsc(ref)+'">'+tuEsc(block?.notes||'')+'</textarea></label></article>';
   }).join("");
@@ -172,10 +192,13 @@ async function viewTrainingForm(id,preselectedId,sourceMatchId){
   const matches=(await DB.porIndice("jogos","team_id",DEFAULT_TEAM_ID)).sort((a,b)=>String(b.data).localeCompare(String(a.data)));
   const sourceMatch=!old&&sourceMatchId?matches.find((m)=>String(m.id)===String(sourceMatchId)):null;
   const sourcePost=sourceMatch?VisionCalendar.normalizeMatch(sourceMatch).post_game:null;
-  const sourceObjective=sourcePost&&(sourcePost.melhorar||sourcePost.conclusoes)||"";
-  const sourceNotes=sourcePost&&Array.isArray(sourcePost.acoes_proximo_treino)&&sourcePost.acoes_proximo_treino.length
-    ? "Ações da análise:\n"+sourcePost.acoes_proximo_treino.map((x)=>"- "+x).join("\n")
-    : "";
+  const structured=sourcePost?.analysis?.fields||{};
+  const sourceObjective=structured.next_priority||structured.problems||sourcePost&&(sourcePost.melhorar||sourcePost.conclusoes)||"";
+  const sourceParts=[];
+  if(sourcePost&&Array.isArray(sourcePost.acoes_proximo_treino)&&sourcePost.acoes_proximo_treino.length) sourceParts.push("Ações da análise:\n"+sourcePost.acoes_proximo_treino.map((x)=>"- "+x).join("\n"));
+  if(structured.decisions) sourceParts.push("Decisão do treinador:\n"+structured.decisions);
+  if(structured.next_priority) sourceParts.push("Prioridade seguinte:\n"+structured.next_priority);
+  const sourceNotes=sourceParts.join("\n\n");
   const training=TrainingPlanner.normalizeTraining(old||{
     data:today(),hora:"19:15",status:"draft",
     objetivo:sourceObjective,
@@ -183,6 +206,8 @@ async function viewTrainingForm(id,preselectedId,sourceMatchId){
     source_match_ref:sourceMatch?tuMatchRef(sourceMatch):null
   });
   const exercises=await tuExercises();
+  const storedExerciseSnapshots=(training.blocos||[]).map(b=>b.exercise_snapshot?TrainingPlanner.exerciseFromSnapshot(b.exercise_snapshot,b.exercise_ref,b.exercise_name):null).filter(x=>x?.visual_storage_path);
+  if(storedExerciseSnapshots.length) await globalThis.VisionExerciseImageStorage?.resolve(storedExerciseSnapshots);
   const matchOptions='<option value="">Sem ligação a jogo</option>'+matches.map((m)=>{
     const ref=tuMatchRef(m);
     return '<option value="'+tuEsc(ref)+'" '+(String(training.source_match_ref||"")===ref?"selected":"")+'> '+fmtDate(m.data)+' · '+tuEsc(m.adversario||"Jogo")+'</option>';
@@ -193,7 +218,7 @@ async function viewTrainingForm(id,preselectedId,sourceMatchId){
   html+='<label class="field"><span>Objetivo da sessão</span><textarea name="objetivo">'+tuEsc(training.objetivo)+'</textarea></label>';
   html+='<div class="form-grid"><label class="field"><span>Local</span><input name="local" value="'+tuEsc(training.local||"")+'"></label><label class="field"><span>Origem / jogo relacionado</span><select name="source_match_ref">'+matchOptions+'</select></label></div>';
   html+='<div class="section-head" style="margin-top:8px"><div><h2>Blocos da sessão</h2><p>Seleciona exercícios e ajusta fase/duração</p></div><div class="training-total">Total: <strong data-training-total>'+training.duracao_min+'</strong> min</div></div>';
-  html+=exercises.length?'<div class="training-block-grid">'+tuTrainingBlocksForm(exercises,training,preselectedId)+'</div>':'<div class="empty">Ainda não existem exercícios Vision Coach. <a class="link" href="#/exercicios/novo">Criar exercício</a></div>';
+  html+=(exercises.length||training.blocos.length)?'<div class="training-block-grid">'+tuTrainingBlocksForm(exercises,training,preselectedId)+'</div>':'<div class="empty">Ainda não existem exercícios Vision Coach. <a class="link" href="#/exercicios/novo">Criar exercício</a></div>';
   html+='<label class="field"><span>Notas</span><textarea name="notas">'+tuEsc(training.notas||"")+'</textarea></label>';
   html+='<div class="toolbar"><button class="btn accent" type="submit">Guardar treino</button><a class="btn secondary" href="'+(id?'#/treinos/'+id:'#/treinos')+'">Cancelar</a></div></form></section>';
   setView(id?"Editar treino":"Novo treino",html,"Planos");
@@ -218,14 +243,15 @@ async function viewTrainingConsultation(id,step){
   if(!blocks.length) return setView("Treino · "+fmtDate(t.data),'<div class="empty">Este treino ainda não tem exercícios.</div>',"Treino");
   let index=Math.max(0,Math.min(blocks.length-1,Number(step||0)));
   const block=blocks[index];
-  const e=tuExerciseByRef(exercises,block.exercise_ref);
+  const e=tuTrainingExercise(block,exercises);
+  if(e?.visual_storage_path) await globalThis.VisionExerciseImageStorage?.resolve([e]);
   const passos=Array.isArray(e?.passos)&&e.passos.length?e.passos:(e?.regras||[]);
   const material=Array.isArray(e?.material)?e.material.join(" · "):(e?.material||"—");
   const regras=(e?.regras||[]).map((x)=>'<li>'+tuEsc(x)+'</li>').join("");
   const coaching=(e?.coaching_points||[]).map((x)=>'<li>'+tuEsc(x)+'</li>').join("");
   const steps=passos.length?passos.map((x,i)=>'<div class="consult-step"><span>'+(i+1)+'</span><p>'+tuEsc(x)+'</p></div>').join(""):'<div class="empty">Sem passos detalhados.</div>';
   const timeline=blocks.map((b,i)=>{
-    const ex=tuExerciseByRef(exercises,b.exercise_ref);
+    const ex=tuTrainingExercise(b,exercises);
     return '<a class="consult-index '+(i===index?"active":"")+'" href="#/consulta/'+t.id+'/'+i+'"><strong>'+(i+1)+'. '+tuEsc(ex?.nome||b.exercise_name||"Exercício")+'</strong><small>'+b.duration_min+' min · '+tuEsc(b.phase||"")+'</small></a>';
   }).join("");
   let html='<section class="panel hero-main consult-hero"><div class="kicker">'+fmtDate(t.data)+(t.hora?' · '+tuEsc(t.hora):'')+'</div><h2 class="display" style="font-size:28px">Consulta do treino</h2><p class="lead">'+tuEsc(t.objetivo||"Sem objetivo definido.")+'</p><div class="row" style="margin-top:14px"><span class="badge ready">'+t.duracao_min+' min</span><span class="badge">'+blocks.length+' exercícios</span></div></section>';
@@ -233,7 +259,7 @@ async function viewTrainingConsultation(id,step){
   html+='<section class="section"><div class="consult-index-list">'+timeline+'</div></section>';
   html+='<section class="panel hero-main consult-exercise"><div class="kicker">Exercício '+(index+1)+' de '+blocks.length+' · '+block.duration_min+' min</div><h2 class="display" style="font-size:27px">'+tuEsc(e?.nome||block.exercise_name||"Exercício")+'</h2><p class="lead">'+tuEsc(e?.objetivo||block.notes||"")+'</p>';
   if(e) html+=tuExerciseVisualHTML(e,false);
-  html+='<div class="consult-facts"><div><span>Montagem</span><strong>'+tuEsc(e?.organizacao||"—")+'</strong></div><div><span>Material</span><strong>'+tuEsc(material)+'</strong></div><div><span>Espaço</span><strong>'+tuEsc(e?.espaco||"—")+'</strong></div></div>';
+  html+='<div class="consult-facts"><div><span>Montagem</span><strong>'+tuEsc(e?.montagem||e?.organizacao||"—")+'</strong></div><div><span>Material</span><strong>'+tuEsc(material)+'</strong></div><div><span>Espaço</span><strong>'+tuEsc(e?.espaco||"—")+'</strong></div></div>';
   html+='<div class="section"><h3>Passo a passo</h3><div class="consult-steps">'+steps+'</div></div>';
   if(regras) html+='<div class="section"><h3>Regras</h3><ul class="consult-list">'+regras+'</ul></div>';
   if(coaching) html+='<div class="section"><h3>O que corrigir</h3><ul class="consult-list">'+coaching+'</ul></div>';
@@ -261,12 +287,12 @@ async function viewTraining(id){
   const matches=await DB.porIndice("jogos","team_id",DEFAULT_TEAM_ID);
   const linked=matches.find((m)=>tuMatchRef(m)===String(t.source_match_ref||""));
   const blocks=t.blocos.length?t.blocos.map((b)=>{
-    const e=tuExerciseByRef(exercises,b.exercise_ref);
+    const e=tuTrainingExercise(b,exercises);
     return '<div class="list-item row"><span class="block-order">'+(b.order+1)+'</span><span class="grow"><span class="title">'+tuEsc(e?.nome||b.exercise_name||"Exercício")+'</span><span class="meta">'+tuEsc(b.phase)+' · '+b.duration_min+' min</span></span></div>';
   }).join(""):'<div class="empty">Sem blocos.</div>';
   let html='<section class="panel hero-main"><div class="kicker">'+fmtDate(t.data)+(t.hora?' · '+tuEsc(t.hora):'')+'</div><h2 class="display" style="font-size:30px">Treino</h2><p class="lead">'+tuEsc(t.objetivo||"Sem objetivo definido.")+'</p><div class="exercise-facts"><span><strong>'+t.blocos.length+'</strong><small>blocos</small></span><span><strong>'+t.duracao_min+' min</strong><small>duração</small></span><span><strong>'+tuEsc(t.status)+'</strong><small>estado</small></span></div>';
   if(linked) html+='<div class="notice" style="margin-top:16px">Ligado ao jogo de '+fmtDate(linked.data)+' vs '+tuEsc(linked.adversario||"adversário")+'.</div>';
-  html+='<div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/sessao/'+id+'">Treino em campo / presenças</a><a class="btn secondary" href="#/treinos/'+id+'/duplicar">Duplicar treino</a><a class="btn secondary" href="#/treinos/'+id+'/editar">Editar planeamento</a><a class="btn secondary" href="#/media/novo/training/'+id+'">Adicionar media</a><button class="btn danger" type="button" data-action="delete-training" data-id="'+id+'">Apagar treino</button></div></section>';
+  html+='<div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/sessao/'+id+'">Treino em campo / presenças</a><button class="btn secondary" type="button" data-action="export-training-report" data-id="'+id+'">Exportar plano PDF</button><a class="btn secondary" href="#/treinos/'+id+'/duplicar">Duplicar treino</a><a class="btn secondary" href="#/treinos/'+id+'/editar">Editar planeamento</a><a class="btn secondary" href="#/media/novo/training/'+id+'">Adicionar media</a><button class="btn danger" type="button" data-action="delete-training" data-id="'+id+'">Apagar treino</button></div></section>';
   html+='<section class="section"><div class="section-head"><div><h2>Blocos</h2><p>Sequência da sessão</p></div></div><div class="list">'+blocks+'</div></section>';
   html+='<section class="section"><div class="section-head"><div><h2>Avaliação pós-treino</h2><p>Fecha o ciclo com o jogo que originou esta sessão</p></div></div><form class="panel match-form form" data-form="training-review" data-id="'+id+'" data-review-key="'+tuEsc(VisionTrainingContinuity.reviewKey(t.review))+'"><div class="form-grid"><label class="field"><span>O que melhorou</span><textarea name="melhorou">'+tuEsc(t.review.melhorou||"")+'</textarea></label><label class="field"><span>O que continua por corrigir</span><textarea name="continua">'+tuEsc(t.review.continua||"")+'</textarea></label></div><label class="field"><span>Conclusão</span><textarea name="conclusao">'+tuEsc(t.review.conclusao||"")+'</textarea></label><label class="field"><span>Próxima ação</span><textarea name="proxima_acao">'+tuEsc(t.review.proxima_acao||"")+'</textarea></label><label class="field"><span>Resultado do foco trabalhado</span><select name="focus_outcome">'+Object.entries(VisionTrainingContinuity.outcomes).map(([k,label])=>'<option value="'+k+'" '+((t.review.focus_outcome||'pending')===k?'selected':'')+'>'+tuEsc(label)+'</option>').join('')+'</select><small>Assinalado por ti; não é inferido das presenças ou do resultado do jogo.</small></label><p class="notice" data-review-feedback role="status" hidden></p><div class="toolbar"><button class="btn accent" type="submit">Guardar avaliação</button><button class="btn danger" type="button" data-action="clear-training-review" data-id="'+id+'">Apagar avaliação</button>'+(linked?'<a class="btn secondary" href="#/equipa/jogo/'+linked.id+'">Voltar ao jogo de origem</a>':'')+'</div></form></section>';
   html+=await TrainingContinuityUI.summary(t);
@@ -301,6 +327,7 @@ async function tuSaveExercise(form,fd,id){
     ...(old||{}), team_id:DEFAULT_TEAM_ID, workspace_v2:true,
     nome:fd.get("nome"), escalao:fd.get("escalao")||"Sub-8",
     modelo:fd.get("modelo")||"5x5-1-2-1", objetivo:fd.get("objetivo")||"",
+    montagem:fd.get("montagem")||"", passos:tuLines(fd.get("passos")),
     organizacao:fd.get("organizacao")||"", espaco:fd.get("espaco")||"",
     series:Number(fd.get("series")||1), duracao_serie_min:Number(fd.get("duracao_serie_min")||0),
     material:tuCsv(fd.get("material")), regras:tuLines(fd.get("regras")),
@@ -339,7 +366,8 @@ async function tuSaveTraining(form,fd,id){
     const e=tuExerciseByRef(exercises,ref);
     return {
       ...(previousBlocks.get(ref)||{}), block_id:previousBlocks.get(ref)?.block_id||crypto.randomUUID(),
-      order:index, exercise_ref:ref, exercise_name:e?.nome||null,
+      order:index, exercise_ref:ref, exercise_name:previousBlocks.get(ref)?.exercise_snapshot?.nome||previousBlocks.get(ref)?.exercise_name||e?.nome||null,
+      exercise_snapshot:previousBlocks.get(ref)?.exercise_snapshot||(e?TrainingPlanner.exerciseSnapshot(e):null),
       phase:fd.get("phase__"+ref)||"principal",
       duration_min:Math.max(0,Number(fd.get("duration__"+ref)||0)),
       notes:fd.get("notes__"+ref)||null

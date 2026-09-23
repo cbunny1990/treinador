@@ -57,3 +57,46 @@ test("progresso reconhece plano, convocatória e alinhamento", () => {
   assert.equal(progress.lineup, true);
   assert.equal(progress.post_game, false);
 });
+
+test("recorrência deduplica apenas o mesmo dia e hora, mantendo outros treinos do dia", () => {
+  const snapshot = {
+    team: { horarios: { estruturado: { treinos: [
+      { dia_semana: 1, inicio: "09:00", fim: "10:00" },
+      { dia_semana: 1, inicio: "18:00", fim: "19:00" },
+      { dia_semana: 1, inicio: "18:00", fim: "19:30" },
+    ] } } },
+    trainings: [{ id: 11, data: "2026-09-21", hora: "09:00", escalao: "sub-8" }],
+    matches: [],
+  };
+  const rows = VisionCalendar.events(snapshot, { from: "2026-09-21", weeks: 1 });
+  assert.deepEqual(rows.map((row) => [row.type, row.time]), [
+    ["training", "09:00"],
+    ["training_schedule", "18:00"],
+  ]);
+});
+
+test("calendário limita jogos e treinos registados ao horizonte pedido", () => {
+  const rows = VisionCalendar.events({
+    team: {},
+    matches: [
+      { id: 1, sync_id: "m1", data: "2026-09-21", adversario: "A" },
+      { id: 2, sync_id: "m2", data: "2026-09-28", adversario: "B" },
+    ],
+    trainings: [
+      { id: 3, data: "2026-09-27", hora: "10:00" },
+      { id: 4, data: "2026-09-28", hora: "11:00" },
+    ],
+  }, { from: "2026-09-21", weeks: 1 });
+  assert.deepEqual(rows.map((row) => row.id), [1, 3]);
+});
+
+test("não oculta jogos distintos com a mesma data, hora e adversário", () => {
+  const rows = VisionCalendar.events({
+    matches: [
+      { id: 1, sync_id: "m1", data: "2026-09-21", hora: "10:00", adversario: "A" },
+      { id: 2, sync_id: "m2", data: "2026-09-21", hora: "10:00", adversario: "A" },
+      { id: 1, sync_id: "m1", data: "2026-09-21", hora: "10:00", adversario: "A" },
+    ],
+  }, { from: "2026-09-21", weeks: 1 });
+  assert.deepEqual(rows.map((row) => row.id), [1, 2]);
+});

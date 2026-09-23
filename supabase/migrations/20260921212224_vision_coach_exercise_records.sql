@@ -1,3 +1,4 @@
+
 alter table public.workspace_records
   drop constraint if exists workspace_records_kind_check;
 alter table public.workspace_records
@@ -21,8 +22,14 @@ declare
 begin
   select a.scopes into v_scopes
   from public.agent_authorizations a
-  where a.team_id=p_team_id and a.agent_subject=p_agent_subject and a.enabled is true;
-  if v_scopes is null then raise exception 'agent_not_authorized'; end if;
+  where a.team_id = p_team_id
+    and a.agent_subject = p_agent_subject
+    and a.enabled is true;
+
+  if v_scopes is null then
+    raise exception 'agent_not_authorized';
+  end if;
+
   return jsonb_build_object(
     'schema','vision-coach-head-coach@1',
     'team_id',p_team_id,
@@ -65,22 +72,28 @@ begin
   if not private.agent_has_scope(p_team_id,p_agent_subject,'write') then
     raise exception 'agent_write_not_authorized';
   end if;
+
   if p_kind not in ('player','match','training','memory','document','game_model','exercise') then
     raise exception 'invalid_record_kind';
   end if;
+
   if p_payload is null or jsonb_typeof(p_payload) <> 'object' then
     raise exception 'payload_must_be_object';
   end if;
+
   if p_idempotency_key is not null and length(p_idempotency_key) > 200 then
     raise exception 'idempotency_key_too_long';
   end if;
+
   if nullif(p_idempotency_key,'') is not null then
     select l.response into v_result
     from private.agent_request_log l
-    where l.team_id=p_team_id and l.agent_subject=p_agent_subject
-      and l.idempotency_key=p_idempotency_key;
+    where l.team_id = p_team_id
+      and l.agent_subject = p_agent_subject
+      and l.idempotency_key = p_idempotency_key;
     if v_result is not null then return v_result; end if;
   end if;
+
   if p_record_id is null then
     v_id := gen_random_uuid();
     insert into public.workspace_records(
@@ -91,28 +104,32 @@ begin
   else
     select * into v_existing
     from public.workspace_records
-    where id=p_record_id and team_id=p_team_id
+    where id = p_record_id and team_id = p_team_id
     for update;
+
     if not found then raise exception 'record_not_found'; end if;
     if v_existing.deleted_at is not null then raise exception 'record_is_deleted'; end if;
     if p_expected_updated_at is not null and v_existing.updated_at <> p_expected_updated_at then
       raise exception 'record_conflict';
     end if;
     if v_existing.kind <> p_kind then raise exception 'record_kind_mismatch'; end if;
+
     v_id := p_record_id;
     update public.workspace_records
-    set payload=p_payload, updated_at=v_now
-    where id=v_id;
+    set payload = p_payload, updated_at = v_now
+    where id = v_id;
   end if;
+
   select jsonb_build_object(
     'id',r.id,'kind',r.kind,'payload',r.payload,
     'actor_type',r.actor_type,'actor_label',r.actor_label,
     'created_at',r.created_at,'updated_at',r.updated_at,'deleted_at',r.deleted_at
   ) into v_result
-  from public.workspace_records r where r.id=v_id;
+  from public.workspace_records r
+  where r.id = v_id;
+
   insert into public.activity_log(
-    id,team_id,actor_type,actor_label,action,summary,entity_type,entity_ref,
-    metadata,created_by,created_at
+    id,team_id,actor_type,actor_label,action,summary,entity_type,entity_ref,metadata,created_by,created_at
   ) values (
     gen_random_uuid(),p_team_id,'agent',v_label,
     case when p_record_id is null then 'agent_created_record' else 'agent_updated_record' end,
@@ -121,6 +138,7 @@ begin
     jsonb_build_object('idempotency_key',p_idempotency_key),
     null,v_now
   );
+
   if nullif(p_idempotency_key,'') is not null then
     insert into private.agent_request_log(
       team_id,agent_subject,idempotency_key,operation,result_type,result_ref,response
@@ -130,6 +148,7 @@ begin
       p_kind,v_id,v_result
     );
   end if;
+
   return v_result;
 end;
 $$;
@@ -178,7 +197,7 @@ begin
     raise exception 'media_subject_required';
   end if;
 
-  if p_subject_type='team' then
+  if p_subject_type = 'team' then
     if p_subject_ref <> p_team_id::text then raise exception 'media_subject_not_in_team'; end if;
   elsif p_subject_type in ('player','match','training','memory','document','game_model','exercise') then
     if p_subject_ref !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
@@ -192,6 +211,7 @@ begin
       raise exception 'media_subject_not_found';
     end if;
   end if;
+
   if nullif(p_idempotency_key,'') is not null then
     select l.response into v_result
     from private.agent_request_log l
@@ -246,12 +266,10 @@ begin
     case when p_media_id is null then 'agent_created_media' else 'agent_updated_media' end,
     case when p_media_id is null then 'Head Coach adicionou media' else 'Head Coach atualizou media' end,
     'media',v_id::text,
-    jsonb_build_object(
-      'subject_type',p_subject_type,'subject_ref',p_subject_ref,
-      'idempotency_key',p_idempotency_key
-    ),
+    jsonb_build_object('subject_type',p_subject_type,'subject_ref',p_subject_ref,'idempotency_key',p_idempotency_key),
     v_now
   );
+
   if nullif(p_idempotency_key,'') is not null then
     insert into private.agent_request_log(
       team_id,agent_subject,idempotency_key,operation,result_type,result_ref,response
@@ -275,3 +293,4 @@ revoke all on function public.head_coach_register_media(
 grant execute on function public.head_coach_register_media(
   uuid,text,text,text,text,text,text,text,text,text,bigint,uuid,timestamptz,text,text
 ) to service_role;
+;

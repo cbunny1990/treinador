@@ -66,7 +66,16 @@
   <script src="js/head_coach_media.js"></script>
   <script src="js/workspace.js"></script>
   <script src="js/calendar.js"></script>
+  <script src="js/match_analysis.js"></script>
+  <script src="js/match_analysis_store.js"></script>
+  <script src="js/match_evidence.js"></script>
+  <script src="js/player_goals.js"></script>
+  <script src="js/team_development.js"></script>
+  <script src="js/seasons.js"></script>
+  <script src="js/report_export.js"></script>
   <script src="js/match_visual.js"></script>
+  <script src="js/match_events.js"></script>
+  <script src="js/match_events_ui.js"></script>
   <script src="js/match_visual_ui.js"></script>
   <script src="js/player_status.js"></script>
   <script src="js/training_planner.js"></script>
@@ -86,15 +95,16 @@
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
         let hadController = !!navigator.serviceWorker.controller;
-        const registration = await navigator.serviceWorker.register("sw.js?v=69").catch(() => null);
+        const serviceWorkerVersion = 114;
+        const registration = await navigator.serviceWorker.register("sw.js?v="+serviceWorkerVersion).catch(() => null);
         if(!registration) return;
         registration.update().catch(() => {});
         navigator.serviceWorker.addEventListener("controllerchange", () => {
           if(!hadController){hadController=true;return;}
           if(document.querySelector('form, [data-training-session], [data-match-visual]')){
-            const notice=document.createElement('div');notice.className='notice';notice.append('Atualização disponível. Guarda o que estás a fazer e toca em Atualizar app. ');const reload=document.createElement('button');reload.type='button';reload.className='btn secondary';reload.textContent='Atualizar app';reload.addEventListener('click',()=>location.reload());notice.append(reload);document.body.appendChild(notice);return;
+          if(!document.getElementById('sw-update-notice')){const notice=document.createElement('div');notice.id='sw-update-notice';notice.className='notice sw-update-notice';notice.setAttribute('role','status');notice.setAttribute('aria-live','polite');notice.append('Atualização disponível. Guarda o que estás a fazer e toca em Atualizar app. ');const reload=document.createElement('button');reload.type='button';reload.className='btn secondary';reload.textContent='Atualizar app';reload.addEventListener('click',()=>location.reload());notice.append(reload);document.body.appendChild(notice);}return;
           }
-          const key = "vision-sw-reloaded-v69";
+          const key = "vision-sw-reloaded-v"+serviceWorkerVersion;
           if (sessionStorage.getItem(key)) return;
           sessionStorage.setItem(key, "1");
           location.reload();

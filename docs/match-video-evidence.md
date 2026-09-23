@@ -1,0 +1,7 @@
+# Vision Coach: vídeo e evidências do jogo
+
+No detalhe do jogo, associa um momento a um URL HTTP/HTTPS, minuto e segundo, categoria, atleta opcional e descrição. A relação é tipada: observação persistida associada ao mesmo jogo por UUID, estatística contada ou campo com conteúdo na análise desse jogo. A app e o MCP recusam referências inválidas ou de outra equipa/jogo. A observação abre a partir da lista de momentos. O link “Abrir momento” define o parâmetro `t` para o segundo marcado, substituindo um timestamp anterior e preservando os restantes parâmetros e fragmento do URL. Vídeos podem continuar a ser associados pela biblioteca de media existente.
+
+Editar preenche o mesmo formulário; apagar requer confirmação. Cada momento tem UUID estável, revisão e vive em `jogos.match_evidence`, por isso acompanha o jogo existente na sincronização. Ligações a estatísticas têm de usar uma métrica conhecida; ligações a problemas exigem conteúdo na análise desse jogo; observações têm de pertencer ao jogo. O modelo local valida tipos e métricas; o formulário e o MCP também confirmam que as observações pertencem ao jogo. O tempo é relativo ao vídeo e não altera o cronómetro ou os minutos reais de utilização. Sem deteção automática de jogadores.
+
+O MCP oferece leitura e gestão de momentos explicitamente descritos: requer a equipa certa, scopes `read`/`write`, confirmação, `expected_updated_at`, revisão e UUID de atleta que pertença à equipa.

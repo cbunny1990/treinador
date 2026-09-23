@@ -6,10 +6,16 @@ const {
   AGENT_WORKSPACE_SCHEMA,
   agentPublicDocument,
   agentPublicMedia,
+  agentTextContains,
 } = require("../js/agent_contract.js");
 
 test("contrato do agente tem schema estável", () => {
-  assert.equal(AGENT_WORKSPACE_SCHEMA, "treinador-agent-workspace@1");
+  assert.equal(AGENT_WORKSPACE_SCHEMA, "treinador-agent-workspace@2");
+});
+
+test("citação só corresponde a texto realmente presente na origem", () => {
+  assert.equal(agentTextContains({ during: { notes: ["Pressão alta recuperou a bola"] } }, "Pressão alta recuperou a bola"), true);
+  assert.equal(agentTextContains({ during: { notes: ["Pressão alta recuperou a bola"] } }, "Golo aos dez minutos"), false);
 });
 
 test("documento público mantém autoria e última edição", () => {

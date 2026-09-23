@@ -48,3 +48,33 @@ test("duração do treino soma blocos", () => {
   assert.equal(training.duracao_min, 20);
   assert.deepEqual(training.blocos.map((x) => x.exercise_ref), ["b", "a"]);
 });
+
+test("snapshot do exercício congela conteúdo e só guarda referência segura da imagem", () => {
+  const exercise = {
+    sync_id: "exercise-uuid",
+    nome: "Passe e apoio",
+    external_key: "exercise-passe-apoio",
+    montagem: "Quatro cones",
+    passos: ["Passar", "Apoiar"],
+    visual_storage_path: "team/exercise-images/exercise-uuid/original.png",
+    visual_image: { sha256: "a".repeat(64), width: 1448, height: 1086, bytes: 1234 },
+    visual_url: "https://example.test/original.png?token=temporary",
+    visual_data_url: "data:image/png;base64,AA==",
+  };
+  const snapshot = TrainingPlanner.exerciseSnapshot(exercise);
+  exercise.passos[0] = "Alterado";
+  exercise.visual_image.width = 1;
+
+  assert.equal(snapshot.schema, "vision-coach-exercise-snapshot@1");
+  assert.deepEqual(snapshot.passos, ["Passar", "Apoiar"]);
+  assert.deepEqual(snapshot.visual, {
+    external_key: "exercise-passe-apoio",
+    removed: false,
+    storage_path: "team/exercise-images/exercise-uuid/original.png",
+    image: { sha256: "a".repeat(64), width: 1448, height: 1086, bytes: 1234 },
+    url: null,
+  });
+  const fromSnapshot = TrainingPlanner.exerciseFromSnapshot(snapshot, "exercise-uuid");
+  assert.equal(fromSnapshot.visual_storage_path, exercise.visual_storage_path);
+  assert.deepEqual(fromSnapshot.passos, ["Passar", "Apoiar"]);
+});

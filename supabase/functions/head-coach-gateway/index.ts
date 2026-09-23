@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const jsonHeaders = { "content-type": "application/json; charset=utf-8" };
+const GENERIC_PUT_RECORD_KINDS = new Set(["game_model"]);
 
 function respond(status: number, body: unknown) {
   return new Response(JSON.stringify(body), { status, headers: jsonHeaders });
@@ -90,6 +91,22 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  function requireWriteConfirmation() {
+    if (params.confirmed !== true) {
+      const e = new Error("explicit_confirmation_required");
+      (e as any).status = 400;
+      throw e;
+    }
+  }
+
+  function requireCurrentRevision() {
+    if (typeof params.expected_updated_at !== "string" || !params.expected_updated_at.trim()) {
+      const e = new Error("expected_updated_at_required");
+      (e as any).status = 400;
+      throw e;
+    }
+  }
+
   try {
     let data: unknown;
 
@@ -130,6 +147,13 @@ Deno.serve(async (req: Request) => {
 
       case "put_record":
         if (!params.kind || !params.payload) return respond(400, { ok: false, error: "kind_and_payload_required" });
+        requireWriteConfirmation();
+        if (!GENERIC_PUT_RECORD_KINDS.has(String(params.kind))) {
+          const e = new Error("use_semantic_operation_for_record_kind");
+          (e as any).status = 400;
+          throw e;
+        }
+        if (params.record_id != null) requireCurrentRevision();
         data = await rpc("head_coach_put_record", {
           p_team_id: teamId,
           p_kind: params.kind,
@@ -143,6 +167,8 @@ Deno.serve(async (req: Request) => {
 
       case "soft_delete_record":
         if (!params.record_id) return respond(400, { ok: false, error: "record_id_required" });
+        requireWriteConfirmation();
+        requireCurrentRevision();
         data = await rpc("head_coach_soft_delete_record", {
           p_team_id: teamId,
           p_record_id: params.record_id,
@@ -154,6 +180,8 @@ Deno.serve(async (req: Request) => {
 
       case "restore_record":
         if (!params.record_id) return respond(400, { ok: false, error: "record_id_required" });
+        requireWriteConfirmation();
+        requireCurrentRevision();
         data = await rpc("head_coach_restore_record", {
           p_team_id: teamId,
           p_record_id: params.record_id,
@@ -164,6 +192,8 @@ Deno.serve(async (req: Request) => {
         break;
 
       case "register_media":
+        requireWriteConfirmation();
+        if (params.media_id != null) requireCurrentRevision();
         data = await rpc("head_coach_register_media", {
           p_team_id: teamId,
           p_subject_type: params.subject_type,
@@ -185,6 +215,8 @@ Deno.serve(async (req: Request) => {
 
       case "soft_delete_media":
         if (!params.media_id) return respond(400, { ok: false, error: "media_id_required" });
+        requireWriteConfirmation();
+        requireCurrentRevision();
         data = await rpc("head_coach_soft_delete_media", {
           p_team_id: teamId,
           p_media_id: params.media_id,

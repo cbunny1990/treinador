@@ -110,7 +110,7 @@ const HeadCoachMemory = {
     return team;
   },
   async list(teamId = HEAD_COACH_DEFAULT_TEAM_ID, filters = {}) {
-    let items = (await DB.listar("memory_items")).filter((m) => m.team_id === teamId);
+    let items = (await DB.listar("memory_items")).filter((m) => m.team_id === teamId && DB.visivelNoWorkspaceAtivo(m));
     if (!filters.includeArchived) items = items.filter((m) => m.status === "active");
     if (filters.kind) items = items.filter((m) => m.kind === filters.kind);
     if (filters.subjectType && filters.subjectId != null) items = items.filter((m) =>
@@ -185,7 +185,7 @@ const HeadCoachMemory = {
     const counts = { teams: 0, players: 0, game_models: 0, memory_items: 0 };
     await this.saveTeam(p.team); counts.teams++;
 
-    const jogadores = await DB.listar("jogadores");
+    const jogadores = (await DB.listar("jogadores")).filter((row) => DB.visivelNoWorkspaceAtivo(row));
     const playerIds = new Map();
     for (const player of p.players) {
       const found = player.external_key ? jogadores.find((x) => x.external_key === player.external_key && x.team_id === p.team.id) : null;
@@ -197,13 +197,13 @@ const HeadCoachMemory = {
       counts.players++;
     }
 
-    const models = await DB.listar("game_models");
+    const models = (await DB.listar("game_models")).filter((row) => DB.visivelNoWorkspaceAtivo(row));
     for (const model of p.gameModels) {
       const found = model.external_key ? models.find((x) => x.external_key === model.external_key && x.team_id === p.team.id) : null;
       await this.saveGameModel({ ...model, id: found?.id }); counts.game_models++;
     }
 
-    const existing = await DB.listar("memory_items");
+    const existing = (await DB.listar("memory_items")).filter((row) => DB.visivelNoWorkspaceAtivo(row));
     for (const item of p.memoryItems) {
       item.subject_refs = (item.subject_refs || []).map((r) =>
         r.type === "player" && playerIds.has(String(r.id)) ? { ...r, id: String(playerIds.get(String(r.id))) } : r);

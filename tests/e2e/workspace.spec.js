@@ -52,10 +52,178 @@ test("migra dados antigos para o workspace e continua offline", async ({ page, c
   await page.locator('.bottom-nav a[href="#/equipa"]').click();
   await expect(page.getByText("Jogador legado")).toBeVisible();
 
+  const queuedMatchRef = await page.evaluate(async () => {
+    RemoteWorkspace.scheduleSync = () => {};
+    const id = await DB.criar("jogos", {
+      team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: "2026-09-23",
+      adversario: "Registo pendente após reabrir", estado: "agendado",
+    });
+    return (await DB.obter("jogos", id)).sync_id;
+  });
   await page.evaluate(() => navigator.serviceWorker.ready);
   await context.setOffline(true);
   await page.reload();
   await expect(page.getByText("Jogador legado")).toBeVisible();
+  const queuedAfterReload = await page.evaluate(async (syncId) => {
+    const row = (await DB.listar("jogos")).find((item) => item.sync_id === syncId);
+    return row && { sync_id: row.sync_id, adversario: row.adversario, sync_dirty: row.sync_dirty };
+  }, queuedMatchRef);
+  expect(queuedAfterReload).toEqual({ sync_id: queuedMatchRef, adversario: "Registo pendente após reabrir", sync_dirty: true });
+  await context.setOffline(false);
+});
+
+test("perfil da equipa descreve corretamente a ligação do Head Coach por MCP", async ({ page }) => {
+  await page.goto("/");
+  await page.locator('.bottom-nav a[href="#/equipa"]').click();
+  await expect(page.getByText(/A IA autorizada pode consultar os mesmos dados e preparar propostas através do MCP/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Definições", exact: true })).toHaveAttribute("href", "#/definicoes");
+  await expect(page.getByText(/As decisões e ações de jogo continuam a exigir confirmação do treinador/)).toBeVisible();
+  await expect(page.getByText(/A ligação externa do agente ainda não está ativa/)).toHaveCount(0);
+});
+
+test("workspace indica falha de sincronização e limpa o aviso após recuperação", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(async () => {
+    RemoteWorkspace.status = async () => ({ configured: true, signedIn: true, remoteTeamId: "team-test", lastSyncAt: null, conflicts: [] });
+    RemoteWorkspace.syncNow = async () => { throw new Error("rede indisponível"); };
+    await viewWorkspace();
+  });
+  const syncError = page.getByRole("status").filter({ hasText: "Não foi possível confirmar a sincronização." });
+  await expect(syncError).toContainText("continuam guardadas neste dispositivo");
+
+  await page.evaluate(async () => {
+    RemoteWorkspace.syncNow = async () => ({ pushed: 0, pulled: 0, conflicts: [], deleted: 0 });
+    await viewWorkspace();
+  });
+  await expect(page.getByRole("status").filter({ hasText: "Não foi possível confirmar a sincronização." })).toHaveCount(0);
+});
+
+test("sincronização preserva texto por guardar num formulário comum", async ({ page }) => {
+  await page.goto("/#/equipa/jogador/novo");
+  const form = page.locator('form[data-form="player"]');
+  await expect(form).toBeVisible();
+  await form.locator('[name="nome"]').fill("Nome ainda não guardado");
+
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", {
+    detail: { conflicts: [] },
+  })));
+
+  await expect(form.locator('[name="nome"]')).toHaveValue("Nome ainda não guardado");
+  await expect(page.getByRole("heading", { name: "Novo jogador" })).toBeVisible();
+});
+
+test("Workspace surfaces ready training plans in the explicit approval queue", async ({ page }) => {
+  await page.goto("/#/calendario");
+  await page.waitForFunction(() => typeof DB !== "undefined");
+  const id = await page.evaluate(() => DB.criar("workspace_documents", {
+    team_id: DEFAULT_TEAM_ID, type: "training_plan", title: "Plano por aprovar E2E", body: "{}",
+    status: "ready", target_date: "2026-09-27", sync_id: crypto.randomUUID(), external_key: "approval-queue-e2e",
+  }));
+  await page.goto("/");
+  const queue = page.getByRole("heading", { name: /Planos por aprovar/ }).locator("xpath=..");
+  await expect(queue).toContainText("1");
+  await expect(queue.getByRole("link", { name: /Plano por aprovar E2E/ })).toHaveAttribute("href", "#/planos/" + id);
+});
+
+test("Workspace includes Head Coach team priority proposals in the review queue", async ({ page }) => {
+  await page.goto("/#/calendario");
+  await page.waitForFunction(() => typeof DB !== "undefined");
+  await page.evaluate(() => DB.criar("workspace_documents", {
+    team_id: DEFAULT_TEAM_ID, type: "team_goal", title: "Apoio após passe E2E",
+    body: JSON.stringify({
+      schema: "vision-team-goal@1", revision: 1, stage: "identified",
+      title: "Apoio após passe", agent_proposal: {
+        status: "proposed", rationale: "Evidências de jogo e treino para rever.",
+        evidence_refs: [], prepared_by: "Head Coach",
+      },
+    }),
+    status: "draft", sync_id: crypto.randomUUID(), external_key: "team-priority-queue-e2e",
+  }));
+  await page.goto("/");
+  const queue = page.getByRole("heading", { name: /Propostas por rever/ }).locator("xpath=..");
+  await expect(queue).toContainText("1");
+  await expect(queue.getByRole("link", { name: /Apoio após passe/ })).toHaveAttribute("href", "#/evolucao");
+});
+
+test("Workspace lists each match proposal once, opens Depois, and separates stale proposals", async ({ page }) => {
+  await page.goto("/#/calendario");
+  await page.waitForFunction(() => typeof DB !== "undefined" && typeof VisionMatchAnalysis !== "undefined");
+  const seeded = await page.evaluate(async () => {
+    const freshRef = crypto.randomUUID(), staleRef = crypto.randomUUID(), goalEvent = crypto.randomUUID();
+    const freshProposal = {
+      status: "proposed", prepared_by: "Head Coach", source_analysis_revision: 2, source_events_revision: 1,
+      summary: "Rever o apoio na saída", hypotheses: [], next_priority: "Apoio após passe", evidence_ids: [goalEvent],
+    };
+    const matchFields = { schema: "vision-match-events@1", revision: 1, possession: { kind: "unknown", value: null }, events: [
+      { id: goalEvent, type: "loss", at_ms: 60000, reason: "pass", zone: "def_c", note: "Passe intercetado" },
+    ] };
+    const analysis = (proposal, revision) => ({ schema: "vision-match-analysis@1", revision, status: "done", fields: { summary: "Facto do treinador" }, agent_proposal: proposal });
+    const fresh = await DB.criar("jogos", { team_id: DEFAULT_TEAM_ID, sync_id: freshRef, data: "2026-09-27", adversario: "Rivais E2E", estado: "agendado", match_events: matchFields, post_game: { analysis: analysis(freshProposal, 2) } });
+    const duplicate = await DB.criar("jogos", { team_id: DEFAULT_TEAM_ID, sync_id: freshRef, data: "2026-09-27", adversario: "Rivais duplicado", estado: "agendado", match_events: matchFields, post_game: { analysis: analysis(freshProposal, 2) } });
+    const stale = await DB.criar("jogos", { team_id: DEFAULT_TEAM_ID, sync_id: staleRef, data: "2026-09-28", adversario: "Rivais stale E2E", estado: "agendado", post_game: { analysis: analysis({ ...freshProposal, source_analysis_revision: 1, source_events_revision: 0 }, 2) } });
+    return { freshRef, staleRef, fresh, duplicate, stale, displayDate: fmtDate("2026-09-27") };
+  });
+  await page.goto("/");
+  const queue = page.getByRole("heading", { name: "Propostas por rever · 1" }).locator("xpath=..");
+  const freshLinks = queue.locator('[data-match-proposal-sync="' + seeded.freshRef + '"]');
+  await expect(freshLinks).toHaveCount(1);
+  await expect(freshLinks.first()).toContainText(seeded.displayDate);
+  await expect(freshLinks.first()).toContainText("Rivais");
+  await expect(freshLinks.first()).toHaveAttribute("href", "#/equipa/jogo/" + seeded.duplicate + "?focus=after");
+  const stale = queue.locator('[data-match-proposal-stale="' + seeded.staleRef + '"]');
+  await expect(queue).toContainText("Propostas de jogo desatualizadas · 1");
+  await expect(stale).toContainText("Rivais stale E2E");
+  await expect(stale).toContainText("Desatualizada");
+  await stale.click();
+  await expect(page).toHaveURL(/#\/equipa\/jogo\/\d+\?focus=after$/);
+  await expect(page.locator("#match-after")).toBeVisible();
+  await expect.poll(() => page.locator("#match-after").evaluate(element => element.getBoundingClientRect().top)).toBeLessThan(200);
+});
+
+test("Workspace sends training continuity proposals directly to their review screen", async ({ page }) => {
+  await page.goto("/#/treinos");
+  await page.waitForFunction(() => typeof DB !== "undefined");
+  const trainingId = await page.evaluate(async () => {
+    const id = await DB.criar("treinos", {
+      team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: new Date().toISOString().slice(0, 10),
+      status: "ready", objetivo: "Apoio após passe", blocos: [], review: { status: "done", continua: "Dar apoio depois do passe" },
+      continuity: { revision: 1, proposal: {
+        id: "workspace-proposal-e2e", status: "draft", target_ref: crypto.randomUUID(),
+        source_ref: crypto.randomUUID(), source_key: "stale-source", objective: "Apoio após passe",
+        rationale: "Proposta criada a partir da avaliação registada.", success_criterion: "", date: "", time: "", blocks: [], evidence: [],
+      } },
+    });
+    return id;
+  });
+  await page.goto("/");
+  const queue = page.getByRole("heading", { name: /Propostas por rever/ }).locator("xpath=..");
+  const proposal = queue.getByRole("link", { name: /Apoio após passe/ });
+  await expect(proposal).toHaveAttribute("href", "#/continuidade/" + trainingId);
+  await proposal.click();
+  await expect(page.locator("[data-continuity-form]")).toBeVisible();
+  await expect(page.locator("[data-continuity-form] [name=objective]")).toHaveValue("Apoio após passe");
+});
+
+test("Workspace next events skip cancelled, completed matches and completed sessions", async ({ page }) => {
+  await page.goto("/#/calendario");
+  await page.waitForFunction(() => typeof DB !== "undefined");
+  await page.evaluate(async () => {
+    const day = (offset) => { const d = new Date(); d.setUTCDate(d.getUTCDate() + offset); return d.toISOString().slice(0, 10); };
+    await DB.criar("jogos", { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: day(1), adversario: "Jogo cancelado", estado: "cancelado" });
+    await DB.criar("jogos", { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: day(2), adversario: "Jogo concluído", estado: "concluido" });
+    await DB.criar("jogos", { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: day(3), adversario: "Próximo jogo", estado: "agendado" });
+    await DB.criar("treinos", { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: day(1), objetivo: "Sessão terminada", session: { status: "completed" } });
+    await DB.criar("treinos", { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: day(2), objetivo: "Treino concluído legado", status: "completed" });
+    await DB.criar("treinos", { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: day(3), objetivo: "Próximo treino" });
+  });
+  await page.goto("/");
+  const upcoming = page.locator(".hero-side").filter({ has: page.getByRole("heading", { name: "Próximos" }) });
+  await expect(upcoming).toContainText("Próximo jogo");
+  await expect(upcoming).toContainText("Próximo treino");
+  await expect(upcoming).not.toContainText("Jogo cancelado");
+  await expect(upcoming).not.toContainText("Jogo concluído");
+  await expect(upcoming).not.toContainText("Sessão terminada");
+  await expect(upcoming).not.toContainText("Treino concluído legado");
 });
 
 test("treinador regista observação e ela entra na atividade partilhada", async ({ page }) => {
@@ -98,7 +266,31 @@ test("referência UUID de outro dispositivo não é usada como chave numérica d
   expect(result.saved).toBe(result.original);
 });
 
+test("confirmação de sync na IndexedDB preserva a revisão local e uma edição seguinte fica pendente", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const id = await DB.criar("jogos", {
+      team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), adversario: "Original",
+      sync_dirty: false, sync_local_updated_at: "seed", remote_updated_at: "remote-v1",
+    }, { remote: true });
+    await DB.modificar("jogos", id, current => ({ ...current, remote_updated_at: "remote-v2" }), { remote: true });
+    const afterAck = await DB.obter("jogos", id);
+    await DB.modificar("jogos", id, current => ({ ...current, adversario: "Editado pelo treinador" }));
+    const afterEdit = await DB.obter("jogos", id);
+    await DB.modificar("jogos", id, current => ({ ...current, adversario: "Texto escrito durante o envio" }));
+    await RemoteWorkspace._ackPushedRecord("jogos", afterEdit, { updated_at: "remote-v3", actor_type: "human", actor_label: "Treinador" }, {}, crypto.randomUUID());
+    const afterConcurrentEdit = await DB.obter("jogos", id);
+    return { afterAck: { dirty: afterAck.sync_dirty, localRevision: afterAck.sync_local_updated_at, remoteRevision: afterAck.remote_updated_at }, afterEdit: { name: afterEdit.adversario, dirty: afterEdit.sync_dirty, localRevision: afterEdit.sync_local_updated_at }, afterConcurrentEdit: { name: afterConcurrentEdit.adversario, dirty: afterConcurrentEdit.sync_dirty, remoteRevision: afterConcurrentEdit.remote_updated_at } };
+  });
+  expect(result.afterAck).toEqual({ dirty: false, localRevision: "seed", remoteRevision: "remote-v2" });
+  expect(result.afterEdit.name).toBe("Editado pelo treinador");
+  expect(result.afterEdit.dirty).toBe(true);
+  expect(result.afterEdit.localRevision).not.toBe("seed");
+  expect(result.afterConcurrentEdit).toEqual({ name: "Texto escrito durante o envio", dirty: true, remoteRevision: "remote-v3" });
+});
+
 test("cria plano partilhado e associa media", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/#/planos/novo");
   await page.getByLabel("Tipo").selectOption("training_plan");
   await page.getByLabel("Estado").selectOption("ready");
@@ -130,23 +322,88 @@ test("cria plano partilhado e associa media", async ({ page }) => {
   expect(state.media[0].subject_type).toBe("document");
   expect(state.activity.some((x) => x.action === "created_document")).toBeTruthy();
   expect(state.activity.some((x) => x.action === "added_media")).toBeTruthy();
+
+  await page.getByRole("link", { name: "Editar", exact: true }).click();
+  await page.getByLabel("Título").fill("Saída de bola corrigida");
+  await page.getByLabel("Link externo").fill("https://example.com/video-edited");
+  await page.getByLabel("Nota / contexto").fill("Minuto 3 · apoio após passe");
+  await page.getByRole("button", { name: "Guardar alterações" }).click();
+  await expect(page.getByText("Saída de bola corrigida")).toBeVisible();
+  const edited = await page.evaluate(async () => ({
+    media: await DB.listar("media_items"),
+    activity: await DB.listar("activity_items"),
+  }));
+  expect(edited.media).toHaveLength(1);
+  expect(edited.media[0].id).toBe(state.media[0].id);
+  expect(edited.media[0].sync_id).toBe(state.media[0].sync_id);
+  expect(edited.media[0].title).toBe("Saída de bola corrigida");
+  expect(edited.media[0].url).toBe("https://example.com/video-edited");
+  expect(edited.media[0].note).toBe("Minuto 3 · apoio após passe");
+  expect(edited.media[0].sync_dirty).toBe(true);
+  expect(edited.activity.some((x) => x.action === "updated_media")).toBeTruthy();
+
+  let removeNotice = "";
+  page.on("dialog", async (dialog) => { removeNotice = dialog.message(); await dialog.accept(); });
+  await page.getByRole("button", { name: "Remover", exact: true }).click();
+  await expect.poll(() => removeNotice).toContain("ficheiro binário continua guardado no armazenamento privado");
+  const removed = await page.evaluate(async () => ({
+    media: await DB.listar("media_items"),
+    tombstones: await DB.listar("sync_tombstones"),
+  }));
+  expect(removed.media).toHaveLength(0);
+  expect(removed.tombstones).toHaveLength(1);
+  expect(removed.tombstones[0].store).toBe("media_items");
 });
 
 test("agente e humano escrevem no mesmo workspace com autoria separada", async ({ page }) => {
   await page.goto("/");
-  const docId = await page.evaluate(async () => {
-    return AgentWorkspaceAPI.createDocument({
+  const agentState = await page.evaluate(async () => {
+    let unsafeTypeRejected = false, unsafeStatusRejected = false, staleUpdateRejected = false, unconfirmedHypothesisRejected = false, inventedQuoteRejected = false, wrongTeamRejected = false;
+    try { await AgentWorkspaceAPI.createDocument({ type: "training_plan", title: "Plano", body: "Plano sem aprovação" }); }
+    catch (error) { unsafeTypeRejected = /operação MCP específica/.test(error.message); }
+    try { await AgentWorkspaceAPI.createDocument({ type: "brief", title: "Brief não aprovado", status: "ready" }); }
+    catch (error) { unsafeStatusRejected = /rascunho/.test(error.message); }
+    const matchRef = crypto.randomUUID();
+    await DB.criar("jogos", { team_id: DEFAULT_TEAM_ID, sync_id: matchRef, adversario: "Adversário de teste", during: { notes: ["Pressão alta recuperou a bola"] } });
+    const hypothesis = { title: "Pressão coordenada", content: "A equipa pode recuperar mais bolas com pressão coordenada.", evidence: [{ type: "match", id: matchRef, quote: "Pressão alta recuperou a bola" }] };
+    try { await AgentWorkspaceAPI.addHypothesis(hypothesis); }
+    catch (error) { unconfirmedHypothesisRejected = /confirmação explícita/.test(error.message); }
+    try { await AgentWorkspaceAPI.addHypothesis({ ...hypothesis, confirmed: true, evidence: [{ ...hypothesis.evidence[0], quote: "A equipa marcou três golos" }] }); }
+    catch (error) { inventedQuoteRejected = /citação não corresponde/.test(error.message); }
+    try { await AgentWorkspaceAPI.addHypothesis({ ...hypothesis, team_id: "equipa-errada", confirmed: true }); }
+    catch (error) { wrongTeamRejected = /citação não corresponde/.test(error.message); }
+    const memoryId = await AgentWorkspaceAPI.addHypothesis({ ...hypothesis, confirmed: true });
+    const duplicateMemoryId = await AgentWorkspaceAPI.addHypothesis({ ...hypothesis, confirmed: true });
+    const [memory] = await DB.listar("memory_items");
+    const id = await AgentWorkspaceAPI.createDocument({
       team_id: "default",
-      type: "match_analysis",
-      title: "Análise criada pelo agente",
-      body: "Padrão observado: dificuldade em encontrar apoio exterior.",
-      status: "ready",
+      type: "brief",
+      title: "Proposta criada pelo agente",
+      body: "Hipótese para rever: dificuldade em encontrar apoio exterior.",
       agent_label: "Head Coach",
     });
+    const before = await AgentWorkspaceAPI.getDocument(id);
+    try { await AgentWorkspaceAPI.updateDocument(id, { body: "Edição sem leitura" }); }
+    catch (error) { staleUpdateRejected = /Lê a versão atual/.test(error.message); }
+    await AgentWorkspaceAPI.updateDocument(id, { body: "Hipótese revista pelo Head Coach.", expected_updated_at: before.updated_at });
+    return { id, memoryId, duplicateMemoryId, memory, unconfirmedHypothesisRejected, inventedQuoteRejected, wrongTeamRejected, unsafeTypeRejected, unsafeStatusRejected, staleUpdateRejected, document: await AgentWorkspaceAPI.getDocument(id) };
   });
 
-  await page.goto("/#/planos/" + docId);
-  await expect(page.locator("#app").getByRole("heading", { name: "Análise criada pelo agente" })).toBeVisible();
+  expect(agentState.unsafeTypeRejected).toBe(true);
+  expect(agentState.unsafeStatusRejected).toBe(true);
+  expect(agentState.staleUpdateRejected).toBe(true);
+  expect(agentState.unconfirmedHypothesisRejected).toBe(true);
+  expect(agentState.inventedQuoteRejected).toBe(true);
+  expect(agentState.wrongTeamRejected).toBe(true);
+  expect(agentState.duplicateMemoryId).toBe(agentState.memoryId);
+  expect(agentState.memory.kind).toBe("hypothesis");
+  expect(agentState.memory.metadata.evidence_refs).toHaveLength(1);
+  expect(agentState.document.status).toBe("draft");
+  expect(agentState.document.updated_by).toBe("agent");
+  expect(agentState.document.body).toBe("Hipótese revista pelo Head Coach.");
+
+  await page.goto("/#/planos/" + agentState.id);
+  await expect(page.locator("#app").getByRole("heading", { name: "Proposta criada pelo agente" })).toBeVisible();
   await expect(page.getByText("Head Coach", { exact: true })).toBeVisible();
 
   await page.getByRole("link", { name: "Editar" }).click();
@@ -155,8 +412,8 @@ test("agente e humano escrevem no mesmo workspace com autoria separada", async (
   await expect(page.getByText(/última alteração por Treinador/)).toBeVisible();
 
   await page.goto("/#/timeline");
-  await expect(page.getByText(/Criou análise de jogo/)).toBeVisible();
-  await expect(page.getByText(/Atualizou análise de jogo/)).toBeVisible();
+  await expect(page.getByText(/Criou briefing/).first()).toBeVisible();
+  await expect(page.getByText(/Atualizou briefing/).first()).toBeVisible();
   await expect(page.getByText("Head Coach").first()).toBeVisible();
 
   const stored = await page.evaluate(async () => {
@@ -205,13 +462,26 @@ test("definições expõem ligação remota sem secret key", async ({ page }) =>
 test("alteração offline recebe UUID e eliminação cria tombstone", async ({ page }) => {
   await page.goto("/");
   const state = await page.evaluate(async () => {
+    const originRemoteTeamId = "55555555-5555-4555-8555-555555555555";
+    localStorage.setItem("treinador.remote.supabase.v1", JSON.stringify({ remoteTeamId: originRemoteTeamId }));
     const id = await DB.criar("jogadores", {
       team_id: DEFAULT_TEAM_ID,
       nome: "Sync Offline",
       escalao: "sub-8",
+      remote_team_id: originRemoteTeamId,
     });
     const row = await DB.obter("jogadores", id);
+    const originalTransaction = IDBDatabase.prototype.transaction;
+    const tombstoneTransactions = [];
+    let captureTransactions = false;
+    IDBDatabase.prototype.transaction = function (stores, mode, options) {
+      const names = typeof stores === "string" ? [stores] : Array.from(stores);
+      if (captureTransactions && mode === "readwrite") tombstoneTransactions.push(names);
+      return originalTransaction.call(this, stores, mode, options);
+    };
+    captureTransactions = true;
     await DB.apagar("jogadores", id);
+    captureTransactions = false;
     const syncedId = await DB.criar("jogadores", {
       team_id: DEFAULT_TEAM_ID,
       nome: "Sync com versão",
@@ -220,18 +490,73 @@ test("alteração offline recebe UUID e eliminação cria tombstone", async ({ p
       sync_dirty: false,
       remote_updated_at: "2026-09-21T12:00:00.000Z",
     }, { remote: true });
+    captureTransactions = true;
     await DB.apagar("jogadores", syncedId);
+    captureTransactions = false;
+    const remoteDeletedId = await DB.criar("jogadores", {
+      team_id: DEFAULT_TEAM_ID,
+      nome: "Eliminação recebida",
+      sync_id: "33333333-3333-4333-8333-333333333333",
+      sync_dirty: false,
+      remote_updated_at: "2026-09-22T12:00:00.000Z",
+    }, { remote: true });
+    const remoteRow = await DB.obter("jogadores", remoteDeletedId);
+    captureTransactions = true;
+    await DB.apagar("jogadores", remoteDeletedId, { remote: true, expected: remoteRow });
+    captureTransactions = false;
+    IDBDatabase.prototype.transaction = originalTransaction;
     return {
       syncId: row.sync_id,
       dirty: row.sync_dirty,
       tombstones: await DB.listar("sync_tombstones"),
+      tombstoneTransactions,
+      remoteCopyExists: !!(await DB.obter("jogadores", remoteDeletedId)),
+      originRemoteTeamId,
     };
   });
   expect(state.syncId).toMatch(/^[0-9a-f-]{36}$/i);
   expect(state.dirty).toBe(true);
   expect(state.tombstones).toHaveLength(2);
   expect(state.tombstones[0].sync_id).toBe(state.syncId);
+  expect(state.tombstones[0].remote_team_id).toBe(state.originRemoteTeamId);
   expect(state.tombstones[1].expected_updated_at).toBe("2026-09-21T12:00:00.000Z");
+  expect(state.remoteCopyExists).toBe(false);
+  expect(state.tombstoneTransactions).toHaveLength(3);
+  expect(state.tombstoneTransactions[0]).toEqual(expect.arrayContaining(["jogadores", "sync_tombstones"]));
+  expect(state.tombstoneTransactions[1]).toEqual(expect.arrayContaining(["jogadores", "sync_tombstones"]));
+  expect(state.tombstoneTransactions[2]).toEqual(["jogadores"]);
+});
+
+test("interface local mostra apenas dados do workspace remoto selecionado", async ({ page }) => {
+  await page.goto("/");
+  const visible = await page.evaluate(async () => {
+    localStorage.setItem("treinador.remote.supabase.v1", JSON.stringify({ remoteTeamId: "team-b" }));
+    const first = await DB.criar("jogadores", { team_id: DEFAULT_TEAM_ID, remote_team_id: "team-a", nome: "Atleta A" }, { remote: true });
+    const second = await DB.criar("jogadores", { team_id: DEFAULT_TEAM_ID, remote_team_id: "team-b", nome: "Atleta B" }, { remote: true });
+    const fresh = await DB.criar("jogadores", { team_id: DEFAULT_TEAM_ID, nome: "Atleta local" });
+    let editError = "";
+    try { await DB.modificar("jogadores", first, (row) => ({ ...row, nome: "Editado fora do workspace" })); }
+    catch (error) { editError = error.message; }
+    let deleteError = "";
+    try { await DB.apagar("jogadores", first); }
+    catch (error) { deleteError = error.message; }
+    return {
+      list: (await DB.porIndice("jogadores", "team_id", DEFAULT_TEAM_ID)).map((row) => row.nome),
+      hidden: await DB.obter("jogadores", first),
+      visible: (await DB.obter("jogadores", second))?.nome,
+      freshTeam: (await DB.obter("jogadores", fresh))?.remote_team_id,
+      editError,
+      deleteError,
+      rawStillThere: (await DB.listar("jogadores")).some((row) => row.id === first),
+    };
+  });
+  expect(visible.list).toEqual(["Atleta B", "Atleta local"]);
+  expect(visible.hidden).toBeUndefined();
+  expect(visible.visible).toBe("Atleta B");
+  expect(visible.freshTeam).toBe("team-b");
+  expect(visible.editError).toContain("outro workspace remoto");
+  expect(visible.deleteError).toContain("outro workspace remoto");
+  expect(visible.rawStillThere).toBe(true);
 });
 
 test("editar documento remoto preserva identidade e versão de sincronização", async ({ page }) => {
@@ -290,6 +615,10 @@ test("calendário e página de jogo preservam preparação estruturada", async (
   await expect(page.getByRole("heading", { name: "Depois" })).toBeVisible();
 
   await page.getByLabel("Objetivo principal").fill("Circular rápido e abrir o campo");
+  await page.getByLabel("Sistema observado").fill("1-2-1");
+  await page.getByLabel("Estilo observado").selectOption("pressao_alta");
+  await page.getByLabel("Pontos fortes observados · um por linha").fill("Pressão coordenada\nAvançado rápido");
+  await page.getByLabel("Vulnerabilidades observadas · um por linha").fill("Espaço nas costas");
   await page.getByRole("button", { name: "Guardar plano" }).click();
   await page.getByRole("link", { name: "Editar dados" }).click();
   await page.getByLabel("Local").fill("Campo Teste 2");
@@ -300,6 +629,10 @@ test("calendário e página de jogo preservam preparação estruturada", async (
     return games.find((x) => x.adversario === "Teste E2E");
   });
   expect(stored.pre_game.objetivo_principal).toBe("Circular rápido e abrir o campo");
+  expect(stored.pre_game.adversario_sistema).toBe("1-2-1");
+  expect(stored.pre_game.adversario_estilo).toBe("pressao_alta");
+  expect(stored.pre_game.adversario_pontos_fortes).toEqual(["Pressão coordenada", "Avançado rápido"]);
+  expect(stored.pre_game.adversario_vulnerabilidades).toEqual(["Espaço nas costas"]);
   expect(stored.hora_saida).toBe("08:30");
   expect(stored.external_key).toContain("2026-09-26");
 
@@ -472,6 +805,87 @@ test("sync remoto atualiza o ecrã aberto sem refresh manual", async ({ page }) 
   await expect(page.getByText("Jogador recebido do remoto", { exact: true })).toBeVisible();
 });
 
+test("conflito de eliminação offline mostra versões e exige uma escolha explícita", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined" && typeof router === "function");
+  await page.evaluate(async () => {
+    RemoteWorkspace.status = async () => ({ configured: true, signedIn: true, email: "treinador@example.test", remoteTeamId: "team-test", conflicts: [{ store: "jogadores", local_id: null, sync_id: "player-conflict", reason: "delete_version_mismatch", expected_updated_at: "v1", remote_updated_at: "v2" }, { store: "media_items", local_id: 9, sync_id: "media-conflict", reason: "remote_deleted_local_dirty", expected_updated_at: "v3", remote_updated_at: "v4" }, { store: "media_items", local_id: null, sync_id: "foreign-path", reason: "storage_path_team_mismatch" }, { store: "media_items", local_id: null, sync_id: "sign-failed", reason: "storage_signed_url_failed" }, { store: "jogos", local_id: 12, sync_id: "default", reason: "invalid_local_sync_id" }] });
+    RemoteWorkspace.getConfig = () => ({ url: "https://example.supabase.co", publishableKey: "sb_publishable_test" });
+    RemoteWorkspace.listTeams = async () => [{ id: "team-test", name: "Equipa de teste" }];
+    MCPConnectors.list = async () => [];
+    RemoteWorkspace.resolveDeleteConflict = async (id, resolution) => { window.__resolution = { id, resolution }; return { conflicts: [] }; };
+    RemoteWorkspace.restoreLocallyEditedRecord = async id => { window.__restored = id; return { conflicts: [] }; };
+    go("#/definicoes");
+  });
+  await expect(page.getByText("Eliminação offline em conflito")).toBeVisible();
+  await expect(page.getByText("Eliminação remota em conflito")).toBeVisible();
+  await expect(page.getByText(/apagado no servidor, mas contém alterações locais pendentes/)).toBeVisible();
+  await expect(page.getByText(/caminho do ficheiro pertence a outro workspace; não foi enviado nem assinado/)).toBeVisible();
+  await expect(page.getByText(/não foi possível abrir uma ligação temporária. A sincronização tentará novamente/)).toBeVisible();
+  await expect(page.getByText(/O identificador guardado neste dispositivo não é um UUID remoto/)).toBeVisible();
+  await expect(page.getByText(/versão local vista: v1 · versão remota: v2/)).toBeVisible();
+  await page.getByRole("button", { name: "Manter versão remota", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__resolution)).toEqual({ id: "player-conflict", resolution: "keep_remote" });
+  page.on("dialog", dialog => dialog.accept());
+  await page.getByRole("button", { name: "Restaurar edição local no remoto", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.__restored)).toBe("media-conflict");
+});
+
+test("IndexedDB recusa eliminação remota quando a ficha local mudou", async ({ page }) => {
+  await page.goto("/");
+  const outcome = await page.evaluate(async () => {
+    const id = await DB.criar("jogos", {
+      team_id: DEFAULT_TEAM_ID, adversario: "Rivais", data: "2026-10-06",
+      sync_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", sync_dirty: false,
+      remote_updated_at: "v1",
+    }, { remote: true });
+    const seen = await DB.obter("jogos", id);
+    await DB.atualizar("jogos", { ...seen, nota_tatica: "Texto escrito durante o pull" });
+    let errorCode = null;
+    try { await DB.apagar("jogos", id, { remote: true, expected: seen }); }
+    catch (error) { errorCode = error.code; }
+    const retained = await DB.obter("jogos", id);
+    return { errorCode, note: retained?.nota_tatica, dirty: retained?.sync_dirty };
+  });
+  expect(outcome).toEqual({
+    errorCode: "LOCAL_DELETE_CHANGED", note: "Texto escrito durante o pull", dirty: true,
+  });
+});
+
+test("service worker não recarrega enquanto existe formulário ou sessão em utilização", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined");
+  await page.waitForFunction(() => !!navigator.serviceWorker?.controller);
+  await page.evaluate(() => {
+    sessionStorage.setItem("vision-sw-reloaded-v95", "1");
+    document.body.replaceChildren();
+    const session = document.createElement("main");
+    session.dataset.trainingSession = "42";
+    const form = document.createElement("form");
+    const field = document.createElement("textarea"); field.value = "texto por guardar"; form.append(field);
+    session.append(form); document.body.append(session);
+    navigator.serviceWorker.dispatchEvent(new Event("controllerchange"));
+    navigator.serviceWorker.dispatchEvent(new Event("controllerchange"));
+  });
+  await expect(page.getByText(/Atualização disponível\. Guarda o que estás a fazer/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Atualizar app" })).toBeVisible();
+  await expect(page.locator("textarea")).toHaveValue("texto por guardar");
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v114"))).toBeNull();
+});
+
+test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => !!navigator.serviceWorker?.controller);
+  const reloaded = page.waitForEvent("framenavigated");
+  void page.evaluate(() => {
+    sessionStorage.setItem("vision-sw-reloaded-v95", "1");
+    navigator.serviceWorker.dispatchEvent(new Event("controllerchange"));
+  }).catch(() => {});
+  await reloaded;
+  await page.waitForLoadState("domcontentloaded");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v114"))).toBe("1");
+});
+
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {
   await page.goto("/#/equipa/jogador/novo");
   await page.getByLabel("Nome").fill("Jogador Estado E2E");
@@ -522,4 +936,31 @@ test("estado do jogador condiciona convocatória e saída do plantel preserva re
   expect(stored.retiredAt).toBeTruthy();
   expect(stored.stillCalled).toBe(false);
   expect(stored.stillSubstitute).toBe(false);
+});
+
+test("falha do upload remoto preserva a foto na fila local", async ({ page }) => {
+  await page.goto("/#/equipa/jogador/novo");
+  await page.evaluate(() => {
+    RemoteWorkspace.canUpload = async () => true;
+    RemoteWorkspace.uploadFileMedia = async () => { throw new Error("rede interrompida"); };
+  });
+  let fallbackNotice = "";
+  page.on("dialog", async (dialog) => { fallbackNotice = dialog.message(); await dialog.accept(); });
+  await page.getByLabel("Nome").fill("Foto Upload Recuperação E2E");
+  await page.locator('input[name="foto_file"]').setInputFiles({
+    name: "atleta.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"),
+  });
+  await page.getByRole("button", { name: "Guardar", exact: true }).click();
+  await expect.poll(() => fallbackNotice).toContain("guardada neste dispositivo");
+  await expect(page).toHaveURL(/#\/equipa\/jogador\/\d+$/);
+  const saved = await page.evaluate(async () => {
+    const player = (await DB.listar("jogadores")).find((row) => row.nome === "Foto Upload Recuperação E2E");
+    const media = await HeadCoachMedia.listForSubject("player", player.id);
+    return { photo: player.foto, media: media.find((item) => item.note === "Foto de perfil do atleta") };
+  });
+  expect(saved.photo).toMatch(/^data:image\/png;base64,/);
+  expect(saved.media.data_url).toMatch(/^data:image\/png;base64,/);
+  expect(saved.media.sync_dirty).toBe(true);
 });
