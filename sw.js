@@ -1,5 +1,13 @@
 // Service worker - app shell offline.
-const CACHE = "vision-coach-v114";
+const CACHE = "vision-coach-v115";
+const APPROVED_IMAGE_CACHE = "vision-coach-approved-exercises-v1";
+const APPROVED_IMAGES = [
+  "./assets/exercises/approved-20260922/01_ativacao_conduzir_passar_dar_opcao.png",
+  "./assets/exercises/approved-20260922/02_passar_apoiar_terceiro_homem.png",
+  "./assets/exercises/approved-20260922/03_saida_curta_gr_3_vs_3.png",
+  "./assets/exercises/approved-20260922/04_jogo_condicionado_sair_acelerar.png",
+  "./assets/exercises/approved-20260922/05_jogo_livre_observar_saida.png"
+];
 const ASSETS = [
   "./",
   "./index.html",
@@ -38,12 +46,7 @@ const ASSETS = [
   "./js/app.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
-  "./icons/icon-512.png",
-  "./assets/exercises/approved-20260922/01_ativacao_conduzir_passar_dar_opcao.png",
-  "./assets/exercises/approved-20260922/02_passar_apoiar_terceiro_homem.png",
-  "./assets/exercises/approved-20260922/03_saida_curta_gr_3_vs_3.png",
-  "./assets/exercises/approved-20260922/04_jogo_condicionado_sair_acelerar.png",
-  "./assets/exercises/approved-20260922/05_jogo_livre_observar_saida.png"
+  "./icons/icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {
@@ -52,8 +55,22 @@ self.addEventListener("install", (event) => {
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE && key !== "vision-coach-private-images-v1").map((key) => caches.delete(key))))
+    caches.keys().then(async (keys) => {
+      const imageCache = await caches.open(APPROVED_IMAGE_CACHE);
+      const previousCaches = keys.filter((key) => key.startsWith("vision-coach-v") && key !== CACHE);
+      for (const name of previousCaches) {
+        const previous = await caches.open(name);
+        for (const asset of APPROVED_IMAGES) {
+          const url = new URL(asset, self.registration.scope).href;
+          if (await imageCache.match(url)) continue;
+          const saved = await previous.match(url);
+          if (saved) await imageCache.put(url, saved);
+        }
+      }
+      await Promise.all(keys
+        .filter((key) => key !== CACHE && key !== APPROVED_IMAGE_CACHE && key !== "vision-coach-private-images-v1")
+        .map((key) => caches.delete(key)));
+    })
       .then(() => self.clients.claim())
   );
 });
@@ -61,8 +78,8 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url=new URL(event.request.url);
-  if(url.origin===self.location.origin&&url.pathname.includes("/assets/exercises/approved-20260922/")){
-    event.respondWith(caches.open(CACHE).then(async(cache)=>{
+  if(url.origin===self.location.origin&&APPROVED_IMAGES.some(asset=>url.href===new URL(asset,self.registration.scope).href)){
+    event.respondWith(caches.open(APPROVED_IMAGE_CACHE).then(async(cache)=>{
       const saved=await cache.match(event.request);if(saved) return saved;
       const response=await fetch(event.request);
       if(response.ok) await cache.put(event.request,response.clone());

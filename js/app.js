@@ -174,20 +174,25 @@ async function routeOnce(){
 
 var routerRunning=false;
 var routerQueued=false;
-async function router(){
+var routerPromise=null;
+function router(){
   if(routerRunning){
     routerQueued=true;
-    return;
+    return routerPromise||Promise.resolve();
   }
   routerRunning=true;
-  try{
-    do{
-      routerQueued=false;
-      await routeOnce();
-    }while(routerQueued);
-  }finally{
-    routerRunning=false;
-  }
+  routerPromise=(async function(){
+    try{
+      do{
+        routerQueued=false;
+        await routeOnce();
+      }while(routerQueued);
+    }finally{
+      routerRunning=false;
+      routerPromise=null;
+    }
+  })();
+  return routerPromise;
 }
 
 quickCapture && quickCapture.addEventListener("click",function(){go("#/capturar");});

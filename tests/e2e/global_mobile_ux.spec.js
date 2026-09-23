@@ -42,7 +42,20 @@ test("sincronização mantém a posição de leitura quando a página atualiza",
   await page.evaluate(() => window.scrollTo(0, 720));
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(600);
   const before = await page.evaluate(() => window.scrollY);
-  await page.evaluate(() => window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", { detail: { conflicts: [] } })));
+  await page.evaluate(async () => {
+    const originalRouteOnce = routeOnce;
+    routeOnce = async () => {
+      await new Promise(resolve => setTimeout(resolve, 80));
+      return originalRouteOnce();
+    };
+    try {
+      const inFlightRoute = router();
+      setTimeout(() => window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", { detail: { conflicts: [] } })), 10);
+      await inFlightRoute;
+    } finally {
+      routeOnce = originalRouteOnce;
+    }
+  });
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThanOrEqual(before - 4);
   await expect(page.getByRole("heading", { name: "Calendário", exact: true })).toBeVisible();
 });
@@ -61,7 +74,7 @@ test("aviso do PWA é anunciado e fica acessível acima da navegação móvel", 
   await expect(notice).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeVisible();
   await expect(nameField).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v114"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v115"))).toBeNull();
   const position = await notice.evaluate(element => {
     const rect = element.getBoundingClientRect();
     return { fixed: getComputedStyle(element).position, bottom: rect.bottom, navTop: document.querySelector(".bottom-nav").getBoundingClientRect().top };

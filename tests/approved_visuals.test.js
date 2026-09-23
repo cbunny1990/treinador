@@ -35,14 +35,21 @@ test('render mantém proporção e acesso ao original sem atalhos aninhados',()=
 test('fontes inseguras são recusadas',()=>{
   for(const value of ['javascript:alert(1)','http://example.org/a.png','//example.org/a.png','data:image/svg+xml;base64,AAAA','assets/exercises/../../secret','https://name:password@example.org/a.png']) assert.equal(visuals.safeSource(value),null);
 });
-test('PWA inclui todos os originais e o módulo antes da interface',()=>{
+test('PWA guarda imagens aprovadas sob procura sem bloquear atualização inicial',()=>{
   const sw=fs.readFileSync(path.join(root,'sw.js'),'utf8');
   const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
-  for(const item of visuals.approved) assert.ok(sw.includes('./'+item.src));
+  const shell=sw.match(/const ASSETS = \[([\s\S]*?)\n\];/)?.[1]||'';
+  for(const item of visuals.approved){
+    const path='./'+item.src;
+    assert.ok(sw.includes(path));
+    assert.ok(!shell.includes(path),'imagem aprovada não deve atrasar a ativação da app');
+  }
+  assert.match(sw,/vision-coach-approved-exercises-v1/);
+  assert.match(sw,/const previousCaches = keys\.filter/);
   assert.ok(html.indexOf('js/exercise_visuals.js')<html.indexOf('js/training_ui.js'));
   assert.ok(html.indexOf('js/team_development.js')<html.indexOf('js/app.js'));
   assert.ok(sw.includes('./js/team_development.js'));
-  assert.match(sw,/vision-coach-v114/);
+  assert.match(sw,/vision-coach-v115/);
   const index=fs.readFileSync(path.join(__dirname,"..","index.html"),"utf8");
-  assert.match(index,/const serviceWorkerVersion = 114;/);
+  assert.match(index,/const serviceWorkerVersion = 115;/);
 });
