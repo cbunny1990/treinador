@@ -74,6 +74,30 @@ test("treinador regista observação e ela entra na atividade partilhada", async
   await expect(page.locator("#app .badge.human").first()).toHaveText("Treinador");
 });
 
+test("referência UUID de outro dispositivo não é usada como chave numérica da IndexedDB", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const playerRef = crypto.randomUUID(), teamRef = crypto.randomUUID();
+    const id = await DB.criar("workspace_documents", {
+      team_id: DEFAULT_TEAM_ID, type: "note", title: "Referência já remota",
+      refs: [{ type: "player", id: playerRef }],
+    }, { remote: true });
+    const originalInit = RemoteWorkspace.init;
+    RemoteWorkspace.init = async () => ({ from(table) {
+      if (table !== "workspace_records") throw Error("wrong table");
+      return { select() { return this; }, eq() { return this; }, is() { return this; },
+        async maybeSingle() { return { data: { id: playerRef }, error: null }; } };
+    } });
+    try {
+      const local = await DB.obter("workspace_documents", id);
+      const payload = await RemoteWorkspace._payloadForRemote("workspace_documents", local, teamRef);
+      return { original: local.refs[0].id, remote: payload.refs[0].id, saved: (await DB.obter("workspace_documents", id)).refs[0].id };
+    } finally { RemoteWorkspace.init = originalInit; }
+  });
+  expect(result.remote).toBe(result.original);
+  expect(result.saved).toBe(result.original);
+});
+
 test("cria plano partilhado e associa media", async ({ page }) => {
   await page.goto("/#/planos/novo");
   await page.getByLabel("Tipo").selectOption("training_plan");

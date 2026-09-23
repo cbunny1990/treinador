@@ -42,6 +42,12 @@ function remoteUuid() {
 function remoteIsUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
 }
+function remoteReferenceError(reason) {
+  const error = new Error("Referência local por reconciliar: " + reason);
+  error.code = "LOCAL_REFERENCE_CONFLICT";
+  error.reason = reason;
+  return error;
+}
 
 function remoteLoadConfig() {
   try {
@@ -479,8 +485,25 @@ const RemoteWorkspace = {
     if (subjectType === "team") return remoteTeamId;
     const store = REMOTE_SUBJECT_STORES[subjectType];
     if (!store) return String(subjectId);
-    const local = await DB.obter(store, subjectId);
-    if (!local) return String(subjectId);
+    const ref = String(subjectId ?? "").trim();
+    if (!ref) throw remoteReferenceError("missing_subject_id");
+    if (remoteIsUuid(ref)) {
+      const client = await this.init();
+      const table = subjectType === "media" ? "media_assets" : "workspace_records";
+      let query = client.from(table).select("id")
+        .eq("id", ref).eq("team_id", remoteTeamId).is("deleted_at", null);
+      if (table === "workspace_records") query = query.eq("kind", subjectType);
+      const { data, error } = await query.maybeSingle();
+      if (error) throw error;
+      if (!data) throw remoteReferenceError("subject_uuid_not_in_team");
+      return ref;
+    }
+    const localId = Number(ref);
+    if (!Number.isSafeInteger(localId) || localId < 1) throw remoteReferenceError("invalid_subject_id");
+    const local = await DB.obter(store, localId);
+    if (!local || (local.team_id || DEFAULT_TEAM_ID) !== DEFAULT_TEAM_ID) {
+      throw remoteReferenceError("subject_not_found_locally");
+    }
     const withId = await this._ensureSyncId(store, local);
     return withId.sync_id;
   },
@@ -640,7 +663,13 @@ const RemoteWorkspace = {
           continue;
         }
 
-        const payload = await this._payloadForRemote(store, local, remoteTeamId);
+        let payload;
+        try { payload = await this._payloadForRemote(store, local, remoteTeamId); }
+        catch (error) {
+          if (error.code !== "LOCAL_REFERENCE_CONFLICT") throw error;
+          addConflict(remoteConflict(store, local, remote, error.reason));
+          continue;
+        }
         const row = remoteRecordRow(store, local, remoteTeamId, userId, payload);
         let saved;
         if (remote) {
@@ -782,7 +811,13 @@ const RemoteWorkspace = {
       }
       const local = await this._ensureSyncId("activity_items", original);
       if (!remoteMap.has(local.sync_id)) {
-        const remoteRow = await this._activityRemoteRow(local, remoteTeamId, userId);
+        let remoteRow;
+        try { remoteRow = await this._activityRemoteRow(local, remoteTeamId, userId); }
+        catch (error) {
+          if (error.code !== "LOCAL_REFERENCE_CONFLICT") throw error;
+          result.conflicts.push(remoteConflict("activity_items", local, null, error.reason));
+          continue;
+        }
         const { data: saved, error } = await client.from("activity_log")
           .insert(remoteRow)
           .select("*").single();
@@ -909,7 +944,13 @@ const RemoteWorkspace = {
         continue;
       }
 
-      const row = await this._mediaRemoteRow(local, remoteTeamId, userId);
+      let row;
+      try { row = await this._mediaRemoteRow(local, remoteTeamId, userId); }
+      catch (error) {
+        if (error.code !== "LOCAL_REFERENCE_CONFLICT") throw error;
+        result.conflicts.push(remoteConflict("media_items", local, remote, error.reason));
+        continue;
+      }
       let saved;
       if (remote) {
         const { id, team_id, created_by, actor_type, actor_label, ...updateRow } = row;
