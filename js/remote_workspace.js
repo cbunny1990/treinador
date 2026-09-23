@@ -131,6 +131,22 @@ function remoteConflict(store, local, remote, reason = "version_mismatch") {
     remote_deleted_at: remote?.deleted_at || null,
   };
 }
+function remoteConflictPreview(value) {
+  const privateKeys = /^(data_url|foto|signed_url|access_token|refresh_token|token|authorization)$/i;
+  const temporaryUrl = /\/storage\/v1\/object\/sign\/|[?&](?:token|access_token|signature|sig|x-amz-(?:signature|credential|security-token)|x-goog-(?:signature|credential|security-token))=/i;
+  const clean = (item, key = "") => {
+    if (privateKeys.test(key)) return undefined;
+    if (Array.isArray(item)) return item.slice(0, 100).map((entry) => clean(entry)).filter((entry) => entry !== undefined);
+    if (item && typeof item === "object") return Object.fromEntries(Object.entries(item)
+      .filter(([name]) => !privateKeys.test(name))
+      .slice(0, 150)
+      .map(([name, child]) => [name, clean(child, name)]));
+    if (typeof item === "string" && /^data:/i.test(item)) return "[conteúdo local oculto]";
+    if (typeof item === "string" && temporaryUrl.test(item)) return "[ligação temporária ocultada]";
+    return typeof item === "string" && item.length > 4000 ? item.slice(0, 4000) + "…" : item;
+  };
+  return clean(value);
+}
 function remoteIdentityConflictReason(row) {
   return row?.sync_id && !remoteIsUuid(row.sync_id) ? "invalid_local_sync_id" : "remote_team_unknown";
 }
@@ -146,8 +162,15 @@ function remoteSyncRetryDelay(attempt) {
 function remoteActivityMatches(expected, remote) {
   const stable = (value) => Array.isArray(value) ? value.map(stable) : value && typeof value === "object"
     ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable(value[key])])) : value;
-  return ["actor_type", "actor_label", "action", "summary", "entity_type", "entity_ref", "created_at"]
+  const sameInstant = (left, right) => {
+    const leftMs = Date.parse(left ?? "");
+    const rightMs = Date.parse(right ?? "");
+    if (Number.isFinite(leftMs) && Number.isFinite(rightMs)) return leftMs === rightMs;
+    return (left ?? null) === (right ?? null);
+  };
+  return ["actor_type", "actor_label", "action", "summary", "entity_type", "entity_ref"]
     .every((key) => (expected[key] ?? null) === (remote[key] ?? null)) &&
+    sameInstant(expected.created_at, remote.created_at) &&
     JSON.stringify(stable(expected.metadata || {})) === JSON.stringify(stable(remote.metadata || {}));
 }
 function remoteRowBelongsToTeam(row, remoteTeamId) {
@@ -594,7 +617,24 @@ const RemoteWorkspace = {
       return ref;
     }
     const localId = Number(ref);
-    if (!Number.isSafeInteger(localId) || localId < 1) throw remoteReferenceError("invalid_subject_id");
+    if (!Number.isSafeInteger(localId) || localId < 1) {
+      if (!ref.includes(":")) throw remoteReferenceError("invalid_subject_id");
+      const keyedRows = (await DB.listar(store)).filter((row) =>
+        (row.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID &&
+        String(row.external_key || "") === ref &&
+        (!row.remote_team_id || row.remote_team_id === remoteTeamId)
+      );
+      if (keyedRows.length > 1) throw remoteReferenceError("ambiguous_external_reference");
+      if (keyedRows.length === 1) {
+        const local = keyedRows[0];
+        if (local.remote_team_id && local.remote_team_id !== remoteTeamId) {
+          throw remoteReferenceError("subject_other_team");
+        }
+        const withId = await this._ensureSyncId(store, local);
+        return this._subjectRemoteRef(subjectType, withId.sync_id, remoteTeamId, options);
+      }
+      throw remoteReferenceError("invalid_subject_id");
+    }
     const local = await DB.obter(store, localId);
     if (!local || (local.team_id || DEFAULT_TEAM_ID) !== DEFAULT_TEAM_ID) {
       throw remoteReferenceError("subject_not_found_locally");
@@ -1679,6 +1719,93 @@ const RemoteWorkspace = {
     return this.syncNow();
   },
 
+  async readVersionConflict(syncId, storeName) {
+    const config = remoteLoadConfig();
+    const conflict = (config.conflicts || []).find((item) => item.sync_id === syncId
+      && item.store === storeName && item.reason === "version_mismatch");
+    if (!conflict || !conflict.remote_updated_at) throw new Error("O conflito mudou. Sincroniza novamente antes de rever as versões.");
+    const store = conflict.store;
+    if (!REMOTE_STORE_KINDS[store] && store !== "media_items") throw new Error("Tipo de conflito não suportado para comparação.");
+    const locals = await DB.listar(store);
+    const local = locals.find((item) => item.id === conflict.local_id && item.sync_id === syncId && item.sync_dirty);
+    if (!local) throw new Error("A edição local já não está pendente neste dispositivo.");
+    const client = await this.init();
+    const remoteTeamId = config.remoteTeamId;
+    if (!client || !remoteTeamId || !remoteRowBelongsToTeam(local, remoteTeamId)) throw new Error("Não foi possível confirmar a equipa do conflito.");
+    const table = store === "media_items" ? "media_assets" : "workspace_records";
+    const remoteResult = await client.from(table).select("*").eq("id", syncId).eq("team_id", remoteTeamId);
+    if (remoteResult.error) throw remoteResult.error;
+    const remote = (remoteResult.data || []).find((item) => !item.deleted_at);
+    if (!remote || remote.updated_at !== conflict.remote_updated_at) throw new Error("A versão remota mudou desde a deteção. Sincroniza novamente para rever a versão atual.");
+    let localView = { ...local };
+    delete localView.id;delete localView.sync_dirty;delete localView.sync_local_updated_at;delete localView.remote_team_id;delete localView.remote_updated_at;
+    let remoteView;
+    if (store === "media_items") {
+      remoteView = { subject_type: remote.subject_type, subject_ref: remote.subject_ref, type: remote.media_type,
+        title: remote.title, note: remote.note, external_url: remote.external_url,
+        file_name: remote.file_name, mime_type: remote.mime_type, size_bytes: remote.size_bytes,
+        storage_path: remote.storage_path, deleted_at: remote.deleted_at };
+    } else remoteView = await this._hydratePayload(remote.kind, remote.payload, remoteTeamId);
+    return {
+      store, sync_id: syncId, remote_updated_at: remote.updated_at,
+      local_updated_at: local.sync_local_updated_at || local.updated_at || null,
+      local: remoteConflictPreview(localView), remote: remoteConflictPreview(remoteView),
+    };
+  },
+
+  async resolveVersionConflict(syncId, storeName, resolution, expectedRemote, expectedLocal) {
+    if (!['keep_local', 'keep_remote'].includes(resolution)) throw new Error("Escolhe qual versão queres manter.");
+    const reviewed = await this.readVersionConflict(syncId, storeName);
+    if (reviewed.remote_updated_at !== expectedRemote || reviewed.local_updated_at !== expectedLocal) {
+      throw new Error("Uma das versões mudou desde a comparação. Reabre o conflito antes de decidir.");
+    }
+    const conflict = (remoteLoadConfig().conflicts || []).find((item) => item.sync_id === syncId && item.store === storeName && item.reason === "version_mismatch");
+    const store = conflict?.store;
+    const local = (await DB.listar(store)).find((item) => item.id === conflict?.local_id && item.sync_id === syncId && item.sync_dirty);
+    if (!local) throw new Error("A versão local já mudou ou foi resolvida.");
+    const client = await this.init(), remoteTeamId = remoteLoadConfig().remoteTeamId;
+    const table = store === "media_items" ? "media_assets" : "workspace_records";
+    const result = await client.from(table).select("*").eq("id", syncId).eq("team_id", remoteTeamId);
+    if (result.error) throw result.error;
+    const remote = (result.data || []).find((item) => !item.deleted_at);
+    if (!remote || remote.updated_at !== expectedRemote) throw new Error("A versão remota mudou durante a decisão. Nada foi substituído; sincroniza e compara novamente.");
+    if (resolution === "keep_local") {
+      await DB.modificar(store, local.id, (current) => {
+        if (!current.sync_dirty || current.sync_id !== syncId || current.sync_local_updated_at !== local.sync_local_updated_at) throw new Error("A versão local mudou durante a decisão. Reabre o conflito.");
+        return { ...current, remote_updated_at: remote.updated_at, remote_team_id: remoteTeamId, sync_dirty: true };
+      }, { remote: true });
+    } else {
+      let merged;
+      if (store === "media_items") {
+        if (remote.storage_path && !remoteStoragePathBelongsToTeam(remote.storage_path, remoteTeamId)) throw new Error("O caminho remoto não pertence a este workspace.");
+        let url = remote.external_url || null;
+        if (!url && remote.storage_path) {
+          const signed = await client.storage.from("team-media").createSignedUrl(remote.storage_path, 3600);
+          if (signed.error || !signed.data?.signedUrl) throw new Error("Não foi possível abrir a media remota; a versão local continua preservada.");
+          url = signed.data.signedUrl;
+        }
+        const subjectId = await this._localIdForRemoteRef(remote.subject_type, String(remote.subject_ref), remoteTeamId);
+        merged = { ...local, team_id: DEFAULT_TEAM_ID, subject_type: remote.subject_type, subject_id: subjectId,
+          subject_key: mediaSubjectKey(DEFAULT_TEAM_ID, remote.subject_type, subjectId), type: remote.media_type,
+          title: remote.title, note: remote.note || null, url, storage_path: remote.storage_path || null,
+          file_name: remote.file_name || null, mime_type: remote.mime_type || null, size: remote.size_bytes || null,
+          created_at: remote.created_at, updated_at: remote.updated_at, sync_id: remote.id,
+          sync_dirty: false, remote_updated_at: remote.updated_at, remote_team_id: remoteTeamId,
+          sync_actor_type: remote.actor_type, sync_actor_label: remote.actor_label };
+        delete merged.data_url;
+      } else {
+        const payload = await this._hydratePayload(remote.kind, remote.payload, remoteTeamId);
+        merged = { ...local, ...payload, ...(store === "exercicios" ? { workspace_v2: true } : {}),
+          team_id: DEFAULT_TEAM_ID, sync_id: remote.id, sync_dirty: false,
+          remote_updated_at: remote.updated_at, remote_team_id: remoteTeamId,
+          sync_actor_type: remote.actor_type, sync_actor_label: remote.actor_label };
+      }
+      const applied = await this._applyPulledRecord(store, local, merged);
+      if (!applied.applied) throw new Error("A versão local mudou durante a decisão. Reabre o conflito.");
+    }
+    return this.syncNow();
+  },
+
   async canUpload() {
     const status = await this.status();
     return !!(status.configured && status.signedIn && status.remoteTeamId && navigator.onLine);
@@ -1781,6 +1908,7 @@ if (typeof module !== "undefined" && module.exports) {
     remoteDeletionConflictsWithLocalEdit,
     remoteActivityMatches,
     remoteSyncRetryDelay,
+    remoteConflictPreview,
     remoteRowBelongsToTeam,
     remoteConflict,
     remoteProjectRef,

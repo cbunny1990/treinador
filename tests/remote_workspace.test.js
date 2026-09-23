@@ -18,6 +18,7 @@ const {
   remoteDeletionConflictsWithLocalEdit,
   remoteActivityMatches,
   remoteSyncRetryDelay,
+  remoteConflictPreview,
   remoteRowBelongsToTeam,
   RemoteWorkspace,
   remoteProjectRef,
@@ -150,6 +151,19 @@ test("atividade imutável repetida só é idempotente quando o conteúdo coincid
   assert.equal(remoteActivityMatches(expected, { ...expected, metadata: { a: { x: 4, z: 1 }, b: 2 } }), true);
   assert.equal(remoteActivityMatches(expected, { ...expected, summary: "Outro trabalho" }), false);
   assert.equal(remoteActivityMatches(expected, { ...expected, metadata: { ...expected.metadata, b: 3 } }), false);
+});
+
+test("atividade idêntica aceita serializações UTC equivalentes sem criar conflito", () => {
+  const expected = {
+    actor_type: "human", actor_label: "Treinador", action: "edited", summary: "Nota",
+    entity_type: "match", entity_ref: "match-1", created_at: "2026-09-22T10:59:36.863Z", metadata: { source: "coach" },
+  };
+  assert.equal(remoteActivityMatches(expected, {
+    ...expected, created_at: "2026-09-22T10:59:36.863000+00:00",
+  }), true);
+  assert.equal(remoteActivityMatches(expected, {
+    ...expected, created_at: "2026-09-22T10:59:36.864000+00:00",
+  }), false);
 });
 
 test("registo associado a outro workspace remoto nunca é enviado para a equipa selecionada", () => {
@@ -862,6 +876,38 @@ test("treino sincronizado converte exercício local em UUID estável sem alterar
   } finally { globalThis.DB = originalDB; globalThis.DEFAULT_TEAM_ID = originalTeam; }
 });
 
+test("referência por external_key exata resolve atividade para UUID do documento remoto", async () => {
+  const team = "22222222-2222-4222-8222-222222222222";
+  const documentId = "11111111-1111-4111-8111-111111111111";
+  const originals = { DB: globalThis.DB, DEFAULT_TEAM_ID: globalThis.DEFAULT_TEAM_ID, init: RemoteWorkspace.init };
+  let remoteFilters;
+  globalThis.DEFAULT_TEAM_ID = "default";
+  globalThis.DB = {
+    async listar(store) {
+      assert.equal(store, "workspace_documents");
+      return [{ id: 12, team_id: "default", remote_team_id: team, sync_id: documentId, external_key: "season-index:default" }];
+    },
+  };
+  RemoteWorkspace.init = async () => ({ from(table) {
+    assert.equal(table, "workspace_records");
+    return {
+      select() { return this; },
+      eq(key, value) { (remoteFilters ||= []).push([key, value]); return this; },
+      is(key, value) { (remoteFilters ||= []).push([key, value]); return this; },
+      async maybeSingle() { return { data: { id: documentId, kind: "document", team_id: team, deleted_at: null }, error: null }; },
+    };
+  } });
+  try {
+    const result = await RemoteWorkspace._subjectRemoteRef("document", "season-index:default", team);
+    assert.equal(result, documentId);
+    assert.deepEqual(remoteFilters, [["id", documentId], ["team_id", team], ["kind", "document"], ["deleted_at", null]]);
+  } finally {
+    globalThis.DB = originals.DB;
+    globalThis.DEFAULT_TEAM_ID = originals.DEFAULT_TEAM_ID;
+    RemoteWorkspace.init = originals.init;
+  }
+});
+
 test("um documento com referência inválida fica em conflito e não bloqueia outro documento", async () => {
   const team = "22222222-2222-4222-8222-222222222222";
   const originals = { DB: globalThis.DB, DEFAULT_TEAM_ID: globalThis.DEFAULT_TEAM_ID, init: RemoteWorkspace.init };
@@ -1431,7 +1477,8 @@ test("alterações e eliminação acumuladas offline sincronizam ao reconectar s
 });
 
 test("edições concorrentes em dois dispositivos produzem conflito sem overwrite silencioso", async () => {
-  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+  const originalStorage = globalThis.localStorage, originalSyncNow = RemoteWorkspace.syncNow;
+  try { await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
     useDevice(0);
     const localId = await devices[0].criar("jogos", {
       team_id: "default", adversario: "Rivais", data: "2026-10-02",
@@ -1454,6 +1501,57 @@ test("edições concorrentes em dois dispositivos produzem conflito sem overwrit
     assert.equal(conflict.conflicts[0].reason, "version_mismatch");
     assert.equal((await devices[0].obter("jogos", localId)).nota_tatica, "Versão do PC");
     assert.equal(remote.rows[0].payload.nota_tatica, "Versão do telemóvel");
+    const conflictStorage = new Map([["treinador.remote.supabase.v1", JSON.stringify({ remoteTeamId, conflicts: conflict.conflicts })]]);
+    globalThis.localStorage = { getItem: (key) => conflictStorage.get(key) || null, setItem: (key, value) => conflictStorage.set(key, value) };
+    const versions = await RemoteWorkspace.readVersionConflict(firstLocal.sync_id, "jogos");
+    assert.equal(versions.local.nota_tatica, "Versão do PC");
+    assert.equal(versions.remote.nota_tatica, "Versão do telemóvel");
+    RemoteWorkspace.syncNow = () => RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    const actualRemoteVersion = remote.rows[0].updated_at;
+    remote.rows[0].updated_at = "changed-after-review";
+    await assert.rejects(RemoteWorkspace.resolveVersionConflict(firstLocal.sync_id, "jogos", "keep_local", versions.remote_updated_at, versions.local_updated_at), /versão remota mudou desde a deteção/);
+    remote.rows[0].updated_at = actualRemoteVersion;
+    const resolved = await RemoteWorkspace.resolveVersionConflict(firstLocal.sync_id, "jogos", "keep_local", versions.remote_updated_at, versions.local_updated_at);
+    assert.equal(resolved.pushed, 1);
+    assert.equal(remote.rows[0].payload.nota_tatica, "Versão do PC");
+    assert.equal((await devices[0].obter("jogos", localId)).sync_dirty, false);
+    useDevice(1);
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    const nextPhone = (await devices[1].listar("jogos"))[0];
+    await devices[1].atualizar("jogos", { ...nextPhone, nota_tatica: "Segunda versão do telemóvel", sync_dirty: true });
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    useDevice(0);
+    const nextPc = await devices[0].obter("jogos", localId);
+    await devices[0].atualizar("jogos", { ...nextPc, nota_tatica: "Segunda versão do PC", sync_dirty: true });
+    const nextConflict = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(nextConflict.conflicts[0].reason, "version_mismatch");
+    conflictStorage.set("treinador.remote.supabase.v1", JSON.stringify({ remoteTeamId, conflicts: nextConflict.conflicts }));
+    const nextVersions = await RemoteWorkspace.readVersionConflict(firstLocal.sync_id, "jogos");
+    assert.equal(nextVersions.local.nota_tatica, "Segunda versão do PC");
+    assert.equal(nextVersions.remote.nota_tatica, "Segunda versão do telemóvel");
+    const remoteWins = await RemoteWorkspace.resolveVersionConflict(firstLocal.sync_id, "jogos", "keep_remote", nextVersions.remote_updated_at, nextVersions.local_updated_at);
+    assert.equal(remoteWins.conflicts.length, 0);
+    const finalLocal = await devices[0].obter("jogos", localId);
+    assert.equal(finalLocal.nota_tatica, "Segunda versão do telemóvel");
+    assert.equal(finalLocal.sync_dirty, false);
+  });
+  } finally {
+    globalThis.localStorage = originalStorage;
+    RemoteWorkspace.syncNow = originalSyncNow;
+  }
+});
+
+test("prévia de conflito oculta URLs assinados e conteúdo local sem ocultar URLs comuns", () => {
+  assert.deepEqual(remoteConflictPreview({
+    video: "https://video.example/watch?id=42",
+    photo: "https://project.supabase.co/storage/v1/object/sign/team-media/team/photo.png?token=secret",
+    data: "data:image/png;base64,secret",
+    vendorSigned: "https://media.example/clip.mp4?X-Amz-Credential=private&X-Amz-Signature=secret",
+  }), {
+    video: "https://video.example/watch?id=42",
+    photo: "[ligação temporária ocultada]",
+    data: "[conteúdo local oculto]",
+    vendorSigned: "[ligação temporária ocultada]",
   });
 });
 

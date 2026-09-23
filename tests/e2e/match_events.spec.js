@@ -36,6 +36,15 @@ test('events blocked before start, quick record, counted stats and result notice
  await page.getByRole('button',{name:'Golo a favor',exact:true}).click();await page.evaluate(()=>window._matchTime+=60000);
  await form.getByRole('button',{name:'Registar lance',exact:true}).click();await saved(page);
  await expect(page.getByText('Golos contados nos lances: 1–0',{exact:false})).toBeVisible();
+ await page.evaluate(()=>window._matchTime+=60000);
+ const substitution=page.locator('[data-match-form="substitution"]');
+ await substitution.locator('[name="out_ref"]').selectOption(f.refs[1]);
+ await substitution.locator('[name="in_ref"]').selectOption(f.refs[5]);
+ await substitution.getByRole('button',{name:'Registar substituição',exact:true}).click();
+ await expect(page.getByText(/09:00 · Substituição realizada · Saiu: Atleta 2 · Entrou: Atleta 6/)).toBeVisible();
+ await expect(page.locator('[data-match-events] table')).toContainText('Substituições realizadas');
+ await expect(page.locator('[data-match-events] table')).toContainText('Registo de utilização');
+ expect((await page.evaluate(id=>DB.obter('jogos',id),f.id)).visual_match.events.filter(e=>!e.voided_at&&e.type==='substitute')).toHaveLength(1);
  expect(errors).toEqual([]);
 });
 test('offline recording, pause-gated edit and delete, possession provenance',async({page,context})=>{

@@ -8,9 +8,9 @@
  function minute(value){const sec=Math.floor(Math.max(0,value)/1000);return String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');}
  function feedback(text){const p=document.querySelector('[data-event-feedback]');if(p){p.hidden=false;p.textContent=text;}}
  function statsTable(match){
-  const t=E.stats(match),c=t.counts;
+  const t=E.stats(match),c=t.counts,usageEvents=M.state(match).events;
   const row=(label,count)=>'<tr><td>'+esc(label)+'</td><td><strong>'+count+'</strong></td><td>'+esc(t.provenance.counts)+'</td></tr>';
-  let rows=row('Golos a favor',c.goal_for)+row('Golos sofridos',c.goal_against)+row('Remates à baliza · total',t.shots.on)+row('Remates à baliza · nossa equipa',t.shots.own_on)+row('Remates à baliza · adversário',t.shots.against_on)+row('Remates à baliza · lado não indicado',t.shots.unknown_side_on)+row('Remates para fora · total',t.shots.off)+row('Remates para fora · nossa equipa',t.shots.own_off)+row('Remates para fora · adversário',t.shots.against_off)+row('Remates para fora · lado não indicado',t.shots.unknown_side_off)+row('Cantos a favor',c.corner_for)+row('Cantos contra',c.corner_against)+row('Perdas de bola',t.losses.total)+row('Recuperações de bola',t.recoveries.total)+row('Bolas em profundidade',t.through_balls)+row('Bolas no pé do avançado',t.striker_foots)+row('Notas livres',t.free_notes);
+  let rows=row('Golos a favor',c.goal_for)+row('Golos sofridos',c.goal_against)+row('Remates à baliza · total',t.shots.on)+row('Remates à baliza · nossa equipa',t.shots.own_on)+row('Remates à baliza · adversário',t.shots.against_on)+row('Remates à baliza · lado não indicado',t.shots.unknown_side_on)+row('Remates para fora · total',t.shots.off)+row('Remates para fora · nossa equipa',t.shots.own_off)+row('Remates para fora · adversário',t.shots.against_off)+row('Remates para fora · lado não indicado',t.shots.unknown_side_off)+row('Cantos a favor',c.corner_for)+row('Cantos contra',c.corner_against)+'<tr><td>Substituições realizadas</td><td><strong>'+usageEvents.filter(e=>e.type==='substitute'&&!e.voided_at).length+'</strong></td><td>Registo de utilização</td></tr>'+row('Perdas de bola',t.losses.total)+row('Recuperações de bola',t.recoveries.total)+row('Bolas em profundidade',t.through_balls)+row('Bolas no pé do avançado',t.striker_foots)+row('Notas livres',t.free_notes);
   const join=tally=>Object.entries(tally).map(([k,n])=>esc(k==='none'?'Sem motivo':(E.lossReasons[k]||E.zones[k]||k))+' · '+n).join(' · ');
   if(Object.keys(t.losses.by_reason).length)rows+='<tr><td>Perdas por motivo</td><td colspan="2">'+join(t.losses.by_reason)+'</td></tr>';
   if(Object.keys(t.losses.by_zone).length)rows+='<tr><td>Perdas por zona</td><td colspan="2">'+join(t.losses.by_zone)+'</td></tr>';
@@ -38,18 +38,23 @@
   return html;
  }
  function eventsSection(match){
-  const s=M.state(match),es=E.state(match).events,settled=['paused','completed'].includes(s.status);
-  if(!es.length)return '<h3 class="section">Lances registados</h3><p class="empty section">Ainda não há lances registados neste jogo.</p>';
-  return '<h3 class="section">Lances registados</h3><p class="hint">'+(settled?'Podes editar ou apagar um lance com confirmação.':'Pausa ou termina o jogo para editar ou apagar lances.')+'</p><div class="list">'+es.map(e=>{
-   const bits=[minute(e.at_ms),esc(E.types[e.type])];
+  const s=M.state(match),settled=['paused','completed'].includes(s.status);
+  const events=E.state(match).events.map(e=>({...e,source:'match_event'}));
+  s.events.filter(e=>e.type==='substitute'&&!e.voided_at).forEach(e=>events.push({...e,source:'usage_movement',type:'substitution'}));
+  events.sort((a,b)=>a.at_ms-b.at_ms||String(a.id).localeCompare(String(b.id)));
+  if(!events.length)return '<h3 class="section">Lances e substituições</h3><p class="empty section">Ainda não há lances ou substituições registados neste jogo.</p>';
+  return '<h3 class="section">Lances e substituições</h3><p class="hint">'+(settled?'Podes editar ou apagar lances; corrige substituições no histórico de utilização.':'Pausa ou termina o jogo para corrigir lances ou substituições.')+'</p><div class="list">'+events.map(e=>{
+   const bits=[minute(e.at_ms),e.source==='usage_movement'?'Substituição realizada':esc(E.types[e.type])];
+   if(e.source==='usage_movement'){bits.push('Saiu: '+esc(playerName(e.out_ref)),'Entrou: '+esc(playerName(e.in_ref)));if(e.rotation_id)bits.push('Rotação planeada');}
    if(e.side&&E.sides[e.side])bits.push(esc(E.sides[e.side]));
    if(e.player_ref)bits.push(esc(playerName(e.player_ref)));
    if(e.opponent_player_name)bits.push('Adversário: '+esc(e.opponent_player_name));
    if(e.zone&&E.zones[e.zone])bits.push(esc(E.zones[e.zone]));
    if(e.reason&&E.lossReasons[e.reason])bits.push(esc(E.lossReasons[e.reason]));
    if(e.note)bits.push(esc(e.note));
-   let html='<article class="list-item"><strong>'+bits.join(' · ')+'</strong><p class="meta">'+esc((e.created_by||'Treinador')+' · '+String(e.created_at||'').slice(0,16).replace('T',' '))+'</p><div class="toolbar">';
-   if(settled)html+='<button type="button" class="btn secondary btn-sm" data-event-action="edit" data-event-id="'+esc(e.id)+'">Editar lance</button><button type="button" class="btn danger btn-sm" data-event-action="delete" data-event-id="'+esc(e.id)+'">Apagar lance</button>';
+   let html='<article class="list-item"><strong>'+bits.join(' · ')+'</strong><p class="meta">'+esc((e.actor||e.created_by||'Treinador')+' · '+String(e.created_at||'').slice(0,16).replace('T',' '))+'</p><div class="toolbar">';
+   if(e.source==='usage_movement')html+='<small class="meta">Registada no modo de jogo · corrigir no histórico de utilização.</small>';
+   else if(settled)html+='<button type="button" class="btn secondary btn-sm" data-event-action="edit" data-event-id="'+esc(e.id)+'">Editar lance</button><button type="button" class="btn danger btn-sm" data-event-action="delete" data-event-id="'+esc(e.id)+'">Apagar lance</button>';
    else html+='<small class="meta">Edição em pausa ou após o fim do jogo.</small>';
    return html+'</div></article>';
   }).join('')+'</div>';

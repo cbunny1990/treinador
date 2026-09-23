@@ -92,8 +92,12 @@ test("workspace indica falha de sincronização e limpa o aviso após recuperaç
   await expect(syncError).toContainText("continuam guardadas neste dispositivo");
 
   await page.evaluate(async () => {
-    RemoteWorkspace.syncNow = async () => ({ pushed: 0, pulled: 0, conflicts: [], deleted: 0 });
-    await viewWorkspace();
+    RemoteWorkspace.syncNow = async () => {
+      const result = { pushed: 0, pulled: 0, conflicts: [], deleted: 0 };
+      window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", { detail: result }));
+      return result;
+    };
+    await RemoteWorkspace.syncNow();
   });
   await expect(page.getByRole("status").filter({ hasText: "Não foi possível confirmar a sincronização." })).toHaveCount(0);
 });
@@ -805,6 +809,54 @@ test("sync remoto atualiza o ecrã aberto sem refresh manual", async ({ page }) 
   await expect(page.getByText("Jogador recebido do remoto", { exact: true })).toBeVisible();
 });
 
+test("sync do Workspace corre em fundo, atualiza a vista uma vez e preserva o scroll", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await expect(page.getByText("Human–AI Shared Workspace")).toBeVisible();
+  await page.evaluate(() => {
+    let releaseSync;
+    const syncGate = new Promise(resolve => { releaseSync = resolve; });
+    window.__releaseWorkspaceSync = releaseSync;
+    window.__workspaceSyncCalls = 0;
+    RemoteWorkspace.scheduleSync = () => {};
+    RemoteWorkspace.status = async () => ({ configured: true, signedIn: true, remoteTeamId: "team-test", lastSyncAt: null, conflicts: [] });
+    RemoteWorkspace.syncNow = async () => {
+      window.__workspaceSyncCalls++;
+      if (window.__workspaceSyncCalls === 1) {
+        await syncGate;
+        window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", { detail: { pulled: 1, pushed: 0, conflicts: [], deleted: 0 } }));
+      }
+      return { pulled: 1, pushed: 0, conflicts: [], deleted: 0 };
+    };
+    document.getElementById("app").style.minHeight = "1800px";
+    window.scrollTo(0, 640);
+    window.__workspaceRender = viewWorkspace();
+  });
+  await page.evaluate(() => window.__workspaceRender);
+  await expect.poll(() => page.evaluate(() => window.__workspaceSyncCalls)).toBe(1);
+  await expect(page.getByText("Human–AI Shared Workspace")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(640);
+  await page.evaluate(() => window.__releaseWorkspaceSync());
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(640);
+  await expect.poll(() => page.evaluate(() => window.__workspaceSyncCalls)).toBe(1);
+  await expect(page.getByText("Human–AI Shared Workspace")).toBeVisible();
+});
+
+test("emblema do Sub-8 de Figueiró aparece na identidade da equipa", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => typeof DB !== "undefined" && typeof router === "function");
+  await page.evaluate(async () => {
+    await DB.modificar("teams", DEFAULT_TEAM_ID, team => ({
+      ...team, nome: "Sub-8 do 1.º de Maio de Figueiró", clube: "1.º de Maio de Figueiró", escalao: "sub-8",
+    }), { remote: true });
+    await router();
+  });
+  const crest = page.getByRole("img", { name: "Emblema do Sub-8 de Figueiró" });
+  await expect(crest).toBeVisible();
+  await expect(crest).toHaveAttribute("src", /assets\/teams\/14529_imgbank\.png$/);
+  await expect.poll(() => crest.evaluate(image => image.naturalWidth)).toBeGreaterThan(0);
+});
+
 test("conflito de eliminação offline mostra versões e exige uma escolha explícita", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined" && typeof router === "function");
@@ -823,12 +875,36 @@ test("conflito de eliminação offline mostra versões e exige uma escolha expl�
   await expect(page.getByText(/caminho do ficheiro pertence a outro workspace; não foi enviado nem assinado/)).toBeVisible();
   await expect(page.getByText(/não foi possível abrir uma ligação temporária. A sincronização tentará novamente/)).toBeVisible();
   await expect(page.getByText(/O identificador guardado neste dispositivo não é um UUID remoto/)).toBeVisible();
+  await expect(page.getByText("5 ocorrências detetadas")).toBeVisible();
+  await expect(page.getByText(/2 alterações requerem escolha do treinador · 2 registos aguardam correção · 1 falha temporária será repetida automaticamente/)).toBeVisible();
+  await page.locator('[data-conflict-card="player-conflict"] details summary').click();
   await expect(page.getByText(/versão local vista: v1 · versão remota: v2/)).toBeVisible();
   await page.getByRole("button", { name: "Manter versão remota", exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.__resolution)).toEqual({ id: "player-conflict", resolution: "keep_remote" });
   page.on("dialog", dialog => dialog.accept());
   await page.getByRole("button", { name: "Restaurar edição local no remoto", exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.__restored)).toBe("media-conflict");
+});
+
+test("conflito de edição compara as duas versões antes de permitir uma decisão", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined" && typeof router === "function");
+  await page.evaluate(() => {
+    RemoteWorkspace.status = async () => ({ configured: true, signedIn: true, email: "treinador@example.test", remoteTeamId: "team-test", conflicts: [{ store: "jogos", local_id: 12, sync_id: "match-conflict", reason: "version_mismatch", expected_updated_at: "v1", remote_updated_at: "v2" }] });
+    RemoteWorkspace.getConfig = () => ({ url: "https://example.supabase.co", publishableKey: "sb_publishable_test" });
+    RemoteWorkspace.listTeams = async () => [{ id: "team-test", name: "Equipa de teste" }];
+    MCPConnectors.list = async () => [];
+    RemoteWorkspace.readVersionConflict = async (id, store) => ({ sync_id: id, store, local_updated_at: "local-v2", remote_updated_at: "v2", local: { nota_tatica: "Versão escrita no telemóvel" }, remote: { nota_tatica: "Versão atual do PC" } });
+    RemoteWorkspace.resolveVersionConflict = async (...args) => { window.__versionResolution = args; return { conflicts: [] }; };
+    go("#/definicoes");
+  });
+  await expect(page.getByText(/As duas versões estão preservadas/)).toBeVisible();
+  await page.getByRole("button", { name: "Comparar versões" }).click();
+  await expect(page.getByText('"nota_tatica": "Versão escrita no telemóvel"')).toBeVisible();
+  await expect(page.getByText('"nota_tatica": "Versão atual do PC"')).toBeVisible();
+  page.on("dialog", dialog => dialog.accept());
+  await page.getByRole("button", { name: "Manter versão deste dispositivo" }).click();
+  await expect.poll(() => page.evaluate(() => window.__versionResolution)).toEqual(["match-conflict", "jogos", "keep_local", "v2", "local-v2"]);
 });
 
 test("IndexedDB recusa eliminação remota quando a ficha local mudou", async ({ page }) => {
@@ -870,7 +946,7 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
   await expect(page.getByText(/Atualização disponível\. Guarda o que estás a fazer/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeVisible();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v115"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v118"))).toBeNull();
 });
 
 test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
@@ -883,7 +959,7 @@ test("service worker update after an older cached reload does not stay suppresse
   }).catch(() => {});
   await reloaded;
   await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v115"))).toBe("1");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v118"))).toBe("1");
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {

@@ -218,6 +218,20 @@ Reconciliação pré-deploy, read-only (23/09/2026): foram recuperados os 17 fic
 O advisor remoto sinalizou `private.agent_request_log` e `private.mcp_connector_tokens` com RLS desligado. A auditoria confirmou que `anon` e `authenticated` não têm privilégios de tabela; a stack local isolada também confirmou RLS ativo, `service_role` com `BYPASSRLS` e RPCs do conector a funcionar sob RLS. A migração local `20260923140620_enable_private_internal_table_rls.sql` revoga novamente os privilégios de `PUBLIC`, `anon` e `authenticated` e ativa RLS, sem políticas de acesso para esses papéis. O projeto publicado não foi alterado; a migração aguarda a revisão antes de qualquer aplicação.
 
 
+### Scroll do Workspace durante sincronização
+
+O Workspace mostra primeiro o snapshot local e inicia a sincronização remota em segundo plano. Quando chega `visioncoach:sync-complete`, a rota é atualizada sem iniciar outra sync. Isto evita o ciclo de renderizações/sincronizações repetidas. `setView()` só reposiciona a janela para o topo quando muda a rota; na mesma rota, cada renderização agora também preserva a posição, salvo intenção de scroll do treinador no mesmo frame. A regressão Playwright em `tests/e2e/workspace.spec.js` segura a sync, verifica uma só chamada e confirma a posição do scroll depois do evento. A cache PWA é v117.
+
+A lista de sincronização agrupa a contagem por ação: escolha do treinador, correção de identidade e falha temporária repetível. Metadados técnicos ficam recolhidos. Nenhuma versão é escolhida automaticamente. Conflitos de edição ainda não podem ser mesclados campo a campo porque o cliente não guarda uma cópia-base do último estado comum; uma futura mesclagem de três vias exige essa base persistida e testes de migração. Falhas de URL assinada continuam sujeitas a retry.
+
+Nas prévias de conflitos, campos de URL assinada conhecidos são removidos. A limpeza também deteta URLs assinados por caminho Supabase Storage ou parâmetros de assinatura comuns, incluindo `X-Amz-*` e `X-Goog-*`; conteúdo `data:` é substituído por marcador. URLs regulares de vídeo continuam visíveis para comparar os registos.
+
+### Deduplicação de atividade imutável
+
+O registo de atividade é imutável e uma repetição da mesma UUID só é considerada sincronizada se o conteúdo corresponder. O timestamp compara-se como instante UTC, não como texto ISO: Postgres pode devolver `Z` ou `+00:00` e precisão decimal diferente para o mesmo instante. Uma diferença real de instante ou de conteúdo continua em conflito e não é sobrescrita. Cache PWA v118; regressão em `tests/remote_workspace.test.js`.
+
+Quando uma atividade antiga aponta para uma chave externa textual, o sincronizador só a converte para UUID se encontrar exatamente um documento dessa equipa com `external_key` igual, verificar a UUID desse documento no workspace remoto e confirmar o respetivo tipo. Correspondências ausentes/ambíguas continuam em conflito. O formulário do arquivo de épocas passou também a registar a UUID real do documento recém-criado, em vez da chave `season-index:default`.
+
 ## Publicação rápida de imagens por IA
 
 O procedimento atual está em [ai-image-workflow.md](ai-image-workflow.md). Usa o MCP autenticado ou `npm run images:publish`; não volta a gerar imagens aprovadas nem requer alterações de frontend por imagem.
