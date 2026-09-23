@@ -213,6 +213,10 @@ Teste de integração local (`npm run test:supabase-local`): com duas sessões d
 
 Na v69 publicada, o treinador confirmou a consolidação no PC e a leitura dos dados recentes no telemóvel depois de sincronizar. Continuam por verificar em aparelhos reais: telemóvel editar/apagar → PC receber; PC apagar → telemóvel deixar de mostrar; reconexão após trabalho offline; conflito entre edições feitas nos dois aparelhos; upload e leitura de fotografia/media; confirmação visual após reabrir a PWA e atualizar o service worker. Este percurso confirmado não conclui a auditoria PC↔telemóvel. A sincronização de `activity_log` em produção depende de aplicar a migração pendente.
 
+Pré-deploy, read-only (23/09/2026): o Supabase MCP lista em produção sete migrações base (`20260921114310`…`20260921114453`) que não existem com esses números no repositório; o repositório mantém o schema consolidado em `001_workspace.sql` e `002_security_hardening.sql`. A produção também tem `20260922103529_enable_workspace_realtime`, ausente localmente. As migrações de funcionalidades partilham números, e a produção termina em `20260922181534`; a branch acrescenta `20260923120000` e `20260923120100`. A tentativa de `supabase migration list --linked` no worktree falhou porque não está ligado ao projeto. A CLI compara os números das versões; por isso, **não executar `db push` desta branch antes de reconciliar o histórico**. Nenhuma ligação, reparação ou escrita remota foi feita.
+
+O advisor de segurança remoto sinalizou `private.agent_request_log` e `private.mcp_connector_tokens` com RLS desligado. A consulta read-only confirmou que `anon` e `authenticated` não têm privilégios de `SELECT`, `INSERT`, `UPDATE` ou `DELETE` nessas tabelas (e `anon` não tem `USAGE` no schema `private`). O alerta fica registado como hardening pendente; políticas e RLS não foram alterados. O advisor sugere `ALTER TABLE "private"."agent_request_log" ENABLE ROW LEVEL SECURITY;` e `ALTER TABLE "private"."mcp_connector_tokens" ENABLE ROW LEVEL SECURITY;`, mas pede decisão sobre as políticas antes de executar essa alteração.
+
 
 ## Publicação rápida de imagens por IA
 
