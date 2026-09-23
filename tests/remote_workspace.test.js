@@ -2226,3 +2226,61 @@ test("seleção remota reutiliza equipa válida e adota a única equipa disponí
   assert.equal(remoteChooseTeamId("team-antiga", teams), "team-a");
   assert.equal(remoteChooseTeamId(null, [{ id: "a" }, { id: "b" }]), null);
 });
+
+test("conflito legado sem base permite escolher cada campo e revalida antes de sincronizar", async () => {
+  const originalStorage = globalThis.localStorage, originalSyncNow = RemoteWorkspace.syncNow;
+  try { await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    useDevice(0);
+    const localId = await devices[0].criar("jogos", {
+      team_id: "default", adversario: "Rivais", data: "2026-10-05",
+      external_key: "match-manual-field-merge", nota_tatica: "Princípio inicial", observacao: "Nota inicial", motivo: "Texto inicial",
+      sync_dirty: true,
+    });
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    useDevice(1);
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    const phone = (await devices[1].listar("jogos"))[0];
+    await devices[1].atualizar("jogos", { ...phone, nota_tatica: "Princípio do telemóvel", observacao: "Nota do telemóvel", motivo: "Texto do telemóvel", sync_dirty: true });
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+
+    useDevice(0);
+    const pc = await devices[0].obter("jogos", localId);
+    const pcChanges = { ...pc, nota_tatica: "Princípio do PC", observacao: "Nota do PC", sync_dirty: true };
+    delete pcChanges.motivo;
+    await devices[0].atualizar("jogos", pcChanges);
+    const conflict = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(conflict.conflicts[0].reason, "version_mismatch");
+    const legacy = await devices[0].obter("jogos", localId);
+    delete legacy._sync_base;
+    await devices[0].atualizar("jogos", legacy);
+    const conflictStorage = new Map([[
+      "treinador.remote.supabase.v1",
+      JSON.stringify({ remoteTeamId, conflicts: conflict.conflicts }),
+    ]]);
+    globalThis.localStorage = { getItem: (key) => conflictStorage.get(key) || null, setItem: (key, value) => conflictStorage.set(key, value) };
+    const review = await RemoteWorkspace.readVersionConflict(pc.sync_id, "jogos");
+    assert.equal(review.merge_suggestion, null, "older local records do not invent a common base");
+    assert.deepEqual(review.manual_merge_fields.map((field) => field.key), ["motivo", "nota_tatica", "observacao"]);
+    RemoteWorkspace.syncNow = () => RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    await assert.rejects(
+      RemoteWorkspace.resolveVersionConflict(pc.sync_id, "jogos", "merge_manual_fields", review.remote_updated_at, review.local_updated_at, { nota_tatica: "local" }),
+      /Escolhe explicitamente uma versão para cada campo diferente/,
+    );
+    assert.equal(remote.rows[0].payload.nota_tatica, "Princípio do telemóvel");
+    const resolved = await RemoteWorkspace.resolveVersionConflict(pc.sync_id, "jogos", "merge_manual_fields", review.remote_updated_at, review.local_updated_at, {
+      motivo: "local", nota_tatica: "local", observacao: "remote",
+    });
+    assert.equal(resolved.pushed, 1);
+    assert.equal(remote.rows[0].payload.nota_tatica, "Princípio do PC");
+    assert.equal(remote.rows[0].payload.observacao, "Nota do telemóvel");
+    assert.equal(Object.hasOwn(remote.rows[0].payload, "motivo"), false, "selecting a local deletion keeps the field removed remotely");
+    const saved = await devices[0].obter("jogos", localId);
+    assert.equal(saved.sync_dirty, false);
+    assert.equal(saved.nota_tatica, "Princípio do PC");
+    assert.equal(saved.observacao, "Nota do telemóvel");
+    assert.equal(Object.hasOwn(saved, "motivo"), false, "selecting a local deletion removes the stale field locally too");
+  }); } finally {
+    globalThis.localStorage = originalStorage;
+    RemoteWorkspace.syncNow = originalSyncNow;
+  }
+});

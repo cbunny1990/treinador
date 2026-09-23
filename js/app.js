@@ -342,9 +342,13 @@ function activityHTML(rows,limit){
 
 async function viewWorkspace(options){
   options=options||{};
-  var remoteStatus=await RemoteWorkspace.status();
-  var s=await WorkspaceStore.buildSnapshot();
-  var reportSeasonDocs=await WorkspaceStore.listDocuments(DEFAULT_TEAM_ID,{includeArchived:true}),reportSeasonState=VisionSeasons.state(reportSeasonDocs.find(function(d){return d.type==='season_index';})),reportSeason=reportSeasonState.items.find(function(x){return x.id===reportSeasonState.active_id;});
+  var workspaceReads=await Promise.all([
+    RemoteWorkspace.status(),
+    WorkspaceStore.buildSnapshot(),
+    WorkspaceStore.listDocuments(DEFAULT_TEAM_ID,{includeArchived:true}),
+  ]);
+  var remoteStatus=workspaceReads[0],s=workspaceReads[1],reportSeasonDocs=workspaceReads[2];
+  var reportSeasonState=VisionSeasons.state(reportSeasonDocs.find(function(d){return d.type==='season_index';})),reportSeason=reportSeasonState.items.find(function(x){return x.id===reportSeasonState.active_id;});
   var teamName=(s.team&&s.team.nome)||"Equipa";
   var context=[s.team&&s.team.clube,s.team&&s.team.escalao,s.team&&s.team.epoca].filter(Boolean).join(" · ");
   var recentDocs=s.recent_documents.length?s.recent_documents.map(documentCard).join(""):'<div class="empty">Ainda não existem planos ou análises partilhadas.</div>';
@@ -628,12 +632,12 @@ function matchAnalysisSection(match,players,id,memory){
   return '<section class="panel match-form"><h3>Factos registados</h3><ul>'+facts.join('')+'</ul><h4>Lances</h4>'+evHtml+'<h4>Utilização</h4>'+usageHtml+'</section>'+proposalSection+evidenceSection+'<form class="panel match-form form section" data-form="match-analysis" data-id="'+id+'"><h3>Leitura do treinador</h3><p class="meta">Factos acima vêm dos registos do jogo. Observações, interpretações, hipóteses e decisões ficam separadas.</p>'+fields+goalFields+'<div class="form-grid"><label class="field"><span>Registo anterior · correu bem</span><textarea name="legacy_positives">'+esc(legacy.correu_bem||'')+'</textarea></label><label class="field"><span>Registo anterior · a melhorar</span><textarea name="legacy_improve">'+esc(legacy.melhorar||'')+'</textarea></label><label class="field"><span>Conclusões anteriores</span><textarea name="legacy_conclusions">'+esc(legacy.conclusoes||'')+'</textarea></label><label class="field"><span>Ações previstas · uma por linha</span><textarea name="legacy_actions">'+esc(linesText(legacy.acoes_proximo_treino))+'</textarea></label></div>'+synced+'<input type="hidden" name="expected_revision" value="'+a.revision+'"><p class="notice" data-analysis-feedback hidden></p><div class="toolbar"><button class="btn accent" type="submit" name="intent" value="save">Guardar análise</button><button class="btn secondary" type="submit" name="intent" value="memory">Guardar análise e atualizar memória</button></div></form>';
 }
 async function viewDocuments(options){
-  await refreshRemoteWorkspace(options);
   var docs=await WorkspaceStore.listDocuments();
   var cards=docs.length?docs.map(documentCard).join(""):'<div class="empty">Ainda não existem planos ou análises. Cria o primeiro documento partilhado.</div>';
   var hub='<div class="grid cols-2"><a class="panel planner-hub-card" href="#/treinos"><div class="kicker">Sessões</div><h2>Planeador de treino</h2><p>Constrói treinos por blocos e reutiliza exercícios.</p></a><a class="panel planner-hub-card" href="#/exercicios"><div class="kicker">Biblioteca</div><h2>Exercícios</h2><p>Pesquisa, favoritos e exercícios partilhados com o Head Coach.</p></a></div>';
   var html=hub+'<section class="section"><div class="section-head"><div><h2>Documentos de trabalho</h2><p>Planos, análises, notas e briefings partilhados</p></div><a class="btn accent" href="#/planos/novo">Novo documento</a></div><div class="grid cols-2">'+cards+'</div></section>';
   setView("Planos",html,"Planos");
+  refreshRemoteWorkspace(options);
 }
 async function viewDocumentForm(id){
   var doc=id?await WorkspaceStore.getDocument(id):null;
@@ -799,10 +803,16 @@ function remoteConflictReviewHTML(versions){
   var merge=versions.merge_suggestion;
   var fields={nome:'Nome',title:'Título',titulo:'Título',objetivo:'Objetivo',descricao:'Descrição',note:'Nota',data:'Data',hora:'Hora',local:'Local',adversario:'Adversário',status:'Estado',observacoes:'Observações',summary:'Resumo'};
   var fieldList=function(keys){return (keys||[]).map(function(key){return fields[key]||key.replace(/_/g,' ');}).join(', ');};
+  var valueText=function(present,value){return present?JSON.stringify(value===undefined?null:value,null,2):'Campo removido nesta versão';};
   var html='<div class="notice"><strong>Revê as duas versões · '+esc(versions.store)+'</strong><p>A versão local mantém as alterações deste dispositivo. A versão remota é a última gravação do workspace. A decisão só é aplicada se nenhuma delas tiver mudado desde esta comparação.</p></div><div class="grid cols-2"><section><h4>Neste dispositivo</h4><pre class="conflict-preview">'+esc(JSON.stringify(versions.local,null,2))+'</pre></section><section><h4>No workspace remoto</h4><pre class="conflict-preview">'+esc(JSON.stringify(versions.remote,null,2))+'</pre></section></div>';
   if(merge){
     html+='<section class="notice section"><strong>Combinação segura disponível</strong><p>O dispositivo alterou: '+esc(fieldList(merge.local_changes)||'nenhum campo')+'. O workspace alterou: '+esc(fieldList(merge.remote_changes)||'nenhum campo')+'. Os campos não se sobrepõem.</p><details open><summary>Pré-visualizar a combinação</summary><pre class="conflict-preview">'+esc(JSON.stringify(merge.payload,null,2))+'</pre></details><button class="btn accent" type="button" data-action="resolve-version-conflict" data-resolution="merge_non_overlapping" data-sync-id="'+esc(versions.sync_id)+'" data-store="'+esc(versions.store)+'" data-remote-version="'+esc(versions.remote_updated_at)+'" data-local-version="'+esc(versions.local_updated_at||'')+'">Combinar alterações independentes</button></section>';
-  }else html+='<p class="notice section">'+esc(versions.merge_unavailable||'Não foi possível combinar estas versões. Escolhe explicitamente qual manter.')+'</p>';
+  }else{
+    html+='<p class="notice section">'+esc(versions.merge_unavailable||'Não foi possível combinar automaticamente estas versões. Escolhe explicitamente qual manter.')+'</p>';
+    if(versions.manual_merge_fields?.length){
+      html+='<section class="panel section"><h4>Escolher campo a campo</h4><p>Para cada campo diferente, escolhe o valor que queres manter. Campos iguais mantêm-se; a escolha volta a confirmar as versões antes de sincronizar.</p><div class="list">'+versions.manual_merge_fields.map(function(field){var label=fields[field.key]||field.key.replace(/_/g,' ');return '<div class="list-item"><strong>'+esc(label)+'</strong><div class="grid cols-2"><div><span class="meta">Neste dispositivo</span><pre class="conflict-preview">'+esc(valueText(field.local_present,field.local_value))+'</pre></div><div><span class="meta">No workspace remoto</span><pre class="conflict-preview">'+esc(valueText(field.remote_present,field.remote_value))+'</pre></div></div><label class="field"><span>Valor a manter · '+esc(label)+'</span><select data-manual-merge-field="'+esc(field.key)+'" required><option value="">Escolher versão…</option><option value="local">Neste dispositivo</option><option value="remote">Workspace remoto</option></select></label></div>';}).join('')+'</div><button class="btn accent" type="button" data-action="resolve-version-conflict" data-resolution="merge_manual_fields" data-sync-id="'+esc(versions.sync_id)+'" data-store="'+esc(versions.store)+'" data-remote-version="'+esc(versions.remote_updated_at)+'" data-local-version="'+esc(versions.local_updated_at||'')+'">Aplicar escolhas e sincronizar</button></section>';
+    }
+  }
   html+='<div class="toolbar"><button class="btn secondary" type="button" data-action="resolve-version-conflict" data-resolution="keep_local" data-sync-id="'+esc(versions.sync_id)+'" data-store="'+esc(versions.store)+'" data-remote-version="'+esc(versions.remote_updated_at)+'" data-local-version="'+esc(versions.local_updated_at||'')+'">Manter versão deste dispositivo</button><button class="btn secondary" type="button" data-action="resolve-version-conflict" data-resolution="keep_remote" data-sync-id="'+esc(versions.sync_id)+'" data-store="'+esc(versions.store)+'" data-remote-version="'+esc(versions.remote_updated_at)+'" data-local-version="'+esc(versions.local_updated_at||'')+'">Usar versão do workspace remoto</button></div>';
   return html;
 }
@@ -1012,10 +1022,12 @@ app.addEventListener("click",async function(event){
   if(action==="resolve-version-conflict"){
     var keepLocal=target.dataset.resolution==="keep_local";
     var mergeIndependent=target.dataset.resolution==="merge_non_overlapping";
-    var message=mergeIndependent?"Aplicar a combinação pré-visualizada? Só serão combinados campos alterados separadamente. Se qualquer versão tiver mudado, a operação será recusada.":keepLocal?"Manter a versão deste dispositivo e sincronizá-la sobre a versão remota? A outra versão deixará de ser a ativa, mas a escrita será recusada se o remoto tiver mudado desde a comparação.":"Usar a versão remota neste dispositivo? As alterações locais em conflito serão substituídas depois de confirmar que as duas versões continuam iguais às comparadas.";
+    var mergeManual=target.dataset.resolution==="merge_manual_fields",manualChoices={};
+    if(mergeManual){var manualFields=target.closest('[data-conflict-card]')?.querySelectorAll('[data-manual-merge-field]')||[];for(var manualField of manualFields){if(!manualField.value){alert("Escolhe a versão para cada campo diferente antes de aplicar.");manualField.focus();return;}manualChoices[manualField.dataset.manualMergeField]=manualField.value;}}
+    var message=mergeManual?"Aplicar as escolhas campo a campo e sincronizar? Se qualquer versão tiver mudado desde a comparação, a operação será recusada.":mergeIndependent?"Aplicar a combinação pré-visualizada? Só serão combinados campos alterados separadamente. Se qualquer versão tiver mudado, a operação será recusada.":keepLocal?"Manter a versão deste dispositivo e sincronizá-la sobre a versão remota? A outra versão deixará de ser a ativa, mas a escrita será recusada se o remoto tiver mudado desde a comparação.":"Usar a versão remota neste dispositivo? As alterações locais em conflito serão substituídas depois de confirmar que as duas versões continuam iguais às comparadas.";
     if(!confirm(message))return;
     target.disabled=true;
-    try{var resolved=await RemoteWorkspace.resolveVersionConflict(target.dataset.syncId,target.dataset.store,target.dataset.resolution,target.dataset.remoteVersion,target.dataset.localVersion||null);var resolvedMessage=resolved.conflicts.length?"A sincronização encontrou novos conflitos. As versões mantêm-se preservadas.":mergeIndependent?"Alterações independentes combinadas e sincronizadas.":keepLocal?"Versão deste dispositivo sincronizada.":"Versão remota aplicada neste dispositivo.";alert(resolvedMessage);return router();}
+    try{var resolved=await RemoteWorkspace.resolveVersionConflict(target.dataset.syncId,target.dataset.store,target.dataset.resolution,target.dataset.remoteVersion,target.dataset.localVersion||null,mergeManual?manualChoices:null);var resolvedMessage=resolved.conflicts.length?"A sincronização encontrou novos conflitos. As versões mantêm-se preservadas.":mergeManual?"Escolhas aplicadas e sincronizadas.":mergeIndependent?"Alterações independentes combinadas e sincronizadas.":keepLocal?"Versão deste dispositivo sincronizada.":"Versão remota aplicada neste dispositivo.";alert(resolvedMessage);return router();}
     catch(error){alert("Não foi possível resolver o conflito: "+error.message);return;}
     finally{target.disabled=false;}
   }
