@@ -64,53 +64,81 @@ test("realtime agenda sincronização para alterações de atividade da equipa",
     init: RemoteWorkspace.init,
     scheduleSync: RemoteWorkspace.scheduleSync,
     channel: RemoteWorkspace._realtimeChannel,
+    activityChannel: RemoteWorkspace._realtimeActivityChannel,
     teamId: RemoteWorkspace._realtimeTeamId,
     status: RemoteWorkspace._realtimeStatus,
+    coreStatus: RemoteWorkspace._realtimeCoreStatus,
+    activityStatus: RemoteWorkspace._realtimeActivityStatus,
   };
-  const subscriptions = [];
+  const channels = [];
+  const removed = [];
   const scheduled = [];
-  let onStatus;
-  let channelOptions;
   const client = {
-    channel(_topic, options) {
-      channelOptions = options;
-      return {
-        on(_type, filter, callback) { subscriptions.push({ filter, callback }); return this; },
-        subscribe(callback) { onStatus = callback; return this; },
+    async removeChannel(channel) { removed.push(channel); },
+    channel(topic, options) {
+      const entry = { topic, options, subscriptions: [], onStatus: null };
+      const channel = {
+        on(_type, filter, callback) { entry.subscriptions.push({ filter, callback }); return channel; },
+        subscribe(callback) { entry.onStatus = callback; return channel; },
       };
+      channels.push(entry);
+      return channel;
     },
   };
   RemoteWorkspace.init = async () => client;
   RemoteWorkspace.scheduleSync = (delay) => scheduled.push(delay);
   RemoteWorkspace._realtimeChannel = null;
+  RemoteWorkspace._realtimeActivityChannel = null;
   RemoteWorkspace._realtimeTeamId = null;
   RemoteWorkspace._realtimeStatus = "not_started";
+  RemoteWorkspace._realtimeCoreStatus = "not_started";
+  RemoteWorkspace._realtimeActivityStatus = "not_started";
   try {
     await RemoteWorkspace.startRealtime("team-1");
-    assert.deepEqual(channelOptions, { config: { postgres_changes_options: { wait: true } } });
+    assert.equal(channels.length, 2);
+    assert.equal(channels[0].topic, "vision-coach-team-1");
+    assert.equal(channels[1].topic, "vision-coach-activity-team-1");
+    assert.deepEqual(channels.map(({ options }) => options), [
+      { config: { postgres_changes_options: { wait: true } } },
+      { config: { postgres_changes_options: { wait: true } } },
+    ]);
     assert.equal(RemoteWorkspace._realtimeStatus, "connecting");
-    onStatus("SUBSCRIBED");
-    assert.equal(RemoteWorkspace._realtimeStatus, "connected");
-    assert.deepEqual(scheduled, [0]);
-    const activity = subscriptions.find(({ filter }) => filter.table === "activity_log");
+    const activity = channels[1].subscriptions.find(({ filter }) => filter.table === "activity_log");
     assert.ok(activity);
     assert.equal(activity.filter.filter, "team_id=eq.team-1");
+    assert.equal(channels[0].subscriptions.some(({ filter }) => filter.table === "activity_log"), false);
+    channels[0].onStatus("SUBSCRIBED");
+    assert.equal(RemoteWorkspace._realtimeStatus, "connecting", "core channel alone must not claim every subscription is healthy");
+    channels[1].onStatus("SUBSCRIBED");
+    assert.equal(RemoteWorkspace._realtimeStatus, "connected");
+    assert.deepEqual(scheduled, [0, 0]);
     activity.callback();
-    assert.deepEqual(scheduled, [0, 120]);
+    assert.deepEqual(scheduled, [0, 0, 120]);
     const originalWarn = console.warn;
     console.warn = () => {};
     try {
-      onStatus("CHANNEL_ERROR");
+      channels[1].onStatus("CHANNEL_ERROR");
       assert.equal(RemoteWorkspace._realtimeStatus, "degraded");
     } finally {
       console.warn = originalWarn;
     }
+    const workspace = channels[0].subscriptions.find(({ filter }) => filter.table === "workspace_records");
+    workspace.callback();
+    assert.deepEqual(scheduled, [0, 0, 120, 120], "core records still trigger sync when the activity channel is degraded");
+    await RemoteWorkspace.stopRealtime();
+    assert.equal(removed.length, 2);
+    assert.equal(RemoteWorkspace._realtimeChannel, null);
+    assert.equal(RemoteWorkspace._realtimeActivityChannel, null);
+    assert.equal(RemoteWorkspace._realtimeStatus, "not_started");
   } finally {
     RemoteWorkspace.init = originals.init;
     RemoteWorkspace.scheduleSync = originals.scheduleSync;
     RemoteWorkspace._realtimeChannel = originals.channel;
+    RemoteWorkspace._realtimeActivityChannel = originals.activityChannel;
     RemoteWorkspace._realtimeTeamId = originals.teamId;
     RemoteWorkspace._realtimeStatus = originals.status;
+    RemoteWorkspace._realtimeCoreStatus = originals.coreStatus;
+    RemoteWorkspace._realtimeActivityStatus = originals.activityStatus;
   }
 });
 
