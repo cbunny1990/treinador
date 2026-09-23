@@ -232,6 +232,8 @@ O registo de atividade é imutável e uma repetição da mesma UUID só é consi
 
 Quando uma atividade antiga aponta para uma chave externa textual, o sincronizador só a converte para UUID se encontrar exatamente um documento dessa equipa com `external_key` igual, verificar a UUID desse documento no workspace remoto e confirmar o respetivo tipo. Correspondências ausentes/ambíguas continuam em conflito. O formulário do arquivo de épocas passou também a registar a UUID real do documento recém-criado, em vez da chave `season-index:default`.
 
+Se o evento de atividade continua válido mas a sua origem local já não existe ou a UUID não pertence ao workspace selecionado, o sincronizador envia o evento com `entity_ref` vazio e guarda tipo, referência original e motivo em `_vision_coach_unresolved_origin`. A referência fica explícita como proveniência, nunca é convertida num vínculo remoto. O mesmo aviso é mostrado no Workspace e na Timeline. Referências ambíguas, de outra equipa ou de equipa desconhecida continuam bloqueadas. Cache PWA v119.
+
 ## Publicação rápida de imagens por IA
 
 O procedimento atual está em [ai-image-workflow.md](ai-image-workflow.md). Usa o MCP autenticado ou `npm run images:publish`; não volta a gerar imagens aprovadas nem requer alterações de frontend por imagem.
