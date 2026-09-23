@@ -1060,6 +1060,39 @@ test("confirmação remota não apaga edição local feita durante o envio", asy
   } finally { globalThis.DB = originalDB; }
 });
 
+test("confirmação de media preserva metadados novos e não reutiliza caminho para bytes alterados", async () => {
+  const originalDB = globalThis.DB;
+  const db = createDeviceDatabase();
+  globalThis.DB = db;
+  try {
+    const id = await db.criar("media_items", {
+      team_id: "default", sync_id: "11111111-1111-4111-8111-111111111111",
+      sync_dirty: true, sync_local_updated_at: "local-v1", title: "Foto antiga",
+      data_url: "data:image/png;base64,AA==", storage_path: null,
+    });
+    const sent = { ...(await db.obter("media_items", id)) };
+    await db.modificar("media_items", id, row => ({ ...row, title: "Título novo", sync_local_updated_at: "local-v2" }));
+    await RemoteWorkspace._ackPushedRecord("media_items", sent, {
+      updated_at: "remote-v1", storage_path: "team-shared/media-1/foto.png",
+    }, {}, "team-shared");
+    const afterTitle = await db.obter("media_items", id);
+    assert.equal(afterTitle.title, "Título novo");
+    assert.equal(afterTitle.sync_dirty, true);
+    assert.equal(afterTitle.storage_path, "team-shared/media-1/foto.png");
+
+    const sentAgain = { ...afterTitle };
+    await db.modificar("media_items", id, row => ({ ...row, data_url: "data:image/png;base64,AQ==", sync_local_updated_at: "local-v3" }));
+    await RemoteWorkspace._ackPushedRecord("media_items", sentAgain, {
+      updated_at: "remote-v2", storage_path: "team-shared/media-1/foto.png",
+    }, {}, "team-shared");
+    const afterBytes = await db.obter("media_items", id);
+    assert.equal(afterBytes.data_url, "data:image/png;base64,AQ==");
+    assert.equal(afterBytes.storage_path, null);
+    assert.equal(afterBytes.sync_dirty, true);
+    assert.equal(afterBytes.remote_updated_at, "remote-v2");
+  } finally { globalThis.DB = originalDB; }
+});
+
 test("tombstone pendente impede que o pull ressuscite um jogo apagado durante a sincronização", async () => {
   await withTwoDeviceSync(async ({ devices, remoteTeamId, useDevice }) => {
     useDevice(0);
@@ -1074,6 +1107,27 @@ test("tombstone pendente impede que o pull ressuscite um jogo apagado durante a 
     assert.equal(deleted.deleted, 1);
     await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
     assert.equal((await devices[0].listar("jogos")).length, 0);
+  });
+});
+
+test("tombstone de media pendente impede que a fotografia volte no pull", async () => {
+  await withTwoDeviceSync(async ({ devices, remoteTeamId, useDevice }) => {
+    useDevice(0);
+    const id = await devices[0].criar("media_items", {
+      team_id: "default", subject_type: "team", subject_id: "default",
+      type: "file", title: "Ficheiro a apagar", external_url: "https://example.org/file",
+      sync_dirty: true,
+    });
+    const uploaded = await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+    assert.equal(uploaded.pushed, 1);
+    await devices[0].apagar("media_items", id);
+    const pulled = await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+    assert.equal(pulled.pulled, 0);
+    assert.equal((await devices[0].listar("media_items")).length, 0);
+    const removed = await RemoteWorkspace._syncTombstones(remoteTeamId);
+    assert.equal(removed.deleted, 1);
+    await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+    assert.equal((await devices[0].listar("media_items")).length, 0);
   });
 });
 
@@ -1275,6 +1329,41 @@ test("media carregada num dispositivo sincroniza em privado e aparece no outro c
     assert.equal(secondLocal.sync_id, firstLocal.sync_id);
     assert.equal(secondLocal.storage_path, remote.mediaRows[0].storage_path);
     assert.equal(secondLocal.url, `https://signed.example/${remote.mediaRows[0].storage_path}`);
+    assert.equal((await devices[1].listar("media_items")).length, 1);
+  });
+});
+
+test("substituir bytes de media mantém o ficheiro anterior e sincroniza a nova versão", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    useDevice(0);
+    const id = await devices[0].criar("media_items", {
+      team_id: "default", subject_type: "team", subject_id: "default",
+      type: "file", title: "Evidência", file_name: "evidencia.txt",
+      mime_type: "text/plain", data_url: "data:text/plain;base64,QQ==", sync_dirty: true,
+    });
+    assert.equal((await RemoteWorkspace._syncMedia(remoteTeamId, "coach")).pushed, 1);
+    const firstPath = remote.mediaRows[0].storage_path;
+    assert.equal(await remote.files.get(firstPath).text(), "A");
+
+    useDevice(1);
+    await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+
+    useDevice(0);
+    const local = await devices[0].obter("media_items", id);
+    await devices[0].atualizar("media_items", {
+      ...local, data_url: "data:text/plain;base64,Qg==", sync_dirty: true,
+    });
+    assert.equal((await RemoteWorkspace._syncMedia(remoteTeamId, "coach")).pushed, 1);
+    const secondPath = remote.mediaRows[0].storage_path;
+    assert.notEqual(secondPath, firstPath);
+    assert.equal(await remote.files.get(firstPath).text(), "A");
+    assert.equal(await remote.files.get(secondPath).text(), "B");
+
+    useDevice(1);
+    assert.equal((await RemoteWorkspace._syncMedia(remoteTeamId, "coach")).pulled, 1);
+    const received = (await devices[1].listar("media_items"))[0];
+    assert.equal(received.storage_path, secondPath);
+    assert.equal(received.url, `https://signed.example/${secondPath}`);
     assert.equal((await devices[1].listar("media_items")).length, 1);
   });
 });

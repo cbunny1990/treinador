@@ -172,6 +172,8 @@ Na convocatória e no alinhamento de um jogo legado, IDs numéricos locais de at
 
 A confirmação de um envio compara a revisão local exata dentro da transação IndexedDB. Se o treinador alterou o registo enquanto a rede respondia, a edição e o texto permanecem locais, marcados para nova sincronização sobre a versão remota recém-confirmada. Um tombstone pendente impede que a leitura seguinte ressuscite um registo apagado durante o envio; quando a eliminação ocorre nesse intervalo, o tombstone recebe a versão acabada de gravar para que a eliminação condicional possa concluir-se.
 
+O mesmo controlo aplica-se a media. Uma mudança de título ou nota feita durante o upload permanece pendente sem repetir os bytes. Os novos uploads locais usam um caminho privado com SHA-256 dos bytes: uma alteração posterior da fotografia recebe um caminho diferente e o ficheiro anterior permanece intacto. Se os bytes mudarem durante o upload, a nova versão continua pendente. Um tombstone de media pendente impede que a fotografia reapareça no pull.
+
 Depois da v68, uma referência de documento/memória/media já expressa em UUID podia ser interpretada como ID numérico da IndexedDB. A v69 valida o UUID na equipa remota antes de o reutilizar; uma referência local ausente ou inválida fica em conflito, preservando o registo de origem, enquanto a restante sincronização continua.
 
 A reformulação remove o produto antigo da experiência sem apagar silenciosamente os dados existentes. Stores legados podem ser eliminados numa migração posterior apenas depois de confirmar que nada útil precisa de ser convertido para o novo modelo.

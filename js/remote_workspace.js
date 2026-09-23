@@ -734,6 +734,8 @@ const RemoteWorkspace = {
       ? { ...(payload.callup ? { callup: payload.callup } : {}), ...(payload.lineup ? { lineup: payload.lineup } : {}) }
       : store === "treinos"
         ? { ...(payload.blocos ? { blocos: payload.blocos } : {}), ...(payload.session ? { session: payload.session } : {}) }
+        : store === "media_items"
+          ? { storage_path: saved.storage_path || local.storage_path || null }
         : {};
     const acknowledge = (current) => {
       const unchanged = current.sync_local_updated_at === local.sync_local_updated_at
@@ -741,6 +743,11 @@ const RemoteWorkspace = {
       return {
         ...current,
         ...(unchanged ? stableRefs : {}),
+        ...(store === "media_items" && !unchanged ? {
+          storage_path: current.data_url === local.data_url
+            ? (saved.storage_path || current.storage_path || null)
+            : null,
+        } : {}),
         sync_dirty: !unchanged,
         remote_updated_at: saved.updated_at,
         remote_team_id: remoteTeamId,
@@ -1089,13 +1096,17 @@ const RemoteWorkspace = {
       if (!remoteStoragePathBelongsToTeam(local.storage_path, remoteTeamId)) {
         throw new Error("O caminho do ficheiro pertence a outro workspace remoto.");
       }
-      return local.storage_path;
+      if (!local.data_url) return local.storage_path;
     }
     if (!local.data_url) return null;
     const client = await this.init();
     const blob = remoteDataUrlToBlob(local.data_url);
+    const digest = await globalThis.crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+    const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    if (local.storage_path && local.storage_path.split("/").pop().startsWith(hash + "-")) return local.storage_path;
+    if (local.storage_path && !/^[0-9a-f]{64}-/.test(local.storage_path.split("/").pop())) return local.storage_path;
     const name = remoteSafeFilename(local.file_name || local.title);
-    const path = remoteTeamId + "/" + local.sync_id + "/" + name;
+    const path = remoteTeamId + "/" + local.sync_id + "/" + hash + "-" + name;
 
     const bucket = client.storage.from("team-media");
     const uploaded = await bucket.upload(path, blob, {
@@ -1228,15 +1239,7 @@ const RemoteWorkspace = {
         }
         saved = savedRes.data;
       }
-      await DB.atualizar("media_items", {
-        ...local,
-        storage_path: saved.storage_path || local.storage_path || null,
-        sync_dirty: false,
-        remote_updated_at: saved.updated_at,
-        remote_team_id: remoteTeamId,
-        sync_actor_type: saved.actor_type,
-        sync_actor_label: saved.actor_label,
-      }, { remote: true });
+      await this._ackPushedRecord("media_items", local, saved, {}, remoteTeamId);
       remoteMap.set(saved.id, saved);
       result.pushed++;
     }
@@ -1246,7 +1249,11 @@ const RemoteWorkspace = {
     if (refreshed.error) throw refreshed.error;
     remoteMap = new Map((refreshed.data || []).map((x) => [x.id, x]));
     localMap = new Map([...await this._localBySyncId("media_items")].filter(([, row]) => remoteRowBelongsToTeam(row, remoteTeamId)));
+    const pendingDeletes = new Set((await DB.listar("sync_tombstones"))
+      .filter((item) => item.store === "media_items" && (!item.remote_team_id || item.remote_team_id === remoteTeamId))
+      .map((item) => item.sync_id));
     for (const remote of remoteMap.values()) {
+      if (pendingDeletes.has(remote.id)) continue;
       const local = localMap.get(remote.id);
       if (remote.deleted_at) {
         if (!local) continue;
@@ -1263,6 +1270,7 @@ const RemoteWorkspace = {
         continue;
       }
       if (local?.sync_dirty) {
+        if (local.remote_updated_at === remote.updated_at) continue;
         result.conflicts.push(remoteConflict("media_items", local, remote));
         continue;
       }
