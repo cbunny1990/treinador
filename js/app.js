@@ -632,12 +632,12 @@ function matchAnalysisSection(match,players,id,memory){
   return '<section class="panel match-form"><h3>Factos registados</h3><ul>'+facts.join('')+'</ul><h4>Lances</h4>'+evHtml+'<h4>Utilização</h4>'+usageHtml+'</section>'+proposalSection+evidenceSection+'<form class="panel match-form form section" data-form="match-analysis" data-id="'+id+'"><h3>Leitura do treinador</h3><p class="meta">Factos acima vêm dos registos do jogo. Observações, interpretações, hipóteses e decisões ficam separadas.</p>'+fields+goalFields+'<div class="form-grid"><label class="field"><span>Registo anterior · correu bem</span><textarea name="legacy_positives">'+esc(legacy.correu_bem||'')+'</textarea></label><label class="field"><span>Registo anterior · a melhorar</span><textarea name="legacy_improve">'+esc(legacy.melhorar||'')+'</textarea></label><label class="field"><span>Conclusões anteriores</span><textarea name="legacy_conclusions">'+esc(legacy.conclusoes||'')+'</textarea></label><label class="field"><span>Ações previstas · uma por linha</span><textarea name="legacy_actions">'+esc(linesText(legacy.acoes_proximo_treino))+'</textarea></label></div>'+synced+'<input type="hidden" name="expected_revision" value="'+a.revision+'"><p class="notice" data-analysis-feedback hidden></p><div class="toolbar"><button class="btn accent" type="submit" name="intent" value="save">Guardar análise</button><button class="btn secondary" type="submit" name="intent" value="memory">Guardar análise e atualizar memória</button></div></form>';
 }
 async function viewDocuments(options){
-  await refreshRemoteWorkspace(options);
   var docs=await WorkspaceStore.listDocuments();
   var cards=docs.length?docs.map(documentCard).join(""):'<div class="empty">Ainda não existem planos ou análises. Cria o primeiro documento partilhado.</div>';
   var hub='<div class="grid cols-2"><a class="panel planner-hub-card" href="#/treinos"><div class="kicker">Sessões</div><h2>Planeador de treino</h2><p>Constrói treinos por blocos e reutiliza exercícios.</p></a><a class="panel planner-hub-card" href="#/exercicios"><div class="kicker">Biblioteca</div><h2>Exercícios</h2><p>Pesquisa, favoritos e exercícios partilhados com o Head Coach.</p></a></div>';
   var html=hub+'<section class="section"><div class="section-head"><div><h2>Documentos de trabalho</h2><p>Planos, análises, notas e briefings partilhados</p></div><a class="btn accent" href="#/planos/novo">Novo documento</a></div><div class="grid cols-2">'+cards+'</div></section>';
   setView("Planos",html,"Planos");
+  refreshRemoteWorkspace(options);
 }
 async function viewDocumentForm(id){
   var doc=id?await WorkspaceStore.getDocument(id):null;
