@@ -86,15 +86,15 @@
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
         let hadController = !!navigator.serviceWorker.controller;
-        const registration = await navigator.serviceWorker.register("sw.js?v=68").catch(() => null);
+        const registration = await navigator.serviceWorker.register("sw.js?v=69").catch(() => null);
         if(!registration) return;
         registration.update().catch(() => {});
         navigator.serviceWorker.addEventListener("controllerchange", () => {
           if(!hadController){hadController=true;return;}
           if(document.querySelector('form, [data-training-session], [data-match-visual]')){
-            const notice=document.createElement('p');notice.className='notice';notice.textContent='Atualização disponível. Guarda o que estás a fazer e reabre a app para atualizar.';document.body.appendChild(notice);return;
+            const notice=document.createElement('div');notice.className='notice';notice.append('Atualização disponível. Guarda o que estás a fazer e toca em Atualizar app. ');const reload=document.createElement('button');reload.type='button';reload.className='btn secondary';reload.textContent='Atualizar app';reload.addEventListener('click',()=>location.reload());notice.append(reload);document.body.appendChild(notice);return;
           }
-          const key = "vision-sw-reloaded-v68";
+          const key = "vision-sw-reloaded-v69";
           if (sessionStorage.getItem(key)) return;
           sessionStorage.setItem(key, "1");
           location.reload();

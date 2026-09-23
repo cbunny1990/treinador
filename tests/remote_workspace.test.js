@@ -143,6 +143,75 @@ test("consolidação com sync_id default repara antes da sincronização", async
   finally { globalThis.DB=originals.DB; globalThis.DEFAULT_TEAM_ID=originals.DEFAULT_TEAM_ID; if(originals.navigator)Object.defineProperty(globalThis,"navigator",originals.navigator);else delete globalThis.navigator; globalThis.localStorage=originals.localStorage; RemoteWorkspace.init=originals.init; RemoteWorkspace.getSession=originals.getSession; RemoteWorkspace.ensureSelectedTeam=originals.ensureSelectedTeam; RemoteWorkspace.syncNow=originals.syncNow; }
 });
 
+test("referência UUID já remota é validada na equipa sem chamar IndexedDB com NaN", async () => {
+  const team = "22222222-2222-4222-8222-222222222222", ref = "11111111-1111-4111-8111-111111111111";
+  const originalDB = globalThis.DB, originalInit = RemoteWorkspace.init;
+  const filters = [];
+  globalThis.DB = { async obter() { throw Error("IDBObjectStore.get must not run for a UUID"); } };
+  RemoteWorkspace.init = async () => ({ from(table) {
+    assert.equal(table, "workspace_records");
+    return { select() { return this; }, eq(key,value) { filters.push([key,value]); return this; }, is() { return this; }, async maybeSingle() { return { data: { id: ref }, error: null }; } };
+  } });
+  try {
+    const result = await RemoteWorkspace._subjectRemoteRef("player", ref, team);
+    assert.equal(result, ref);
+    assert.deepEqual(filters, [["id",ref],["team_id",team],["kind","player"]]);
+    const payload = await RemoteWorkspace._payloadForRemote("workspace_documents", { refs: [{ type: "player", id: ref }] }, team);
+    assert.equal(payload.refs[0].id, ref);
+  } finally { globalThis.DB = originalDB; RemoteWorkspace.init = originalInit; }
+});
+
+test("referências locais sem chave válida ficam por reconciliar sem acesso IndexedDB inválido", async () => {
+  const team = "22222222-2222-4222-8222-222222222222";
+  const originalDB = globalThis.DB, originalInit = RemoteWorkspace.init;
+  let reads = 0;
+  globalThis.DB = { async obter(_store,id) { reads++; assert.equal(id, 7); return null; } };
+  RemoteWorkspace.init = async () => ({ from() { return { select() { return this; }, eq() { return this; }, is() { return this; }, async maybeSingle() { return { data: null, error: null }; } }; } });
+  try {
+    for (const id of [undefined, "", "default", "abc", "0", "-2"]) {
+      await assert.rejects(RemoteWorkspace._subjectRemoteRef("player", id, team), error => error.code === "LOCAL_REFERENCE_CONFLICT");
+    }
+    assert.equal(reads, 0);
+    await assert.rejects(RemoteWorkspace._subjectRemoteRef("player", "7", team), error => error.reason === "subject_not_found_locally");
+    assert.equal(reads, 1);
+    await assert.rejects(RemoteWorkspace._subjectRemoteRef("player", "11111111-1111-4111-8111-111111111111", team), error => error.reason === "subject_uuid_not_in_team");
+    assert.equal(reads, 1);
+  } finally { globalThis.DB = originalDB; RemoteWorkspace.init = originalInit; }
+});
+
+test("um documento com referência inválida fica em conflito e não bloqueia outro documento", async () => {
+  const team = "22222222-2222-4222-8222-222222222222";
+  const originals = { DB: globalThis.DB, DEFAULT_TEAM_ID: globalThis.DEFAULT_TEAM_ID, init: RemoteWorkspace.init };
+  const rows = [
+    { id: 1, team_id: "default", sync_id: "11111111-1111-4111-8111-111111111111", sync_dirty: true, refs: [{ type: "player", id: "default" }], title: "Referência pendente" },
+    { id: 2, team_id: "default", sync_id: "33333333-3333-4333-8333-333333333333", sync_dirty: true, refs: [], title: "Documento válido" },
+  ];
+  const remote = [];
+  globalThis.DEFAULT_TEAM_ID = "default";
+  globalThis.DB = {
+    async listar(store) { return store === "workspace_documents" ? rows.map(x => ({ ...x })) : []; },
+    async atualizar(store, row) { assert.equal(store, "workspace_documents"); rows[rows.findIndex(x => x.id === row.id)] = { ...row }; },
+    async criar() { throw Error("unexpected local duplicate"); },
+  };
+  RemoteWorkspace.init = async () => ({ from(table) {
+    assert.equal(table, "workspace_records");
+    return { inserted: null, select() { return this; }, eq(key,value) { assert.notEqual(value, "default"); return this; }, is() { return this; }, insert(row) { this.inserted = row; return this; }, async single() {
+      const saved = { ...this.inserted, updated_at: "v1", deleted_at: null };
+      remote.push(saved);
+      return { data: saved, error: null };
+    }, then(resolve) { return Promise.resolve({ data: remote.map(x => ({ ...x })), error: null }).then(resolve); } };
+  } });
+  try {
+    const result = await RemoteWorkspace._syncRecords(team, "44444444-4444-4444-8444-444444444444");
+    assert.equal(result.pushed, 1);
+    assert.equal(result.conflicts.length, 1);
+    assert.equal(result.conflicts[0].reason, "invalid_subject_id");
+    assert.equal(rows[0].sync_dirty, true);
+    assert.equal(rows[1].sync_dirty, false);
+    assert.equal(remote[0].payload.title, "Documento válido");
+  } finally { globalThis.DB = originals.DB; globalThis.DEFAULT_TEAM_ID = originals.DEFAULT_TEAM_ID; RemoteWorkspace.init = originals.init; }
+});
+
 test("external_key impede identidade duplicada entre browsers", () => {
   assert.equal(remoteIdentityKey("match", { external_key: " JOGO-1 " }), "match|jogo-1");
   assert.equal(remoteIdentityKey("match", {}), null);
