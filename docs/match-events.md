@@ -21,6 +21,8 @@ Modelo único partilhado: três terços (defesa, meio-campo, ataque) × três co
 ## Estatísticas e proveniência
 As estatísticas são **contadas a partir dos lances registados**; cada linha da tabela indica a origem (`contada`). Sem lances suficientes, a contagem é simplesmente zero ou ausente — nunca estimada. Golos contados vs. resultado na ficha geram um aviso de reconciliação, mas o resultado mantém o valor registado pelo treinador. O resultado da ficha e os relatórios identificam-no como introduzido manualmente; a API de estatísticas mantém-no separado dos golos contados nos lances.
 
+As substituições já executadas não são copiadas para `match_events`: a cronologia do ecrã combina os lances com os movimentos `substitute` guardados em `visual_match.events`, pela mesma origem persistida. A tabela mostra uma contagem de substituições realizadas com proveniência **Registo de utilização**. Para corrigir uma substituição, usa o histórico de movimentos do modo de jogo; a estatística é derivada novamente, sem criar um segundo evento.
+
 **Posse de bola** é sempre introduzida pelo treinador com uma das proveniências: medida, estimada ou desconhecida. Uma estimativa nunca é apresentada como medição exata.
 
 ## Dados e sincronização

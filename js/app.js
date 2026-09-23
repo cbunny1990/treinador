@@ -10,6 +10,15 @@ const remoteTitleEl = document.getElementById("remote-title");
 const remoteDetailEl = document.getElementById("remote-detail");
 const HUMAN_LABEL = "Treinador";
 var remoteSyncFailed = false;
+var renderedViewRoute = null;
+var skipNextRemoteSync = false;
+var viewRenderSequence = 0;
+var userScrollIntentSequence = 0;
+window.addEventListener("wheel",function(){userScrollIntentSequence++;},{passive:true});
+window.addEventListener("touchmove",function(){userScrollIntentSequence++;},{passive:true});
+window.addEventListener("keydown",function(event){
+  if(["ArrowUp","ArrowDown","PageUp","PageDown","Home","End"," "].includes(event.key))userScrollIntentSequence++;
+});
 
 function esc(v){
   return String(v == null ? "" : v).replace(/[&<>"']/g,function(ch){
@@ -25,10 +34,18 @@ function fmtDate(v){
 function today(){return new Date().toISOString().slice(0,10);}
 function go(hash){location.hash=hash;}
 function setView(title,html,eyebrow){
+  var currentRoute=location.hash||"#/";
+  var routeChanged=renderedViewRoute!==currentRoute;
+  var currentRender=++viewRenderSequence;
+  var scrollX=window.scrollX,scrollY=window.scrollY,intentAtRender=userScrollIntentSequence;
   titleEl.textContent=title;
   eyebrowEl.textContent=eyebrow||"Workspace";
   app.innerHTML=html;
-  window.scrollTo(0,0);
+  renderedViewRoute=currentRoute;
+  if(routeChanged) window.scrollTo(0,0);
+  else requestAnimationFrame(function(){
+    if(currentRender===viewRenderSequence&&intentAtRender===userScrollIntentSequence&&currentRoute===(location.hash||"#/"))window.scrollTo(scrollX,scrollY);
+  });
   refreshRemoteIndicator();
 }
 function markNav(tab){
@@ -95,6 +112,15 @@ function resultText(match){
   if(match && (match.golos_favor==null || match.golos_contra==null)) return "Por jogar";
   return String(match.golos_favor)+"–"+String(match.golos_contra);
 }
+function teamCrestSrc(team){
+  var identity=[team&&team.nome,team&&team.clube].filter(Boolean).join(" ").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+  var category=String(team&&team.escalao||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+  return identity.includes("figueiro")&&category.includes("sub-8")?"assets/teams/14529_imgbank.png":null;
+}
+function teamCrestHTML(team,compact){
+  var src=teamCrestSrc(team);
+  return src?'<div class="team-identity"><img class="team-crest'+(compact?' compact':'')+'" src="'+src+'" alt="Emblema do Sub-8 de Figueiró"><span class="team-identity-label">Sub-8 · Figueiró</span></div>':'';
+}
 function stablePlayerRef(player){return String(player&&player.sync_id||player&&player.id||"");}
 function playerByRef(players,ref){
   var wanted=String(ref||"");
@@ -111,12 +137,14 @@ function docTypeShort(type){
 }
 
 async function routeOnce(){
+  var skipRemoteSync=skipNextRemoteSync;
+  skipNextRemoteSync=false;
   var parts=(location.hash||"#/").slice(1).split("?")[0].split("/").filter(Boolean);
   var root=parts[0]||"";
   var navRoot=(root==="treinos"||root==="exercicios")?"planos":(root===""?"workspace":root);
   markNav(root==="jogo-visual"?"calendario":navRoot);
   try{
-    if(!root) return viewWorkspace();
+    if(!root) return viewWorkspace({skipRemoteSync:skipRemoteSync});
     if(root==="equipa"){
       if(parts[1]==="editar") return viewTeamForm();
       if(parts[1]==="jogador" && parts[2]==="novo") return viewPlayerForm();
@@ -155,7 +183,7 @@ async function routeOnce(){
       if(parts[1]==="novo") return viewDocumentForm();
       if(parts[1] && parts[2]==="editar") return viewDocumentForm(parts[1]);
       if(parts[1]) return viewDocument(parts[1]);
-      return viewDocuments();
+      return viewDocuments({skipRemoteSync:skipRemoteSync});
     }
     if(root==="media"){
       if(parts[1]==="novo") return viewMediaForm(parts[2],parts[3]);
@@ -201,10 +229,13 @@ window.addEventListener("DOMContentLoaded",router);
 if(document.readyState!=="loading") router();
 
 window.addEventListener("visioncoach:sync-complete",async function(){
+  remoteSyncFailed=false;
   refreshRemoteIndicator();
   if(app.querySelector('form[data-form]')) return;
   if(app.querySelector('[data-training-session], [data-session-duplicate], [data-training-continuity], [data-match-visual]')) return;
   if(document.querySelector('#exercise-image-viewer[open]')) return;
+  var activeRoot=((location.hash||"#/").slice(1).split("?")[0].split("/").filter(Boolean)[0]||"");
+  skipNextRemoteSync=true;
   var scrollX=window.scrollX;
   var scrollY=window.scrollY;
   await router();
@@ -260,10 +291,11 @@ function priorityHTML(items){
 function documentCard(doc){
   return '<a class="card doc-card" href="'+(doc.type==="weekly_plan"||doc.type==="team_goal"?'#/evolucao':doc.type==="season_index"?'#/epocas':'#/planos/'+doc.id)+'"><span class="doc-type">'+docTypeShort(doc.type)+'</span><span class="grow"><span class="row"><span class="title grow">'+esc(doc.title)+'</span>'+docStatusBadge(doc.status)+'</span><span class="meta">'+esc(docTypeLabel(doc.type))+(doc.target_date?' · '+fmtDate(doc.target_date):'')+'</span><span class="meta">'+esc(doc.created_by_label||HUMAN_LABEL)+'</span></span></a>';
 }
-async function refreshRemoteWorkspace(){
+async function refreshRemoteWorkspace(options){
+  options=options||{};
   try{
     var status=await RemoteWorkspace.status();
-    if(navigator.onLine && status.signedIn && status.remoteTeamId){
+    if(!options.skipRemoteSync&&navigator.onLine && status.signedIn && status.remoteTeamId){
       await RemoteWorkspace.syncNow();
       remoteSyncFailed=false;
       return await RemoteWorkspace.status();
@@ -285,8 +317,9 @@ function activityHTML(rows,limit){
   }).join("")+'</div>';
 }
 
-async function viewWorkspace(){
-  var remoteStatus=await refreshRemoteWorkspace();
+async function viewWorkspace(options){
+  options=options||{};
+  var remoteStatus=await RemoteWorkspace.status();
   var s=await WorkspaceStore.buildSnapshot();
   var reportSeasonDocs=await WorkspaceStore.listDocuments(DEFAULT_TEAM_ID,{includeArchived:true}),reportSeasonState=VisionSeasons.state(reportSeasonDocs.find(function(d){return d.type==='season_index';})),reportSeason=reportSeasonState.items.find(function(x){return x.id===reportSeasonState.active_id;});
   var teamName=(s.team&&s.team.nome)||"Equipa";
@@ -311,7 +344,7 @@ async function viewWorkspace(){
   attention+='<section class="panel"><h3>Conflitos de sincronização · '+(remoteStatus.conflicts||[]).length+'</h3>'+(remoteStatus.conflicts?.length?'<p class="notice">Há alterações que precisam de revisão para proteger trabalho dos dois dispositivos.</p><a class="btn secondary" href="#/definicoes">Rever workspace</a>':'<p class="empty">Sem conflitos sinalizados.</p>')+'</section></div>';
   var html='';
   html+='<div class="hero">';
-  html+='<section class="panel hero-main"><div class="kicker">Human–AI Shared Workspace</div><h2 class="display">O estado da equipa, num único lugar.</h2>';
+  html+='<section class="panel hero-main">'+teamCrestHTML(s.team,true)+'<div class="kicker">Human–AI Shared Workspace</div><h2 class="display">O estado da equipa, num único lugar.</h2>';
   html+='<p class="lead">'+esc(context||"Configura a equipa para começar.")+' Dados, planos, media e decisões ficam disponíveis no mesmo workspace para treinador e agente.</p>';
   html+='<div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/consulta">Consultar treino</a><a class="btn secondary" href="#/pesquisa">Pesquisar histórico</a><a class="btn secondary" href="#/evolucao">Semana e evolução</a><a class="btn secondary" href="#/epocas">Épocas</a><button class="btn secondary" type="button" data-action="export-team-report" '+(reportSeason?'data-season="'+esc(reportSeason.id)+'"':'')+'>Relatório de equipa'+(reportSeason?' · '+esc(reportSeason.name):'')+'</button><a class="btn secondary" href="#/capturar">Registar observação</a><a class="btn secondary" href="#/planos/novo">Novo plano</a><a class="btn secondary" href="#/media/novo">Adicionar media</a></div>';
   html+='<div class="workspace-status '+(remoteReady?"connected":"")+'"><span class="dot"></span>'+esc(remoteLabel)+'</div></section>';
@@ -327,6 +360,14 @@ async function viewWorkspace(){
   html+='<div class="grid cols-2 section"><section><div class="section-head"><div><h2>Planos recentes</h2><p>Produzidos pelo treinador ou agente</p></div><a class="link" href="#/planos">Ver todos</a></div><div class="list">'+recentDocs+'</div></section>';
   html+='<section><div class="section-head"><div><h2>Atividade partilhada</h2><p>Quem fez o quê</p></div><a class="link" href="#/timeline">Timeline</a></div>'+activityHTML(s.recent_activity)+'</section></div>';
   setView(teamName,html,"Workspace");
+  if(!options.skipRemoteSync&&navigator.onLine&&remoteStatus.signedIn&&remoteStatus.remoteTeamId){
+    RemoteWorkspace.syncNow().then(function(){remoteSyncFailed=false;}).catch(function(error){
+      remoteSyncFailed=true;
+      console.warn("Sincronização automática adiada:",error.message);
+      var activeRoot=((location.hash||"#/").slice(1).split("?")[0].split("/").filter(Boolean)[0]||"");
+      if(!activeRoot&&!app.querySelector('form[data-form]')){skipNextRemoteSync=true;router();}
+    });
+  }
 }
 async function viewTeamDevelopment(){
   var s=await WorkspaceStore.buildSnapshot(),docs=await WorkspaceStore.listDocuments(DEFAULT_TEAM_ID,{includeArchived:true});
@@ -400,7 +441,7 @@ async function viewTeam(){
     return '<a class="card player-card" href="#/equipa/jogador/'+p.id+'">'+avatarHTML(p)+'<span class="grow"><span class="title">'+esc(p.nome)+'</span><span class="meta">Fora do plantel</span></span><span class="badge system">Retirado</span></a>';
   }).join(""):"";
   var html='<div class="profile-grid">';
-  html+='<section class="panel hero-main"><div class="kicker">Perfil da equipa</div><h2 class="display" style="font-size:28px">'+esc(team.nome||"Equipa")+'</h2><p class="lead">'+esc([team.clube,team.escalao,team.epoca,team.competicao,team.formato].filter(Boolean).join(" · ")||"Completa os dados base da equipa.")+'</p><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/editar">Editar equipa</a><a class="btn" href="#/equipa/jogador/novo">Adicionar jogador</a></div></section>';
+  html+='<section class="panel hero-main">'+teamCrestHTML(team,true)+'<div class="kicker">Perfil da equipa</div><h2 class="display" style="font-size:28px">'+esc(team.nome||"Equipa")+'</h2><p class="lead">'+esc([team.clube,team.escalao,team.epoca,team.competicao,team.formato].filter(Boolean).join(" · ")||"Completa os dados base da equipa.")+'</p><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/editar">Editar equipa</a><a class="btn" href="#/equipa/jogador/novo">Adicionar jogador</a></div></section>';
   html+='<section class="panel hero-side"><div class="metric-label">Modelo de trabalho</div><p class="lead">A equipa é a fonte factual do workspace. O agente deve ler estes dados, nunca inventá-los.</p><div class="notice" style="margin-top:14px">A IA autorizada pode consultar os mesmos dados e preparar propostas através do MCP. Gere os acessos em <a class="link" href="#/definicoes">Definições</a>. As decisões e ações de jogo continuam a exigir confirmação do treinador.</div></section></div>';
   html+='<section class="section"><div class="section-head"><div><h2>Plantel</h2><p>'+players.length+' jogador(es) · '+availableCount+' disponível(eis) · '+(players.length-availableCount)+' não disponível(eis)</p></div><a class="link" href="#/equipa/jogador/novo">Adicionar</a></div><div class="player-grid">'+playerCards+'</div></section>';
   if(retiredPlayers.length) html+='<section class="section"><div class="section-head"><div><h2>Fora do plantel</h2><p>'+retiredPlayers.length+' jogador(es) retirado(s)</p></div></div><div class="player-grid">'+retiredCards+'</div></section>';
@@ -563,8 +604,8 @@ function matchAnalysisSection(match,players,id,memory){
   var evidenceSection='<section class="panel match-form section"><h3>Vídeo e evidências</h3><p>Marca momentos manualmente. Não há reconhecimento automático de jogadores.</p>'+evidenceHtml+'<form class="form" data-form="match-evidence" data-id="'+id+'"><input type="hidden" name="evidence_id"><input type="hidden" name="expected_revision" value="'+evidence.revision+'"><label class="field"><span>URL do vídeo</span><input name="url" type="url" placeholder="https://…" required></label><div class="form-grid"><label class="field"><span>Minuto</span><input name="minutes" type="number" min="0" max="1440" step="1" value="0" required></label><label class="field"><span>Segundo</span><input name="seconds" type="number" min="0" max="59" step="1" value="0" required></label><label class="field"><span>Categoria</span><select name="category">'+Object.entries(VisionMatchEvidence.categories).map(function(x){return '<option value="'+x[0]+'">'+esc(x[1])+'</option>';}).join('')+'</select></label><label class="field"><span>Atleta (opcional)</span><select name="player_ref"><option value="">Sem atleta associado</option>'+players.map(function(p){return '<option value="'+esc(p.sync_id)+'">'+esc(p.nome)+'</option>';}).join('')+'</select></label></div><label class="field"><span>Descrição</span><textarea name="description" required></textarea></label><div class="form-grid"><label class="field"><span>Ligar a</span><select name="relation_type"><option value="none">Sem associação</option><option value="observation">Observação</option><option value="statistic">Estatística</option><option value="problem">Problema</option></select></label><label class="field"><span>Registo associado</span><select name="relation_ref"><option value="">Escolhe uma referência</option><optgroup label="Observações deste jogo" data-relation="observation" hidden>'+evidenceObservationOptions+'</optgroup><optgroup label="Estatísticas contadas" data-relation="statistic" hidden>'+evidenceStatOptions+'</optgroup><optgroup label="Problemas registados na análise" data-relation="problem" hidden>'+evidenceProblemOptions+'</optgroup></select></label></div><button class="btn accent" type="submit">Guardar momento</button><button class="btn secondary" type="button" data-action="cancel-match-evidence" hidden>Cancelar edição</button><p class="notice" data-evidence-feedback hidden></p></form></section>';
   return '<section class="panel match-form"><h3>Factos registados</h3><ul>'+facts.join('')+'</ul><h4>Lances</h4>'+evHtml+'<h4>Utilização</h4>'+usageHtml+'</section>'+proposalSection+evidenceSection+'<form class="panel match-form form section" data-form="match-analysis" data-id="'+id+'"><h3>Leitura do treinador</h3><p class="meta">Factos acima vêm dos registos do jogo. Observações, interpretações, hipóteses e decisões ficam separadas.</p>'+fields+goalFields+'<div class="form-grid"><label class="field"><span>Registo anterior · correu bem</span><textarea name="legacy_positives">'+esc(legacy.correu_bem||'')+'</textarea></label><label class="field"><span>Registo anterior · a melhorar</span><textarea name="legacy_improve">'+esc(legacy.melhorar||'')+'</textarea></label><label class="field"><span>Conclusões anteriores</span><textarea name="legacy_conclusions">'+esc(legacy.conclusoes||'')+'</textarea></label><label class="field"><span>Ações previstas · uma por linha</span><textarea name="legacy_actions">'+esc(linesText(legacy.acoes_proximo_treino))+'</textarea></label></div>'+synced+'<input type="hidden" name="expected_revision" value="'+a.revision+'"><p class="notice" data-analysis-feedback hidden></p><div class="toolbar"><button class="btn accent" type="submit" name="intent" value="save">Guardar análise</button><button class="btn secondary" type="submit" name="intent" value="memory">Guardar análise e atualizar memória</button></div></form>';
 }
-async function viewDocuments(){
-  await refreshRemoteWorkspace();
+async function viewDocuments(options){
+  await refreshRemoteWorkspace(options);
   var docs=await WorkspaceStore.listDocuments();
   var cards=docs.length?docs.map(documentCard).join(""):'<div class="empty">Ainda não existem planos ou análises. Cria o primeiro documento partilhado.</div>';
   var hub='<div class="grid cols-2"><a class="panel planner-hub-card" href="#/treinos"><div class="kicker">Sessões</div><h2>Planeador de treino</h2><p>Constrói treinos por blocos e reutiliza exercícios.</p></a><a class="panel planner-hub-card" href="#/exercicios"><div class="kicker">Biblioteca</div><h2>Exercícios</h2><p>Pesquisa, favoritos e exercícios partilhados com o Head Coach.</p></a></div>';
@@ -707,6 +748,31 @@ async function viewCapture(subjectType,subjectId){
   html+='<div class="toolbar"><button class="btn accent" type="submit">Guardar observação</button><a class="btn secondary" href="#/">Cancelar</a></div></form></section>';
   setView("Registar observação",html,"Workspace");
 }
+function remoteConflictCardHTML(conflict){
+  var reasons={delete_version_mismatch:"A cópia remota mudou depois da eliminação offline; ambas as versões foram preservadas.",remote_deleted_local_dirty:"O registo foi apagado no servidor, mas contém alterações locais pendentes. A cópia local foi preservada.",version_mismatch:"O mesmo registo foi alterado neste dispositivo e no remoto. As duas versões estão preservadas.",duplicate_identity:"Foi encontrada outra identidade para este registo; não foi criada uma cópia adicional.",invalid_local_sync_id:"O identificador guardado neste dispositivo não é um UUID remoto. Os dados ficaram preservados e não foram enviados; é necessária reconciliação.",remote_team_unknown:"Não foi possível confirmar a equipa de origem deste registo; os dados ficaram preservados.",invalid_subject_id:"A atividade referencia um ID antigo sem correspondência. A atividade continua preservada e não foi ligada a outro registo.",ambiguous_external_reference:"A referência corresponde a mais de um registo local. Nenhum foi escolhido automaticamente.",subject_not_found_locally:"O registo de origem da atividade não está neste dispositivo; a atividade continua preservada.",subject_other_team:"O registo de origem pertence a outra equipa; a atividade não foi enviada.",subject_uuid_not_in_team:"A UUID de origem não pertence ao workspace selecionado; a atividade continua preservada.",storage_path_team_mismatch:"O caminho do ficheiro pertence a outro workspace; não foi enviado nem assinado.",storage_signed_url_failed:"O ficheiro continua privado, mas não foi possível abrir uma ligação temporária. A sincronização tentará novamente."};
+  var stores={jogadores:"Atleta",jogos:"Jogo",treinos:"Treino",exercicios:"Exercício",workspace_documents:"Documento",head_coach_memory:"Memória",media_items:"Media",teams:"Equipa",activity_items:"Atividade"};
+  var label=conflict.reason==='delete_version_mismatch'?'Eliminação offline em conflito':conflict.reason==='remote_deleted_local_dirty'?'Eliminação remota em conflito':conflict.reason==='storage_signed_url_failed'?'Media temporariamente indisponível':'Conflito de sincronização';
+  var html='<article class="list-item" data-conflict-card="'+esc(conflict.sync_id||'')+'" data-conflict-store="'+esc(conflict.store||'')+'"><strong>'+label+' · '+esc(conflict.display_name||stores[conflict.store]||'Registo')+'</strong><p>'+esc(reasons[conflict.reason]||'A sincronização detetou versões diferentes e não substituiu os dados locais.')+'</p>';
+  html+='<details class="section"><summary>Detalhes técnicos</summary><p class="meta">Tipo: '+esc(stores[conflict.store]||conflict.store||'desconhecido')+' · ID remoto: '+esc(conflict.sync_id||'indisponível')+' · versão local vista: '+esc(conflict.expected_updated_at||'sem versão')+' · versão remota: '+esc(conflict.remote_updated_at||'indisponível')+'</p></details>';
+  if(conflict.reason==='version_mismatch')html+='<button class="btn secondary" type="button" data-action="review-version-conflict" data-sync-id="'+esc(conflict.sync_id)+'" data-store="'+esc(conflict.store)+'">Comparar versões</button><div class="conflict-review section" data-conflict-review hidden></div>';
+  if(conflict.reason==='delete_version_mismatch')html+='<div class="toolbar"><button class="btn secondary" type="button" data-action="resolve-delete-conflict" data-sync-id="'+esc(conflict.sync_id)+'" data-resolution="keep_remote">Manter versão remota</button><button class="btn secondary" type="button" data-action="resolve-delete-conflict" data-sync-id="'+esc(conflict.sync_id)+'" data-resolution="delete_remote">Confirmar eliminação remota</button></div>';
+  if(conflict.reason==='remote_deleted_local_dirty')html+='<div class="toolbar"><button class="btn secondary" type="button" data-action="restore-local-conflict" data-sync-id="'+esc(conflict.sync_id)+'">Restaurar edição local no remoto</button></div>';
+  return html+'</article>';
+}
+function remoteConflictQueueHTML(conflicts){
+  if(!conflicts||!conflicts.length)return '';
+  var decisions=conflicts.filter(function(item){return ['version_mismatch','delete_version_mismatch','remote_deleted_local_dirty'].includes(item.reason);}).length;
+  var retry=conflicts.filter(function(item){return item.reason==='storage_signed_url_failed';}).length;
+  var investigate=conflicts.length-decisions-retry;
+  var summary=[];
+  if(decisions)summary.push(decisions+' '+(decisions===1?'alteração requer':'alterações requerem')+' escolha do treinador');
+  if(investigate)summary.push(investigate+' '+(investigate===1?'registo aguarda':'registos aguardam')+' correção');
+  if(retry)summary.push(retry===1?'1 falha temporária será repetida automaticamente':retry+' falhas temporárias serão repetidas automaticamente');
+  return '<div class="notice" style="margin-top:12px"><strong>'+conflicts.length+' ocorrências detetadas</strong><p>'+summary.join(' · ')+'. As versões locais e remotas continuam preservadas.</p></div><div class="list section">'+conflicts.map(remoteConflictCardHTML).join('')+'</div>';
+}
+function remoteConflictReviewHTML(versions){
+  return '<div class="notice"><strong>Revê as duas versões · '+esc(versions.store)+'</strong><p>A versão local mantém as alterações deste dispositivo. A versão remota é a última gravação do workspace. A decisão só é aplicada se nenhuma delas tiver mudado desde esta comparação.</p></div><div class="grid cols-2"><section><h4>Neste dispositivo</h4><pre class="conflict-preview">'+esc(JSON.stringify(versions.local,null,2))+'</pre></section><section><h4>No workspace remoto</h4><pre class="conflict-preview">'+esc(JSON.stringify(versions.remote,null,2))+'</pre></section></div><div class="toolbar"><button class="btn secondary" type="button" data-action="resolve-version-conflict" data-resolution="keep_local" data-sync-id="'+esc(versions.sync_id)+'" data-store="'+esc(versions.store)+'" data-remote-version="'+esc(versions.remote_updated_at)+'" data-local-version="'+esc(versions.local_updated_at||'')+'">Manter versão deste dispositivo</button><button class="btn secondary" type="button" data-action="resolve-version-conflict" data-resolution="keep_remote" data-sync-id="'+esc(versions.sync_id)+'" data-store="'+esc(versions.store)+'" data-remote-version="'+esc(versions.remote_updated_at)+'" data-local-version="'+esc(versions.local_updated_at||'')+'">Usar versão do workspace remoto</button></div>';
+}
 function remoteAccountHTML(status,teams,options){
   if(!status.configured){
     return '<h2 style="font-size:22px;margin:8px 0">Ainda local</h2><p class="lead">Guarda primeiro o Project URL e a publishable key.</p>';
@@ -727,7 +793,7 @@ function remoteAccountHTML(status,teams,options){
     html+='<div class="hint">Consolidar faz uma união segura dos dados locais deste dispositivo com o workspace remoto, sem apagar conteúdo durante a reconciliação.</div>';
     html+='<div class="hint">ID remoto: '+esc(status.remoteTeamId)+'</div>';
     if(status.lastSyncAt) html+='<div class="hint">Última sincronização: '+esc(new Date(status.lastSyncAt).toLocaleString("pt-PT"))+'</div>';
-    if(status.conflicts&&status.conflicts.length) html+='<div class="notice" style="margin-top:12px">'+status.conflicts.length+' conflito(s) aguardam revisão. Nenhum dado foi sobrescrito.</div><div class="list section">'+status.conflicts.map(function(conflict){var reasons={delete_version_mismatch:"A cópia remota mudou depois da eliminação offline; ambas as versões foram preservadas.",remote_deleted_local_dirty:"O registo foi apagado no servidor, mas contém alterações locais pendentes. A cópia local foi preservada.",version_mismatch:"O mesmo registo foi alterado neste dispositivo e no remoto. A cópia local foi preservada.",duplicate_identity:"Foi encontrada outra identidade para este registo; não foi criada uma cópia adicional.",invalid_local_sync_id:"O identificador guardado neste dispositivo não é um UUID remoto. Os dados ficaram preservados e não foram enviados; como existe uma versão remota anterior ou uma eliminação pendente, é necessária reconciliação.",remote_team_unknown:"Não foi possível confirmar a equipa de origem deste registo; os dados ficaram preservados.",storage_path_team_mismatch:"O caminho do ficheiro pertence a outro workspace; não foi enviado nem assinado.",storage_signed_url_failed:"O ficheiro continua privado, mas não foi possível abrir uma ligação temporária. A sincronização tentará novamente."};return '<article class="list-item"><strong>'+esc(conflict.reason==='delete_version_mismatch'?'Eliminação offline em conflito':conflict.reason==='remote_deleted_local_dirty'?'Eliminação remota em conflito':'Conflito de sincronização')+' · '+esc(conflict.store)+'</strong><p>'+esc(reasons[conflict.reason]||'A sincronização detetou versões diferentes e não substituiu os dados locais.')+'</p><p class="meta">ID remoto: '+esc(conflict.sync_id||'indisponível')+' · versão local vista: '+esc(conflict.expected_updated_at||'sem versão')+' · versão remota: '+esc(conflict.remote_updated_at||'indisponível')+'</p>'+(conflict.reason==='delete_version_mismatch'?'<div class="toolbar"><button class="btn secondary" type="button" data-action="resolve-delete-conflict" data-sync-id="'+esc(conflict.sync_id)+'" data-resolution="keep_remote">Manter versão remota</button><button class="btn secondary" type="button" data-action="resolve-delete-conflict" data-sync-id="'+esc(conflict.sync_id)+'" data-resolution="delete_remote">Confirmar eliminação remota</button></div>':conflict.reason==='remote_deleted_local_dirty'?'<div class="toolbar"><button class="btn secondary" type="button" data-action="restore-local-conflict" data-sync-id="'+esc(conflict.sync_id)+'">Restaurar edição local no remoto</button></div>':'')+'</article>';}).join('')+'</div>';
+    if(status.conflicts&&status.conflicts.length) html+=remoteConflictQueueHTML(status.conflicts);
   }
   html+='<button class="link" type="button" data-action="remote-logout">Terminar sessão</button></div>';
   return html;
@@ -781,6 +847,14 @@ function mcpConnectorsHTML(status,data,error){
 async function viewSettings(){
   var s=await WorkspaceStore.buildSnapshot();
   var status=await RemoteWorkspace.status();
+  status.conflicts=await Promise.all((status.conflicts||[]).map(async function(conflict){
+    if(conflict.local_id==null)return conflict;
+    try{
+      var row=await DB.obter(conflict.store,conflict.local_id);
+      var name=row&&(row.nome||row.adversario||row.title||row.titulo||row.objetivo||row.name);
+      return name?Object.assign({},conflict,{display_name:String(name).slice(0,120)}):conflict;
+    }catch(_){return conflict;}
+  }));
   var config=RemoteWorkspace.getConfig();
   var teams=[], remoteError="", mcpData=null, mcpError="";
   if(status.signedIn){
@@ -894,6 +968,22 @@ app.addEventListener("click",async function(event){
   var target=event.target.closest("[data-action]");
   if(!target) return;
   var action=target.dataset.action;
+  if(action==="review-version-conflict"){
+    target.disabled=true;
+    try{var versions=await RemoteWorkspace.readVersionConflict(target.dataset.syncId,target.dataset.store);var reviewBox=target.closest('[data-conflict-card]').querySelector('[data-conflict-review]');reviewBox.innerHTML=remoteConflictReviewHTML(versions);reviewBox.hidden=false;}
+    catch(error){alert("Não foi possível comparar as versões: "+error.message);}
+    finally{target.disabled=false;}
+    return;
+  }
+  if(action==="resolve-version-conflict"){
+    var keepLocal=target.dataset.resolution==="keep_local";
+    var message=keepLocal?"Manter a versão deste dispositivo e sincronizá-la sobre a versão remota? A outra versão deixará de ser a ativa, mas a escrita será recusada se o remoto tiver mudado desde a comparação.":"Usar a versão remota neste dispositivo? As alterações locais em conflito serão substituídas depois de confirmar que as duas versões continuam iguais às comparadas.";
+    if(!confirm(message))return;
+    target.disabled=true;
+    try{var resolved=await RemoteWorkspace.resolveVersionConflict(target.dataset.syncId,target.dataset.store,target.dataset.resolution,target.dataset.remoteVersion,target.dataset.localVersion||null);var resolvedMessage=resolved.conflicts.length?"A sincronização encontrou novos conflitos. As versões mantêm-se preservadas.":keepLocal?"Versão deste dispositivo sincronizada.":"Versão remota aplicada neste dispositivo.";alert(resolvedMessage);return router();}
+    catch(error){alert("Não foi possível resolver o conflito: "+error.message);return;}
+    finally{target.disabled=false;}
+  }
   if(action==="restore-local-conflict"){
     if(!confirm("Restaurar o registo apagado no remoto e sincronizar as alterações locais pendentes?"))return;
     target.disabled=true;
@@ -1160,7 +1250,27 @@ app.addEventListener("submit",async function(event){
     try{var goalDoc=fd.get("doc_id")?await WorkspaceStore.getDocument(Number(fd.get("doc_id"))):null,sessionRefs=fd.getAll("session_refs").map(function(v){var i=v.indexOf(":");return{type:v.slice(0,i),id:v.slice(i+1)};}),memoryRows=await HeadCoachMemory.list(DEFAULT_TEAM_ID),extraEvidence=fd.getAll("evidence_refs").map(function(v){var i=v.indexOf(":");return{type:v.slice(0,i),id:v.slice(i+1)};}).filter(function(ref){return ref.type==="memory"&&memoryRows.some(function(x){return String(x.sync_id)===String(ref.id);});}),exerciseRows=await DB.porIndice("exercicios","team_id",DEFAULT_TEAM_ID),exerciseRefs=fd.getAll("exercise_refs").filter(function(ref){return exerciseRows.some(function(x){return String(x.sync_id)===String(ref);});}).map(function(ref){return{type:"exercise",id:ref};}),goalData=TeamDevelopment.saveGoal(goalDoc,{title:fd.get("title"),identified_at:fd.get("identified_at"),stage:fd.get("stage"),sessions:sessionRefs,evidence:sessionRefs.concat(extraEvidence),exercises:exerciseRefs,observations:fd.get("observations"),interpretation:fd.get("interpretation"),hypothesis:fd.get("hypothesis"),evaluation:fd.get("evaluation"),coach_decision:fd.get("coach_decision")},{expected_revision:Number(fd.get("expected_revision"))});var goalRefs=sessionRefs.concat(extraEvidence,exerciseRefs);await saveTeamDevelopmentDocument(form,"team_goal",goalData,goalData.title,goalData.identified_at,goalRefs);return router();}catch(error){var goalFeedback=form.querySelector("[data-team-feedback]");goalFeedback.textContent=error.message;goalFeedback.hidden=false;return;}
   }
   if(type==="season"){
-    try{var seasonDoc=fd.get("doc_id")?await WorkspaceStore.getDocument(Number(fd.get("doc_id"))):null;if(!seasonDoc){seasonDoc=(await WorkspaceStore.listDocuments(DEFAULT_TEAM_ID,{includeArchived:true})).find(x=>x.type==="season_index")||null;}var currentIndex=VisionSeasons.state(seasonDoc),rosterRefs=fd.getAll("roster_refs"),allPlayers=await DB.porIndice("jogadores","team_id",DEFAULT_TEAM_ID),roster=rosterRefs.map(function(ref){var p=allPlayers.find(function(x){return x.sync_id===ref;});return p?{ref:p.sync_id,name:p.nome,number:p.numero??null}:null;}).filter(Boolean),seasonData=VisionSeasons.save(seasonDoc,{id:fd.get("season_id")||null,name:fd.get("name"),start_date:fd.get("start_date"),end_date:fd.get("end_date"),roster:roster,activate:fd.get("activate")==="yes"||!currentIndex.active_id},{expected_revision:Number(fd.get("expected_revision"))}),stamp=new Date().toISOString();if(seasonDoc){await DB.modificar("workspace_documents",seasonDoc.id,function(current){if(!fd.get("expected_updated_at")||current.updated_at!==fd.get("expected_updated_at"))throw new Error("O arquivo de épocas mudou noutro dispositivo. Reabre e compara antes de guardar.");return Object.assign({},current,{body:JSON.stringify(seasonData),updated_at:stamp,title:"Arquivo de épocas",target_date:seasonData.items.find(function(x){return x.id===seasonData.active_id;})?.start_date||null,updated_by:"human",updated_by_label:HUMAN_LABEL});});}else{await DB.criar("workspace_documents",{team_id:DEFAULT_TEAM_ID,type:"season_index",title:"Arquivo de épocas",body:JSON.stringify(seasonData),status:"ready",target_date:seasonData.items.find(function(x){return x.id===seasonData.active_id;})?.start_date||null,created_at:stamp,updated_at:stamp,external_key:"season-index:"+DEFAULT_TEAM_ID,sync_id:await VisionSeasons.stableIndexId(DEFAULT_TEAM_ID),created_by:"human",created_by_label:HUMAN_LABEL,updated_by:"human",updated_by_label:HUMAN_LABEL});}var activeSeason=seasonData.items.find(function(x){return x.id===seasonData.active_id;});if(activeSeason)await DB.modificar("teams",DEFAULT_TEAM_ID,current=>({...current,epoca:activeSeason.name}));await WorkspaceStore.logActivity({team_id:DEFAULT_TEAM_ID,actor:"human",actor_label:HUMAN_LABEL,action:"updated_seasons",summary:"Atualizou o arquivo de épocas · "+(activeSeason?.name||fd.get("name")),entity_type:"document",entity_id:seasonDoc?.sync_id||"season-index:"+DEFAULT_TEAM_ID});return router();}catch(error){var seasonFeedback=form.querySelector("[data-season-feedback]");seasonFeedback.textContent=error.message;seasonFeedback.hidden=false;return;}
+    try{
+      var seasonDoc=fd.get("doc_id")?await WorkspaceStore.getDocument(Number(fd.get("doc_id"))):null;
+      if(!seasonDoc)seasonDoc=(await WorkspaceStore.listDocuments(DEFAULT_TEAM_ID,{includeArchived:true})).find(x=>x.type==="season_index")||null;
+      var currentIndex=VisionSeasons.state(seasonDoc),rosterRefs=fd.getAll("roster_refs"),allPlayers=await DB.porIndice("jogadores","team_id",DEFAULT_TEAM_ID);
+      var roster=rosterRefs.map(function(ref){var p=allPlayers.find(function(x){return x.sync_id===ref;});return p?{ref:p.sync_id,name:p.nome,number:p.numero??null}:null;}).filter(Boolean);
+      var seasonData=VisionSeasons.save(seasonDoc,{id:fd.get("season_id")||null,name:fd.get("name"),start_date:fd.get("start_date"),end_date:fd.get("end_date"),roster:roster,activate:fd.get("activate")==="yes"||!currentIndex.active_id},{expected_revision:Number(fd.get("expected_revision"))});
+      var stamp=new Date().toISOString();
+      if(seasonDoc){
+        await DB.modificar("workspace_documents",seasonDoc.id,function(current){
+          if(!fd.get("expected_updated_at")||current.updated_at!==fd.get("expected_updated_at"))throw new Error("O arquivo de épocas mudou noutro dispositivo. Reabre e compara antes de guardar.");
+          return Object.assign({},current,{body:JSON.stringify(seasonData),updated_at:stamp,title:"Arquivo de épocas",target_date:seasonData.items.find(function(x){return x.id===seasonData.active_id;})?.start_date||null,updated_by:"human",updated_by_label:HUMAN_LABEL});
+        });
+      }else{
+        var newSeasonDocId=await DB.criar("workspace_documents",{team_id:DEFAULT_TEAM_ID,type:"season_index",title:"Arquivo de épocas",body:JSON.stringify(seasonData),status:"ready",target_date:seasonData.items.find(function(x){return x.id===seasonData.active_id;})?.start_date||null,created_at:stamp,updated_at:stamp,external_key:"season-index:"+DEFAULT_TEAM_ID,sync_id:await VisionSeasons.stableIndexId(DEFAULT_TEAM_ID),created_by:"human",created_by_label:HUMAN_LABEL,updated_by:"human",updated_by_label:HUMAN_LABEL});
+        seasonDoc=await DB.obter("workspace_documents",newSeasonDocId);
+      }
+      var activeSeason=seasonData.items.find(function(x){return x.id===seasonData.active_id;});
+      if(activeSeason)await DB.modificar("teams",DEFAULT_TEAM_ID,current=>({...current,epoca:activeSeason.name}));
+      await WorkspaceStore.logActivity({team_id:DEFAULT_TEAM_ID,actor:"human",actor_label:HUMAN_LABEL,action:"updated_seasons",summary:"Atualizou o arquivo de épocas · "+(activeSeason?.name||fd.get("name")),entity_type:"document",entity_id:seasonDoc?.sync_id||seasonDoc?.id});
+      return router();
+    }catch(error){var seasonFeedback=form.querySelector("[data-season-feedback]");seasonFeedback.textContent=error.message;seasonFeedback.hidden=false;return;}
   }
 
   if(type==="remote-config"){
