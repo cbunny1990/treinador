@@ -174,6 +174,10 @@ A confirmação de um envio compara a revisão local exata dentro da transação
 
 O mesmo controlo aplica-se a media. Uma mudança de título ou nota feita durante o upload permanece pendente sem repetir os bytes. Os novos uploads locais usam um caminho privado com SHA-256 dos bytes: uma alteração posterior da fotografia recebe um caminho diferente e o ficheiro anterior permanece intacto. Se os bytes mudarem durante o upload, a nova versão continua pendente. Um tombstone de media pendente impede que a fotografia reapareça no pull.
 
+Ao descarregar, a app compara dentro da transação IndexedDB a cópia local vista antes de hidratar referências ou pedir uma URL assinada. Se o treinador a tiver alterado entretanto, mantém a edição local e mostra conflito quando a versão remota diverge. Um registo apagado nesse intervalo não é recriado pela confirmação do pull.
+
+A fotografia de perfil é atualizada pela media associada sem gravar uma ficha de atleta que tenha mudado no mesmo intervalo. Uma fotografia local mais recente aguarda a criação/receção da sua media; a ausência temporária de media não apaga um `data_url` sem referência gerida.
+
 Depois da v68, uma referência de documento/memória/media já expressa em UUID podia ser interpretada como ID numérico da IndexedDB. A v69 valida o UUID na equipa remota antes de o reutilizar; uma referência local ausente ou inválida fica em conflito, preservando o registo de origem, enquanto a restante sincronização continua.
 
 A reformulação remove o produto antigo da experiência sem apagar silenciosamente os dados existentes. Stores legados podem ser eliminados numa migração posterior apenas depois de confirmar que nada útil precisa de ser convertido para o novo modelo.

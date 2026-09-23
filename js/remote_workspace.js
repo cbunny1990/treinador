@@ -777,6 +777,27 @@ const RemoteWorkspace = {
       throw error;
     }
   },
+  async _applyPulledRecord(store, local, merged) {
+    if (typeof DB.modificar !== "function") {
+      await DB.atualizar(store, merged, { remote: true });
+      return { applied: true };
+    }
+    try {
+      await DB.modificar(store, local.id, (current) => {
+        if (JSON.stringify(current) !== JSON.stringify(local)) {
+          const error = new Error("O registo local mudou durante a leitura remota.");
+          error.code = "LOCAL_PULL_CHANGED";
+          throw error;
+        }
+        return merged;
+      }, { remote: true });
+      return { applied: true };
+    } catch (error) {
+      const current = await DB.obter(store, local.id);
+      if (error.code === "LOCAL_PULL_CHANGED" || !current) return { applied: false, current };
+      throw error;
+    }
+  },
   async _syncRecords(remoteTeamId, userId) {
     const client = await this.init();
     const first = await client.from("workspace_records")
@@ -978,7 +999,13 @@ const RemoteWorkspace = {
       if (local) {
         merged.id = local.id;
         if (local.remote_updated_at === remote.updated_at) continue;
-        await DB.atualizar(store, merged, { remote: true });
+        const applied = await this._applyPulledRecord(store, local, merged);
+        if (!applied.applied) {
+          if (applied.current?.sync_dirty && applied.current.remote_updated_at !== remote.updated_at) {
+            addConflict(remoteConflict(store, applied.current, remote));
+          }
+          continue;
+        }
       } else {
         await DB.criar(store, remoteFreshLocalRecord(merged), { remote: true });
       }
@@ -1315,7 +1342,13 @@ const RemoteWorkspace = {
       if (local) {
         if (local.remote_updated_at === remote.updated_at && !remote.storage_path) continue;
         merged.id = local.id;
-        await DB.atualizar("media_items", merged, { remote: true });
+        const applied = await this._applyPulledRecord("media_items", local, merged);
+        if (!applied.applied) {
+          if (applied.current?.sync_dirty && applied.current.remote_updated_at !== remote.updated_at) {
+            addConflict(remoteConflict("media_items", applied.current, remote));
+          }
+          continue;
+        }
       } else {
         await DB.criar("media_items", remoteFreshLocalRecord(merged), { remote: true });
       }
@@ -1341,18 +1374,25 @@ const RemoteWorkspace = {
     for (const player of players) {
       const photo = profilePhotos.find((item) => String(item.subject_id) === String(player.id));
       const nextPhoto = photo ? (photo.data_url || photo.url || null) : null;
+      const earlierPhotoStillPresent = !player.profile_media_ref || profilePhotos.some((item) => item.sync_id === player.profile_media_ref);
+      const newerLocalPhoto = String(player.foto || "").startsWith("data:")
+        && player.foto !== photo?.data_url
+        && player.updated_at
+        && earlierPhotoStillPresent
+        && String(player.updated_at) > String(photo?.updated_at || photo?.created_at || "");
+      if (newerLocalPhoto) continue;
       if (nextPhoto) {
         const photoRef = photo.sync_id || null;
         if (player.foto !== nextPhoto || player.profile_media_ref !== photoRef) {
-          await DB.atualizar("jogadores", { ...player, foto: nextPhoto, profile_media_ref: photoRef }, { remote: true });
+          await this._applyPulledRecord("jogadores", player, { ...player, foto: nextPhoto, profile_media_ref: photoRef });
         }
         continue;
       }
-      const managedPhoto = !!player.profile_media_ref || String(player.foto || "").startsWith("data:") || /\/storage\/v1\/object\/sign\/team-media\//i.test(String(player.foto || ""));
+      const managedPhoto = !!player.profile_media_ref;
       if (managedPhoto) {
         const cleared = { ...player, foto: null };
         delete cleared.profile_media_ref;
-        await DB.atualizar("jogadores", cleared, { remote: true });
+        await this._applyPulledRecord("jogadores", player, cleared);
       }
     }
   },

@@ -468,6 +468,61 @@ test("foto de perfil segue a media associada e a remoção limpa apenas referên
   } finally { globalThis.DB = originalDB; globalThis.DEFAULT_TEAM_ID = originalTeam; }
 });
 
+test("fotografia local recente espera pela media sem apagar a ficha ou a foto anterior", async () => {
+  const originalDB = globalThis.DB, originalTeam = globalThis.DEFAULT_TEAM_ID;
+  const db = createDeviceDatabase();
+  globalThis.DB = db;
+  globalThis.DEFAULT_TEAM_ID = "default";
+  try {
+    const id = await db.criar("jogadores", {
+      team_id: "default", nome: "Atleta", foto: "data:image/png;base64,AQ==",
+      profile_media_ref: "old-photo", updated_at: "2026-09-23T12:00:00Z", sync_dirty: true,
+    });
+    await db.criar("media_items", {
+      team_id: "default", subject_type: "player", subject_id: id,
+      type: "photo", note: "Foto de perfil do atleta", sync_id: "old-photo",
+      url: "https://signed.example/old-photo", updated_at: "2026-09-22T12:00:00Z",
+    });
+    await RemoteWorkspace._refreshPlayerProfilePhotos();
+    assert.equal((await db.obter("jogadores", id)).foto, "data:image/png;base64,AQ==");
+
+    const oldPhoto = (await db.listar("media_items"))[0];
+    await db.apagar("media_items", oldPhoto.id, { remote: true });
+    await db.modificar("jogadores", id, row => ({ ...row, profile_media_ref: null }));
+    await RemoteWorkspace._refreshPlayerProfilePhotos();
+    assert.equal((await db.obter("jogadores", id)).foto, "data:image/png;base64,AQ==");
+  } finally { globalThis.DB = originalDB; globalThis.DEFAULT_TEAM_ID = originalTeam; }
+});
+
+test("atualização da foto não sobrescreve edição da ficha feita no mesmo instante", async () => {
+  const originalDB = globalThis.DB, originalTeam = globalThis.DEFAULT_TEAM_ID;
+  const db = createDeviceDatabase();
+  const originalModify = db.modificar;
+  globalThis.DB = db;
+  globalThis.DEFAULT_TEAM_ID = "default";
+  try {
+    const id = await db.criar("jogadores", {
+      team_id: "default", nome: "Nome inicial", foto: null, sync_dirty: false,
+    });
+    await db.criar("media_items", {
+      team_id: "default", subject_type: "player", subject_id: id,
+      type: "photo", note: "Foto de perfil do atleta", sync_id: "photo-1",
+      url: "https://signed.example/photo-1", updated_at: "2026-09-23T12:00:00Z",
+    });
+    db.modificar = async function (store, targetId, transform, options) {
+      if (store === "jogadores") {
+        await originalModify.call(this, store, targetId, row => ({ ...row, nome: "Nome editado", sync_dirty: true }));
+      }
+      return originalModify.call(this, store, targetId, transform, options);
+    };
+    await RemoteWorkspace._refreshPlayerProfilePhotos();
+    const player = await db.obter("jogadores", id);
+    assert.equal(player.nome, "Nome editado");
+    assert.equal(player.foto, null);
+    assert.equal(player.sync_dirty, true);
+  } finally { globalThis.DB = originalDB; globalThis.DEFAULT_TEAM_ID = originalTeam; }
+});
+
 test("media sem origem confirmável não escapa ao segundo passe nem é enviada a outra equipa", async () => {
   const originalInit = RemoteWorkspace.init, originalDB = globalThis.DB, originalTeam = globalThis.DEFAULT_TEAM_ID;
   const media = [{
@@ -1303,6 +1358,93 @@ test("edições concorrentes em dois dispositivos produzem conflito sem overwrit
   });
 });
 
+test("pull de jogo não sobrescreve edição local feita durante a hidratação", async () => {
+  await withTwoDeviceSync(async ({ devices, remoteTeamId, useDevice }) => {
+    useDevice(0);
+    await devices[0].criar("jogos", {
+      team_id: "default", adversario: "Rivais", data: "2026-10-03",
+      external_key: "pull-race-match", nota_tatica: "Inicial", sync_dirty: true,
+    });
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    useDevice(1);
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    useDevice(0);
+    const first = (await devices[0].listar("jogos"))[0];
+    await devices[0].atualizar("jogos", { ...first, nota_tatica: "Mudança remota", sync_dirty: true });
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+
+    const originalHydrate = RemoteWorkspace._hydratePayload;
+    let enter, release;
+    const entered = new Promise((resolve) => { enter = resolve; });
+    const waiting = new Promise((resolve) => { release = resolve; });
+    RemoteWorkspace._hydratePayload = async function (...args) {
+      enter();
+      await waiting;
+      return originalHydrate.apply(this, args);
+    };
+    try {
+      useDevice(1);
+      const pending = RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+      await entered;
+      const second = (await devices[1].listar("jogos"))[0];
+      await devices[1].atualizar("jogos", {
+        ...second, nota_tatica: "Edição local durante pull", sync_dirty: true,
+        sync_local_updated_at: "local-during-pull",
+      });
+      release();
+      const result = await pending;
+      assert.equal(result.pulled, 0);
+      assert.equal(result.conflicts[0].reason, "version_mismatch");
+      assert.equal((await devices[1].obter("jogos", second.id)).nota_tatica, "Edição local durante pull");
+    } finally {
+      release();
+      RemoteWorkspace._hydratePayload = originalHydrate;
+    }
+  });
+});
+
+test("pull não recria jogo apagado durante a hidratação", async () => {
+  await withTwoDeviceSync(async ({ devices, remoteTeamId, useDevice }) => {
+    useDevice(0);
+    await devices[0].criar("jogos", {
+      team_id: "default", adversario: "Rivais", data: "2026-10-04",
+      external_key: "pull-delete-match", nota_tatica: "Inicial", sync_dirty: true,
+    });
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    useDevice(1);
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    useDevice(0);
+    const first = (await devices[0].listar("jogos"))[0];
+    await devices[0].atualizar("jogos", { ...first, nota_tatica: "Mudança remota", sync_dirty: true });
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+
+    const originalHydrate = RemoteWorkspace._hydratePayload;
+    let enter, release;
+    const entered = new Promise((resolve) => { enter = resolve; });
+    const waiting = new Promise((resolve) => { release = resolve; });
+    RemoteWorkspace._hydratePayload = async function (...args) {
+      enter();
+      await waiting;
+      return originalHydrate.apply(this, args);
+    };
+    try {
+      useDevice(1);
+      const pending = RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+      await entered;
+      const second = (await devices[1].listar("jogos"))[0];
+      await devices[1].apagar("jogos", second.id);
+      release();
+      const result = await pending;
+      assert.equal(result.pulled, 0);
+      assert.equal((await devices[1].listar("jogos")).length, 0);
+      assert.equal((await devices[1].listar("sync_tombstones")).length, 1);
+    } finally {
+      release();
+      RemoteWorkspace._hydratePayload = originalHydrate;
+    }
+  });
+});
+
 test("media carregada num dispositivo sincroniza em privado e aparece no outro com referência remota estável", async () => {
   await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
     useDevice(0);
@@ -1330,6 +1472,60 @@ test("media carregada num dispositivo sincroniza em privado e aparece no outro c
     assert.equal(secondLocal.storage_path, remote.mediaRows[0].storage_path);
     assert.equal(secondLocal.url, `https://signed.example/${remote.mediaRows[0].storage_path}`);
     assert.equal((await devices[1].listar("media_items")).length, 1);
+  });
+});
+
+test("pull de media não apaga nota local feita enquanto recebe URL assinada", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    useDevice(0);
+    const id = await devices[0].criar("media_items", {
+      team_id: "default", subject_type: "team", subject_id: "default",
+      type: "file", title: "Evidência", file_name: "evidencia.txt",
+      mime_type: "text/plain", data_url: "data:text/plain;base64,QQ==", sync_dirty: true,
+    });
+    await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+    useDevice(1);
+    await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+    useDevice(0);
+    const first = await devices[0].obter("media_items", id);
+    await devices[0].atualizar("media_items", { ...first, title: "Título remoto", sync_dirty: true });
+    await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+
+    const originalFrom = remote.client.storage.from;
+    let enter, release;
+    const entered = new Promise((resolve) => { enter = resolve; });
+    const waiting = new Promise((resolve) => { release = resolve; });
+    remote.client.storage.from = function (...args) {
+      const bucket = originalFrom.apply(this, args);
+      return {
+        ...bucket,
+        async createSignedUrl(...urlArgs) {
+          enter();
+          await waiting;
+          return bucket.createSignedUrl(...urlArgs);
+        },
+      };
+    };
+    try {
+      useDevice(1);
+      const pending = RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+      await entered;
+      const second = (await devices[1].listar("media_items"))[0];
+      await devices[1].atualizar("media_items", {
+        ...second, note: "Nota local durante pull", sync_dirty: true,
+        sync_local_updated_at: "local-during-pull",
+      });
+      release();
+      const result = await pending;
+      assert.equal(result.pulled, 0);
+      assert.equal(result.conflicts[0].reason, "version_mismatch");
+      const retained = await devices[1].obter("media_items", second.id);
+      assert.equal(retained.note, "Nota local durante pull");
+      assert.equal(retained.title, "Evidência");
+    } finally {
+      release();
+      remote.client.storage.from = originalFrom;
+    }
   });
 });
 
