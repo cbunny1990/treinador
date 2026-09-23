@@ -9,7 +9,7 @@ const anonKey = process.env.VISION_COACH_SUPABASE_LOCAL_ANON_KEY || "";
 const serviceKey = process.env.VISION_COACH_SUPABASE_LOCAL_SERVICE_KEY || "";
 const enabled = !!(url && anonKey && serviceKey);
 
-test("duas PWA sincronizam ida e volta; offline, edição mobile e eliminação PC propagam sem duplicar", {
+test("duas PWA sincronizam ida e volta após trabalho offline, sem conflitos ou ressurreição", {
   skip: !enabled && "requer apenas a stack Supabase local; nunca usar credenciais de produção",
   timeout: 120_000,
 }, async ({ page, context, browser }) => {
@@ -121,24 +121,32 @@ test("duas PWA sincronizam ida e volta; offline, edição mobile e eliminação 
     }, gameSyncId);
     expect(phoneMatch).toMatchObject({ adversario: "Jogo de sincronização após reload", sync_dirty: false });
 
-    await phone.evaluate(async ({ id, syncId }) => {
-      await DB.modificar("jogos", id, (row) => ({ ...row, adversario: "Editado no telemóvel" }));
+    await mobileContext.setOffline(true);
+    await phone.evaluate(async (id) => {
+      await DB.modificar("jogos", id, (row) => ({ ...row, adversario: "Editado offline no telemóvel" }));
+    }, phoneMatch.id);
+    await mobileContext.setOffline(false);
+    await phone.evaluate(async () => {
       const result = await RemoteWorkspace.syncNow();
       if (result.conflicts.length) throw new Error(JSON.stringify(result.conflicts));
-    }, { id: phoneMatch.id, syncId: gameSyncId });
+    });
     const desktopUpdate = await page.evaluate(async (syncId) => {
       const result = await RemoteWorkspace.syncNow();
       const row = (await DB.listar("jogos")).find((item) => item.sync_id === syncId);
       return { conflicts: result.conflicts, adversario: row?.adversario, dirty: row?.sync_dirty };
     }, gameSyncId);
-    expect(desktopUpdate).toEqual({ conflicts: [], adversario: "Editado no telemóvel", dirty: false });
+    expect(desktopUpdate).toEqual({ conflicts: [], adversario: "Editado offline no telemóvel", dirty: false });
 
+    await context.setOffline(true);
     await page.evaluate(async (syncId) => {
       const row = (await DB.listar("jogos")).find((item) => item.sync_id === syncId);
       await DB.apagar("jogos", row.id, { expected: row });
+    }, gameSyncId);
+    await context.setOffline(false);
+    await page.evaluate(async () => {
       const result = await RemoteWorkspace.syncNow();
       if (result.conflicts.length) throw new Error(JSON.stringify(result.conflicts));
-    }, gameSyncId);
+    });
     const phoneAfterDelete = await phone.evaluate(async (syncId) => {
       const result = await RemoteWorkspace.syncNow();
       const rows = await DB.listar("jogos");
@@ -167,10 +175,20 @@ test("duas PWA sincronizam ida e volta; offline, edição mobile e eliminação 
       if (result.conflicts.length) throw new Error(JSON.stringify(result.conflicts));
       const row = (await DB.listar("jogos")).find((item) => item.sync_id === syncId);
       if (!row) throw new Error("O telemóvel não recebeu o jogo de teste.");
+    }, phoneDeletedSyncId);
+    await mobileContext.setOffline(true);
+    const phoneLocalDelete = await phone.evaluate(async (syncId) => {
+      const row = (await DB.listar("jogos")).find((item) => item.sync_id === syncId);
+      if (!row) throw new Error("O jogo recebido no telemóvel deixou de existir.");
       await DB.apagar("jogos", row.id, { expected: row });
+      return (await DB.listar("sync_tombstones")).some((item) => item.sync_id === syncId);
+    }, phoneDeletedSyncId);
+    expect(phoneLocalDelete).toBe(true);
+    await mobileContext.setOffline(false);
+    await phone.evaluate(async () => {
       const removal = await RemoteWorkspace.syncNow();
       if (removal.conflicts.length) throw new Error(JSON.stringify(removal.conflicts));
-    }, phoneDeletedSyncId);
+    });
     const desktopAfterPhoneDelete = await page.evaluate(async (syncId) => {
       const result = await RemoteWorkspace.syncNow();
       const localCopies = (await DB.listar("jogos")).filter((item) => item.sync_id === syncId).length;
