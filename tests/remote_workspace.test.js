@@ -166,6 +166,113 @@ test("atividade idêntica aceita serializações UTC equivalentes sem criar conf
   }), false);
 });
 
+test("atividade órfã sincroniza sem vínculo e mantém a origem original como proveniência", async () => {
+  const original = {
+    init: RemoteWorkspace.init,
+    subjectRemoteRef: RemoteWorkspace._subjectRemoteRef,
+    DB: globalThis.DB,
+    DEFAULT_TEAM_ID: globalThis.DEFAULT_TEAM_ID,
+  };
+  const remoteTeamId = "team-activity-test";
+  const syncId = "11111111-1111-4111-8111-111111111111";
+  let local = {
+    id: 44, team_id: "default", sync_id: syncId, remote_team_id: remoteTeamId,
+    sync_dirty: true, actor: "human", actor_label: "Treinador", action: "created_document",
+    summary: "Criou nota", entity_type: "document", entity_id: 731,
+    metadata: { source: "coach" }, created_at: "2026-09-22T10:00:00.000Z",
+  };
+  let inserted = null;
+  const client = {
+    from(table) {
+      assert.equal(table, "activity_log");
+      return {
+        select() { return this; },
+        eq() { return this; },
+        order() { return Promise.resolve({ data: [], error: null }); },
+        insert(row) {
+          inserted = { ...row, created_at: row.created_at };
+          return { select() { return this; }, single: async () => ({ data: inserted, error: null }) };
+        },
+      };
+    },
+  };
+  globalThis.DEFAULT_TEAM_ID = "default";
+  globalThis.DB = {
+    async listar(store) { assert.equal(store, "activity_items"); return [{ ...local }]; },
+    async obter(store, id) { assert.equal(store, "activity_items"); return id === local.id ? { ...local } : null; },
+    async atualizar(store, row) { assert.equal(store, "activity_items"); local = { ...row }; return local; },
+  };
+  RemoteWorkspace.init = async () => client;
+  RemoteWorkspace._subjectRemoteRef = async () => {
+    const error = new Error("missing local source");
+    error.code = "LOCAL_REFERENCE_CONFLICT";
+    error.reason = "subject_not_found_locally";
+    throw error;
+  };
+  try {
+    const result = await RemoteWorkspace._syncActivity(remoteTeamId, "coach");
+    assert.equal(result.pushed, 1);
+    assert.equal(result.conflicts.length, 0);
+    assert.equal(inserted.entity_ref, null);
+    assert.deepEqual(inserted.metadata.source, "coach");
+    assert.deepEqual(inserted.metadata._vision_coach_unresolved_origin, {
+      type: "document", reference: "731", scope: "local_device_id", reason: "subject_not_found_locally",
+    });
+    assert.equal(local.entity_id, null);
+    assert.equal(local.sync_dirty, false);
+    assert.deepEqual(local.metadata, inserted.metadata);
+  } finally {
+    RemoteWorkspace.init = original.init;
+    RemoteWorkspace._subjectRemoteRef = original.subjectRemoteRef;
+    globalThis.DB = original.DB;
+    globalThis.DEFAULT_TEAM_ID = original.DEFAULT_TEAM_ID;
+  }
+});
+
+test("UUID de origem fora do workspace fica registado como proveniência sem criar relação", async () => {
+  const original = RemoteWorkspace._subjectRemoteRef;
+  RemoteWorkspace._subjectRemoteRef = async () => {
+    const error = new Error("UUID outside selected team");
+    error.code = "LOCAL_REFERENCE_CONFLICT";
+    error.reason = "subject_uuid_not_in_team";
+    throw error;
+  };
+  try {
+    const row = await RemoteWorkspace._activityRemoteRow({
+      sync_id: "11111111-1111-4111-8111-111111111111", actor: "human",
+      action: "created_document", summary: "Criou nota", entity_type: "document",
+      entity_id: "22222222-2222-4222-8222-222222222222", metadata: {},
+    }, "team", null);
+    assert.equal(row.entity_ref, null);
+    assert.deepEqual(row.metadata._vision_coach_unresolved_origin, {
+      type: "document", reference: "22222222-2222-4222-8222-222222222222",
+      scope: "uuid_unverified_in_workspace", reason: "subject_uuid_not_in_team",
+    });
+  } finally {
+    RemoteWorkspace._subjectRemoteRef = original;
+  }
+});
+
+test("atividade não é desligada automaticamente se a origem for ambígua ou pertencer a outra equipa", async () => {
+  const original = RemoteWorkspace._subjectRemoteRef;
+  try {
+    for (const reason of ["ambiguous_external_reference", "subject_other_team", "remote_team_unknown"]) {
+      RemoteWorkspace._subjectRemoteRef = async () => {
+        const error = new Error(reason);
+        error.code = "LOCAL_REFERENCE_CONFLICT";
+        error.reason = reason;
+        throw error;
+      };
+      await assert.rejects(
+        RemoteWorkspace._activityRemoteRow({ sync_id: "11111111-1111-4111-8111-111111111111", entity_type: "document", entity_id: 4 }, "team", null),
+        (error) => error.reason === reason,
+      );
+    }
+  } finally {
+    RemoteWorkspace._subjectRemoteRef = original;
+  }
+});
+
 test("registo associado a outro workspace remoto nunca é enviado para a equipa selecionada", () => {
   assert.equal(remoteRowBelongsToTeam({ remote_team_id: "team-a" }, "team-a"), true);
   assert.equal(remoteRowBelongsToTeam({ remote_team_id: "team-a" }, "team-b"), false);

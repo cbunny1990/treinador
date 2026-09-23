@@ -2,6 +2,21 @@
 
 const { test, expect } = require("@playwright/test");
 
+test("atividade sincronizada sem origem relacional apresenta a proveniência preservada", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(async () => {
+    await DB.criar("activity_items", {
+      team_id: DEFAULT_TEAM_ID, actor: "human", actor_label: "Treinador",
+      action: "created_document", summary: "Criou nota histórica", entity_type: "document", entity_id: null,
+      metadata: { _vision_coach_unresolved_origin: {
+        type: "document", reference: "731", scope: "local_device_id", reason: "subject_not_found_locally",
+      } }, created_at: "2026-09-22T10:00:00.000Z",
+    });
+  });
+  await page.goto("/#/timeline");
+  await expect(page.getByText("Origem preservada sem ligação · documento · referência original 731")).toBeVisible();
+});
+
 async function seedV3(page) {
   await page.goto("/nao-existe");
   await page.evaluate(async () => {
@@ -946,7 +961,7 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
   await expect(page.getByText(/Atualização disponível\. Guarda o que estás a fazer/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeVisible();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v118"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v119"))).toBeNull();
 });
 
 test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
@@ -959,7 +974,7 @@ test("service worker update after an older cached reload does not stay suppresse
   }).catch(() => {});
   await reloaded;
   await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v118"))).toBe("1");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v119"))).toBe("1");
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {

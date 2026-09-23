@@ -214,11 +214,37 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.equal(pcHistoryTrainingAfterPush.blocos[0].exercise_ref, refs.exercise);
     assert.equal(pcHistoryTrainingAfterPush.session.blocks[0].exercise_ref, refs.exercise);
 
+    const orphanActivityId = crypto.randomUUID();
+    await devices[0].criar("activity_items", {
+      team_id: "local-coach", sync_id: orphanActivityId, remote_team_id: teamId, sync_dirty: true,
+      actor: "human", actor_label: "Treinador", action: "created_document", summary: "Atividade histórica local",
+      entity_type: "document", entity_id: 731, metadata: { origin: "coach" }, created_at: "2026-09-22T10:00:00.000Z",
+    });
+    const activityPushed = await RemoteWorkspace._syncActivity(teamId, owner.user.id);
+    assert.equal(activityPushed.pushed, 1);
+    assert.equal(activityPushed.conflicts.length, 0);
+    const savedActivity = await owner.client.from("activity_log").select("*").eq("id", orphanActivityId).single();
+    assert.ifError(savedActivity.error);
+    assert.equal(savedActivity.data.entity_ref, null);
+    assert.equal(savedActivity.data.metadata.origin, "coach");
+    assert.deepEqual(savedActivity.data.metadata._vision_coach_unresolved_origin, {
+      type: "document", reference: "731", scope: "local_device_id", reason: "subject_not_found_locally",
+    });
+    const locallyAcknowledgedActivity = (await devices[0].listar("activity_items"))[0];
+    assert.equal(locallyAcknowledgedActivity.sync_dirty, false);
+    assert.equal(locallyAcknowledgedActivity.entity_id, null);
+
     globalThis.DB = devices[1];
     RemoteWorkspace.init = async () => coach.client;
     await devices[1].criar("sync_tombstones", { store: "seed", sync_id: "force-distinct-local-ids" });
     const pulled = await RemoteWorkspace._syncRecords(teamId, coach.user.id);
     assert.equal(pulled.pulled, 14);
+    const activityPulled = await RemoteWorkspace._syncActivity(teamId, coach.user.id);
+    assert.equal(activityPulled.pulled, 1);
+    assert.equal(activityPulled.conflicts.length, 0);
+    const phoneActivity = (await devices[1].listar("activity_items"))[0];
+    assert.equal(phoneActivity.entity_id, null);
+    assert.deepEqual(phoneActivity.metadata._vision_coach_unresolved_origin, savedActivity.data.metadata._vision_coach_unresolved_origin);
     const phonePlayer = (await devices[1].listar("jogadores")).find((row) => row.sync_id === refs.player);
     const phoneLive = (await devices[1].listar("jogos")).find((row) => row.sync_id === refs.liveMatch);
     const phoneLegacyId = (await devices[1].listar("jogos")).find((row) => row.external_key === "local-sync-legacy-default-id");

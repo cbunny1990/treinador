@@ -1067,9 +1067,26 @@ const RemoteWorkspace = {
   async _activityRemoteRow(local, remoteTeamId, userId) {
     const row = remoteActivityRow(local, remoteTeamId, userId);
     if (local.entity_type && local.entity_id != null) {
-      row.entity_ref = String(await this._subjectRemoteRef(
-        local.entity_type, local.entity_id, remoteTeamId
-      ));
+      try {
+        row.entity_ref = String(await this._subjectRemoteRef(
+          local.entity_type, local.entity_id, remoteTeamId
+        ));
+      } catch (error) {
+        const detachedReferenceReasons = new Set([
+          "subject_uuid_not_in_team", "subject_not_found_locally", "invalid_subject_id",
+        ]);
+        if (error.code !== "LOCAL_REFERENCE_CONFLICT" || !detachedReferenceReasons.has(error.reason)) throw error;
+        row.entity_ref = null;
+        row.metadata = {
+          ...(row.metadata || {}),
+          _vision_coach_unresolved_origin: {
+            type: String(local.entity_type),
+            reference: String(local.entity_id),
+            scope: remoteIsUuid(local.entity_id) ? "uuid_unverified_in_workspace" : "local_device_id",
+            reason: error.reason,
+          },
+        };
+      }
     }
     return row;
   },
@@ -1113,6 +1130,10 @@ const RemoteWorkspace = {
 
         await DB.atualizar("activity_items", {
           ...local,
+          ...(saved.metadata?._vision_coach_unresolved_origin ? {
+            entity_id: null,
+            metadata: saved.metadata,
+          } : {}),
           sync_dirty: false,
           remote_updated_at: saved.created_at,
           remote_team_id: remoteTeamId,
@@ -1134,6 +1155,10 @@ const RemoteWorkspace = {
         }
         await DB.atualizar("activity_items", {
           ...local,
+          ...(existing.metadata?._vision_coach_unresolved_origin ? {
+            entity_id: null,
+            metadata: existing.metadata,
+          } : {}),
           sync_dirty: false,
           remote_updated_at: existing.created_at,
           remote_team_id: remoteTeamId,

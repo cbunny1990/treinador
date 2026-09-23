@@ -308,12 +308,18 @@ async function refreshRemoteWorkspace(options){
   }
 }
 
+function activityOriginNote(origin){
+  if(!origin)return '';
+  var labels={player:'atleta',match:'jogo',training:'treino',document:'documento',memory:'memória',exercise:'exercício',media:'media'};
+  return '<span class="meta">Origem preservada sem ligação · '+esc(labels[origin.type]||origin.type||'registo')+' · referência original '+esc(origin.reference||'indisponível')+'</span>';
+}
 function activityHTML(rows,limit){
   limit=limit||6;
   var items=rows.slice(0,limit);
   if(!items.length) return '<div class="empty">Ainda sem atividade registada neste workspace.</div>';
   return '<div class="list">'+items.map(function(item){
-    return '<div class="list-item row"><span class="grow"><span class="title">'+esc(item.summary||item.action)+'</span><span class="meta">'+fmtDate(item.created_at)+'</span></span>'+actorBadge(item.actor,item.actor_label)+'</div>';
+    var origin=item.metadata&&item.metadata._vision_coach_unresolved_origin;
+    return '<div class="list-item row"><span class="grow"><span class="title">'+esc(item.summary||item.action)+'</span><span class="meta">'+fmtDate(item.created_at)+'</span>'+activityOriginNote(origin)+'</span>'+actorBadge(item.actor,item.actor_label)+'</div>';
   }).join("")+'</div>';
 }
 
@@ -720,7 +726,9 @@ async function viewTimeline(selectedType,selectedId){
   var s=await WorkspaceStore.buildSnapshot();
   var rows=s.timeline.length?s.timeline.map(function(row){
     var href=row.type==="memory"?'#/timeline/memory/'+row.ref.id:row.type==="document"?(row.ref.type==="season_index"?'#/epocas':row.ref.type==="team_goal"||row.ref.type==="weekly_plan"?'#/evolucao':'#/planos/'+row.ref.id):row.type==="match"?'#/equipa/jogo/'+row.ref.id:row.type==="training"?'#/treinos/'+row.ref.id:null;
-    return '<div class="timeline-item"><span class="timeline-dot"></span><div class="card"><div class="row"><span class="badge">'+esc(timelineLabel(row))+'</span><span class="grow"></span>'+actorBadge(row.actor,row.actor_label)+'</div>'+(href?'<a class="title" style="display:block;margin-top:9px" href="'+esc(href)+'">'+esc(row.title)+'</a>':'<div class="title" style="margin-top:9px">'+esc(row.title)+'</div>')+'<div class="meta">'+fmtDate(row.date)+'</div></div></div>';
+    var origin=row.type==='activity'&&row.ref?.metadata?._vision_coach_unresolved_origin;
+    var originNote=activityOriginNote(origin);
+    return '<div class="timeline-item"><span class="timeline-dot"></span><div class="card"><div class="row"><span class="badge">'+esc(timelineLabel(row))+'</span><span class="grow"></span>'+actorBadge(row.actor,row.actor_label)+'</div>'+(href?'<a class="title" style="display:block;margin-top:9px" href="'+esc(href)+'">'+esc(row.title)+'</a>':'<div class="title" style="margin-top:9px">'+esc(row.title)+'</div>')+'<div class="meta">'+fmtDate(row.date)+'</div>'+originNote+'</div></div>';
   }).join(""):'<div class="empty">Ainda não existe histórico.</div>';
   var detail="";if(selectedType==="memory"&&selectedId){var memory=await HeadCoachMemory.get(Number(selectedId));if(memory)detail='<section class="panel"><div class="row"><span class="badge">Observação · '+esc(memory.source?.label||"Treinador")+'</span><span class="grow"></span><span class="meta">'+fmtDate(memory.occurred_at)+'</span></div><h2>'+esc(memory.title)+'</h2><p>'+esc(memory.content).replace(/\n/g,"<br>")+'</p><a class="link" href="#/timeline">Voltar à timeline</a></section>';}
   setView("Timeline",detail+'<div class="section-head"><div><h2>Histórico do workspace</h2><p>Dados, decisões e alterações num único fluxo</p></div><div class="toolbar"><a class="btn secondary" href="#/pesquisa">Pesquisar histórico</a><a class="btn secondary" href="#/capturar">Registar observação</a></div></div><div class="timeline">'+rows+'</div>',"Timeline");
