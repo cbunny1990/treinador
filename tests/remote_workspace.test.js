@@ -744,6 +744,28 @@ test("referência UUID já remota é validada na equipa sem chamar IndexedDB com
   } finally { globalThis.DB = originalDB; RemoteWorkspace.init = originalInit; }
 });
 
+test("jogo histórico preserva referência UUID de atleta depois da eliminação remota", async () => {
+  const team = "22222222-2222-4222-8222-222222222222";
+  const player = "11111111-1111-4111-8111-111111111111";
+  const originalInit = RemoteWorkspace.init;
+  RemoteWorkspace.init = async () => ({ from(table) {
+    assert.equal(table, "workspace_records");
+    return { filters: [], activeOnly: false, select() { return this; }, eq(key, value) { this.filters.push([key, value]); return this; }, is(key, value) { assert.equal(key, "deleted_at"); assert.equal(value, null); this.activeOnly = true; return this; }, async maybeSingle() {
+      assert.deepEqual(this.filters, [["id", player], ["team_id", team], ["kind", "player"]]);
+      return { data: this.activeOnly ? null : { id: player }, error: null };
+    } };
+  } });
+  try {
+    const payload = await RemoteWorkspace._payloadForRemote("jogos", {
+      callup: { player_ids: [player] },
+      lineup: { goalkeeper_id: player, starters: [], substitutes: [] },
+    }, team);
+    assert.deepEqual(payload.callup.player_ids, [player]);
+    assert.equal(payload.lineup.goalkeeper_id, player);
+    await assert.rejects(RemoteWorkspace._subjectRemoteRef("player", player, team), error => error.reason === "subject_uuid_not_in_team");
+  } finally { RemoteWorkspace.init = originalInit; }
+});
+
 test("referências locais sem chave válida ficam por reconciliar sem acesso IndexedDB inválido", async () => {
   const team = "22222222-2222-4222-8222-222222222222";
   const originalDB = globalThis.DB, originalInit = RemoteWorkspace.init;
@@ -1012,6 +1034,87 @@ test("dois dispositivos sincronizam criação, edição e eliminação sem dupli
   });
 });
 
+test("confirmação remota não apaga edição local feita durante o envio", async () => {
+  const originalDB = globalThis.DB;
+  const db = createDeviceDatabase();
+  globalThis.DB = db;
+  try {
+    const id = await db.criar("jogos", {
+      team_id: "default", sync_id: "11111111-1111-4111-8111-111111111111",
+      sync_dirty: true, sync_local_updated_at: "local-v1", adversario: "Versão enviada",
+    });
+    const sent = { ...(await db.obter("jogos", id)) };
+    await db.modificar("jogos", id, current => ({ ...current, adversario: "Edição durante o envio", sync_dirty: true, sync_local_updated_at: "local-v2" }));
+    const acknowledged = await RemoteWorkspace._ackPushedRecord("jogos", sent, { updated_at: "remote-v1", actor_type: "human", actor_label: "Treinador" }, { adversario: "Versão enviada" }, "team-shared");
+    assert.equal(acknowledged, true);
+    const current = await db.obter("jogos", id);
+    assert.equal(current.adversario, "Edição durante o envio");
+    assert.equal(current.sync_dirty, true);
+    assert.equal(current.remote_updated_at, "remote-v1");
+    await db.apagar("jogos", id);
+    assert.equal(await RemoteWorkspace._ackPushedRecord("jogos", sent, { updated_at: "remote-v2" }, {}, "team-shared"), false);
+    assert.equal(await db.obter("jogos", id), undefined);
+    const [tombstone] = await db.listar("sync_tombstones");
+    assert.equal(tombstone.expected_updated_at, "remote-v2");
+    assert.equal(tombstone.remote_team_id, "team-shared");
+  } finally { globalThis.DB = originalDB; }
+});
+
+test("tombstone pendente impede que o pull ressuscite um jogo apagado durante a sincronização", async () => {
+  await withTwoDeviceSync(async ({ devices, remoteTeamId, useDevice }) => {
+    useDevice(0);
+    const id = await devices[0].criar("jogos", { team_id: "default", adversario: "Jogo a apagar", external_key: "match-pending-delete", sync_dirty: true });
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    await devices[0].apagar("jogos", id);
+    assert.equal((await devices[0].listar("sync_tombstones")).length, 1);
+    const pulled = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(pulled.pulled, 0);
+    assert.equal((await devices[0].listar("jogos")).length, 0);
+    const deleted = await RemoteWorkspace._syncTombstones(remoteTeamId);
+    assert.equal(deleted.deleted, 1);
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal((await devices[0].listar("jogos")).length, 0);
+  });
+});
+
+test("apagar durante o envio atualiza o tombstone para a versão acabada de gravar", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    useDevice(0);
+    const id = await devices[0].criar("jogos", { team_id: "default", adversario: "Jogo em envio", external_key: "match-delete-in-flight", sync_dirty: true });
+    const baseFrom = remote.client.from.bind(remote.client);
+    let deletedDuringUpload = false;
+    RemoteWorkspace.init = async () => ({ ...remote.client, from(table) {
+      const query = baseFrom(table);
+      if (table !== "workspace_records") return query;
+      const insert = query.insert.bind(query);
+      query.insert = (row) => {
+        const pending = insert(row);
+        if (row.kind === "match" && !deletedDuringUpload) {
+          const single = pending.single.bind(pending);
+          pending.single = async () => {
+            const result = await single();
+            await devices[0].apagar("jogos", id);
+            deletedDuringUpload = true;
+            return result;
+          };
+        }
+        return pending;
+      };
+      return query;
+    } });
+    const pushed = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(pushed.pushed, 1);
+    assert.equal(pushed.pulled, 0);
+    assert.equal((await devices[0].listar("jogos")).length, 0);
+    const [tombstone] = await devices[0].listar("sync_tombstones");
+    assert.equal(tombstone.expected_updated_at, remote.rows[0].updated_at);
+    const removed = await RemoteWorkspace._syncTombstones(remoteTeamId);
+    assert.equal(removed.deleted, 1);
+    assert.ok(remote.rows[0].deleted_at);
+    assert.equal((await devices[0].listar("jogos")).length, 0);
+  });
+});
+
 test("plano antigo com referência numérica de exercício chega ao segundo dispositivo com UUID", async () => {
   await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
     useDevice(0);
@@ -1029,6 +1132,7 @@ test("plano antigo com referência numérica de exercício chega ao segundo disp
     const exerciseRemote = remote.rows.find(row => row.kind === "exercise");
     const trainingRemote = remote.rows.find(row => row.kind === "training");
     assert.equal(trainingRemote.payload.blocos[0].exercise_ref, exerciseRemote.id);
+    assert.equal((await devices[0].listar("treinos"))[0].blocos[0].exercise_ref, exerciseRemote.id);
 
     useDevice(1);
     const received = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
@@ -1037,6 +1141,38 @@ test("plano antigo com referência numérica de exercício chega ao segundo disp
     const [training] = await devices[1].listar("treinos");
     assert.equal(training.blocos[0].exercise_ref, exercise.sync_id);
     assert.equal((await devices[1].listar("treinos")).length, 1);
+  });
+});
+
+test("convocatória e alinhamento antigos chegam ao segundo dispositivo com UUID do atleta", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    useDevice(0);
+    const playerId = await devices[0].criar("jogadores", {
+      team_id: "default", nome: "Atleta histórico", sync_dirty: true,
+    });
+    await devices[0].criar("jogos", {
+      team_id: "default", external_key: "match-legacy-player-ref", sync_dirty: true,
+      callup: { player_ids: [String(playerId)] },
+      lineup: { goalkeeper_id: String(playerId), starters: [], substitutes: [] },
+    });
+    const pushed = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(pushed.pushed, 2);
+    assert.equal(pushed.conflicts.length, 0);
+    const playerRemote = remote.rows.find(row => row.kind === "player");
+    const matchRemote = remote.rows.find(row => row.kind === "match");
+    assert.deepEqual(matchRemote.payload.callup.player_ids, [playerRemote.id]);
+    assert.equal(matchRemote.payload.lineup.goalkeeper_id, playerRemote.id);
+    const [pcMatch] = await devices[0].listar("jogos");
+    assert.deepEqual(pcMatch.callup.player_ids, [playerRemote.id]);
+    assert.equal(pcMatch.lineup.goalkeeper_id, playerRemote.id);
+
+    useDevice(1);
+    const received = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(received.pulled, 2);
+    const [player] = await devices[1].listar("jogadores");
+    const [match] = await devices[1].listar("jogos");
+    assert.deepEqual(match.callup.player_ids, [player.sync_id]);
+    assert.equal(match.lineup.goalkeeper_id, player.sync_id);
   });
 });
 
@@ -1267,15 +1403,16 @@ test("ida e volta entre dispositivos preserva lances, minutos, sessão, memória
     ];
 
     useDevice(0);
+    for (const player of roster) await devices[0].criar("jogadores", { ...player, team_id: "default", sync_dirty: true });
     const pcIds = new Map();
     for (const [store, payload] of records) pcIds.set(store, await devices[0].criar(store, payload));
     const pushed = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
-    assert.equal(pushed.pushed, records.length);
-    assert.equal(remote.rows.length, records.length);
+    assert.equal(pushed.pushed, records.length + roster.length);
+    assert.equal(remote.rows.length, records.length + roster.length);
 
     useDevice(1);
     const pulled = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
-    assert.equal(pulled.pulled, records.length);
+    assert.equal(pulled.pulled, records.length + roster.length);
     for (const [store] of records) {
       const [phoneRow] = await devices[1].listar(store);
       assert.ok(phoneRow.sync_id);
@@ -1307,7 +1444,7 @@ test("ida e volta entre dispositivos preserva lances, minutos, sessão, memória
     assert.deepEqual(MatchVisual.replay(pulledMatch).players.map((player) => [player.ref, player.elapsed_ms]), recordedMinutes.map((player) => [player.ref, player.elapsed_ms]));
     const savedTraining = remote.rows.find((row) => row.kind === "training");
     assert.equal(savedTraining.payload.blocks[0].exercise_ref, "22222222-2222-4222-8222-222222222222");
-    assert.equal(remote.rows.length, records.length);
+    assert.equal(remote.rows.length, records.length + roster.length);
   });
 });
 

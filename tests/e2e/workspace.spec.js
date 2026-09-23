@@ -220,6 +220,29 @@ test("referência UUID de outro dispositivo não é usada como chave numérica d
   expect(result.saved).toBe(result.original);
 });
 
+test("confirmação de sync na IndexedDB preserva a revisão local e uma edição seguinte fica pendente", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const id = await DB.criar("jogos", {
+      team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), adversario: "Original",
+      sync_dirty: false, sync_local_updated_at: "seed", remote_updated_at: "remote-v1",
+    }, { remote: true });
+    await DB.modificar("jogos", id, current => ({ ...current, remote_updated_at: "remote-v2" }), { remote: true });
+    const afterAck = await DB.obter("jogos", id);
+    await DB.modificar("jogos", id, current => ({ ...current, adversario: "Editado pelo treinador" }));
+    const afterEdit = await DB.obter("jogos", id);
+    await DB.modificar("jogos", id, current => ({ ...current, adversario: "Texto escrito durante o envio" }));
+    await RemoteWorkspace._ackPushedRecord("jogos", afterEdit, { updated_at: "remote-v3", actor_type: "human", actor_label: "Treinador" }, {}, crypto.randomUUID());
+    const afterConcurrentEdit = await DB.obter("jogos", id);
+    return { afterAck: { dirty: afterAck.sync_dirty, localRevision: afterAck.sync_local_updated_at, remoteRevision: afterAck.remote_updated_at }, afterEdit: { name: afterEdit.adversario, dirty: afterEdit.sync_dirty, localRevision: afterEdit.sync_local_updated_at }, afterConcurrentEdit: { name: afterConcurrentEdit.adversario, dirty: afterConcurrentEdit.sync_dirty, remoteRevision: afterConcurrentEdit.remote_updated_at } };
+  });
+  expect(result.afterAck).toEqual({ dirty: false, localRevision: "seed", remoteRevision: "remote-v2" });
+  expect(result.afterEdit.name).toBe("Editado pelo treinador");
+  expect(result.afterEdit.dirty).toBe(true);
+  expect(result.afterEdit.localRevision).not.toBe("seed");
+  expect(result.afterConcurrentEdit).toEqual({ name: "Texto escrito durante o envio", dirty: true, remoteRevision: "remote-v3" });
+});
+
 test("cria plano partilhado e associa media", async ({ page }) => {
   await page.goto("/#/planos/novo");
   await page.getByLabel("Tipo").selectOption("training_plan");
@@ -740,7 +763,7 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
   await expect(page.getByText(/Atualização disponível\. Guarda o que estás a fazer/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeVisible();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v103"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v104"))).toBeNull();
 });
 
 test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
@@ -753,7 +776,7 @@ test("service worker update after an older cached reload does not stay suppresse
   }).catch(() => {});
   await reloaded;
   await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v103"))).toBe("1");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v104"))).toBe("1");
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {

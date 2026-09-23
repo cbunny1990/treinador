@@ -575,7 +575,7 @@ const RemoteWorkspace = {
     const rows = await DB.listar(store);
     return new Map(rows.filter((x) => x.sync_id).map((x) => [x.sync_id, x]));
   },
-  async _subjectRemoteRef(subjectType, subjectId, remoteTeamId) {
+  async _subjectRemoteRef(subjectType, subjectId, remoteTeamId, options = {}) {
     if (subjectType === "team") return remoteTeamId;
     const store = REMOTE_SUBJECT_STORES[subjectType];
     if (!store) return String(subjectId);
@@ -585,8 +585,9 @@ const RemoteWorkspace = {
       const client = await this.init();
       const table = subjectType === "media" ? "media_assets" : "workspace_records";
       let query = client.from(table).select("id")
-        .eq("id", ref).eq("team_id", remoteTeamId).is("deleted_at", null);
+        .eq("id", ref).eq("team_id", remoteTeamId);
       if (table === "workspace_records") query = query.eq("kind", subjectType);
+      if (!options.allowDeleted) query = query.is("deleted_at", null);
       const { data, error } = await query.maybeSingle();
       if (error) throw error;
       if (!data) throw remoteReferenceError("subject_uuid_not_in_team");
@@ -626,6 +627,23 @@ const RemoteWorkspace = {
   },
   async _payloadForRemote(store, local, remoteTeamId) {
     const payload = remotePayload(local);
+    if (store === "jogos") {
+      const mapPlayers = async (refs) => {
+        const out = [];
+        for (const ref of refs) out.push(await this._subjectRemoteRef("player", ref, remoteTeamId, { allowDeleted: true }));
+        return out;
+      };
+      if (Array.isArray(payload.callup?.player_ids)) {
+        payload.callup = { ...payload.callup, player_ids: await mapPlayers(payload.callup.player_ids) };
+      }
+      if (payload.lineup) {
+        const lineup = { ...payload.lineup };
+        if (lineup.goalkeeper_id) lineup.goalkeeper_id = await this._subjectRemoteRef("player", lineup.goalkeeper_id, remoteTeamId, { allowDeleted: true });
+        if (Array.isArray(lineup.starters)) lineup.starters = await mapPlayers(lineup.starters);
+        if (Array.isArray(lineup.substitutes)) lineup.substitutes = await mapPlayers(lineup.substitutes);
+        payload.lineup = lineup;
+      }
+    }
     const mapExerciseBlocks = async (source) => {
       const blocks = [];
       for (const block of source) {
@@ -710,6 +728,47 @@ const RemoteWorkspace = {
       out.supersedes_id = Number(localId) || out.supersedes_id;
     }
     return out;
+  },
+  async _ackPushedRecord(store, local, saved, payload, remoteTeamId) {
+    const stableRefs = store === "jogos"
+      ? { ...(payload.callup ? { callup: payload.callup } : {}), ...(payload.lineup ? { lineup: payload.lineup } : {}) }
+      : store === "treinos"
+        ? { ...(payload.blocos ? { blocos: payload.blocos } : {}), ...(payload.session ? { session: payload.session } : {}) }
+        : {};
+    const acknowledge = (current) => {
+      const unchanged = current.sync_local_updated_at === local.sync_local_updated_at
+        && JSON.stringify(current) === JSON.stringify(local);
+      return {
+        ...current,
+        ...(unchanged ? stableRefs : {}),
+        sync_dirty: !unchanged,
+        remote_updated_at: saved.updated_at,
+        remote_team_id: remoteTeamId,
+        sync_actor_type: saved.actor_type,
+        sync_actor_label: saved.actor_label,
+      };
+    };
+    if (typeof DB.modificar !== "function") {
+      await DB.atualizar(store, acknowledge(local), { remote: true });
+      return true;
+    }
+    try {
+      await DB.modificar(store, local.id, acknowledge, { remote: true });
+      return true;
+    } catch (error) {
+      if (typeof DB.obter === "function" && !(await DB.obter(store, local.id))) {
+        const tombstones = await DB.listar("sync_tombstones");
+        const deletion = tombstones.find((item) => item.store === store && item.sync_id === (saved.id || local.sync_id)
+          && (!item.remote_team_id || item.remote_team_id === remoteTeamId));
+        if (deletion) await DB.atualizar("sync_tombstones", {
+          ...deletion,
+          remote_team_id: remoteTeamId,
+          expected_updated_at: saved.updated_at,
+        }, { remote: true });
+        return false;
+      }
+      throw error;
+    }
   },
   async _syncRecords(remoteTeamId, userId) {
     const client = await this.init();
@@ -838,14 +897,7 @@ const RemoteWorkspace = {
           }
           saved = savedRes.data;
         }
-        await DB.atualizar(store, {
-          ...local,
-          sync_dirty: false,
-          remote_updated_at: saved.updated_at,
-          remote_team_id: remoteTeamId,
-          sync_actor_type: saved.actor_type,
-          sync_actor_label: saved.actor_label,
-        }, { remote: true });
+        await this._ackPushedRecord(store, local, saved, payload, remoteTeamId);
         remoteMap.set(saved.id, saved);
         result.pushed++;
       }
@@ -856,9 +908,13 @@ const RemoteWorkspace = {
     if (refreshed.error) throw refreshed.error;
     remoteMap = new Map((refreshed.data || []).map((x) => [x.id, x]));
 
+    const pendingDeletes = new Set((await DB.listar("sync_tombstones"))
+      .filter((item) => !item.remote_team_id || item.remote_team_id === remoteTeamId)
+      .map((item) => `${item.store}|${item.sync_id}`));
     for (const remote of remoteMap.values()) {
       const store = REMOTE_KIND_STORES[remote.kind];
       if (!store) continue;
+      if (pendingDeletes.has(`${store}|${remote.id}`)) continue;
       const locals = await DB.listar(store);
       const localMap = new Map(locals.filter((x) => x.sync_id && remoteRowBelongsToTeam(x, remoteTeamId)).map((x) => [x.sync_id, x]));
       const identity = remoteIdentityKey(remote.kind, remote.payload);
@@ -877,6 +933,7 @@ const RemoteWorkspace = {
         continue;
       }
       if (local?.sync_dirty) {
+        if (local.sync_id === remote.id && local.remote_updated_at === remote.updated_at) continue;
         addConflict(remoteConflict(
           store,
           local,

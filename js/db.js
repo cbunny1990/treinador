@@ -194,7 +194,7 @@ const DB = {
     _notifyRemoteSync(store, options);
     return result;
   },
-  async modificar(store, id, transform) {
+  async modificar(store, id, transform, options = {}) {
     const db=await abrirDB();
     return new Promise((resolve,reject)=>{
       const tx=db.transaction(store,"readwrite"),os=tx.objectStore(store);
@@ -203,13 +203,13 @@ const DB = {
       req.onsuccess=()=>{
         try{
           if(!req.result) throw new Error("O registo foi apagado ou já não existe.");
-          if(store!=="teams"&&!_visibleInSelectedRemoteWorkspace(req.result)) throw new Error("O registo pertence a outro workspace remoto.");
-          result=_prepareSyncRecord(store,transform(req.result));
+          if(store!=="teams"&&!options.remote&&!_visibleInSelectedRemoteWorkspace(req.result)) throw new Error("O registo pertence a outro workspace remoto.");
+          result=_prepareSyncRecord(store,transform(req.result),options);
           if(!result||result.id!==req.result.id||result.then) throw new Error("Alteração local inválida.");
           os.put(result);
         }catch(error){failure=error;tx.abort();}
       };
-      tx.oncomplete=()=>{_notifyRemoteSync(store);resolve(result);};
+      tx.oncomplete=()=>{_notifyRemoteSync(store,options);resolve(result);};
       tx.onabort=()=>reject(failure||tx.error||new Error("Não foi possível guardar a alteração."));
       tx.onerror=()=>{failure=failure||tx.error;};
     });

@@ -113,8 +113,17 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
       team_id: "local-coach", sync_id: refs.player, remote_team_id: teamId, sync_dirty: true,
       nome: "Atleta sintético", plantel_ativo: true,
     });
+    await devices[0].criar("jogos", {
+      team_id: "local-coach", remote_team_id: teamId, sync_dirty: true,
+      external_key: "local-sync-legacy-player-ref", adversario: "Jogo histórico",
+      callup: { player_ids: [String(playerId)] },
+      lineup: { goalkeeper_id: String(playerId), starters: [], substitutes: [] },
+    });
     const matchRefs = [refs.player, ...Array.from({ length: 4 }, () => crypto.randomUUID())];
     const matchPlayers = matchRefs.map((sync_id, index) => ({ sync_id, nome: index ? `Colega ${index}` : "Atleta sintético", numero: index + 1, estado_disponibilidade: "disponivel" }));
+    for (const player of matchPlayers.slice(1)) await devices[0].criar("jogadores", {
+      ...player, team_id: "local-coach", remote_team_id: teamId, sync_dirty: true, plantel_ativo: true,
+    });
     let liveMatch = {
       team_id: "local-coach", sync_id: refs.liveMatch, remote_team_id: teamId, sync_dirty: true,
       external_key: "local-sync-live", adversario: "Teste", nota_tatica: "Base",
@@ -168,16 +177,23 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
       body: JSON.stringify({ objective: "Apoio defensivo", agent_proposal: { status: "proposed" } }), status: "ready", target_date: "2026-09-03",
     });
     const firstPush = await RemoteWorkspace._syncRecords(teamId, owner.user.id);
-    assert.equal(firstPush.pushed, 9);
+    assert.equal(firstPush.pushed, 14);
+    const pcLegacyPlayerRef = (await devices[0].listar("jogos")).find((row) => row.external_key === "local-sync-legacy-player-ref");
+    assert.deepEqual(pcLegacyPlayerRef.callup.player_ids, [refs.player]);
+    assert.equal(pcLegacyPlayerRef.lineup.goalkeeper_id, refs.player);
+    const pcHistoryTrainingAfterPush = (await devices[0].listar("treinos")).find((row) => row.sync_id === refs.historyTraining);
+    assert.equal(pcHistoryTrainingAfterPush.blocos[0].exercise_ref, refs.exercise);
+    assert.equal(pcHistoryTrainingAfterPush.session.blocks[0].exercise_ref, refs.exercise);
 
     globalThis.DB = devices[1];
     RemoteWorkspace.init = async () => coach.client;
     await devices[1].criar("sync_tombstones", { store: "seed", sync_id: "force-distinct-local-ids" });
     const pulled = await RemoteWorkspace._syncRecords(teamId, coach.user.id);
-    assert.equal(pulled.pulled, 9);
-    const phonePlayer = (await devices[1].listar("jogadores"))[0];
+    assert.equal(pulled.pulled, 14);
+    const phonePlayer = (await devices[1].listar("jogadores")).find((row) => row.sync_id === refs.player);
     const phoneLive = (await devices[1].listar("jogos")).find((row) => row.sync_id === refs.liveMatch);
     const phoneLegacyId = (await devices[1].listar("jogos")).find((row) => row.external_key === "local-sync-legacy-default-id");
+    const phoneLegacyPlayerRef = (await devices[1].listar("jogos")).find((row) => row.external_key === "local-sync-legacy-player-ref");
     const phoneDeleted = (await devices[1].listar("jogos")).find((row) => row.sync_id === refs.deletedMatch);
     const phoneHistoryTraining = (await devices[1].listar("treinos")).find((row) => row.sync_id === refs.historyTraining);
     const phoneExercise = (await devices[1].listar("exercicios")).find((row) => row.sync_id === refs.exercise);
@@ -188,6 +204,8 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.notEqual(phoneLegacyId.id, legacySyncId);
     assert.match(phoneLegacyId.sync_id, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     assert.notEqual(phoneLegacyId.sync_id, "default");
+    assert.deepEqual(phoneLegacyPlayerRef.callup.player_ids, [phonePlayer.sync_id]);
+    assert.equal(phoneLegacyPlayerRef.lineup.goalkeeper_id, phonePlayer.sync_id);
     assert.notEqual(phoneDeleted.id, deletedId);
     assert.equal(phoneHistoryTraining.blocos[0].exercise_ref, phoneExercise.sync_id);
     assert.equal(phoneHistoryTraining.session.blocks[0].exercise_ref, phoneExercise.sync_id);
@@ -201,7 +219,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     const mcp = await import("../supabase/functions/vision-coach-mcp/player_goals.mjs");
     const participation = await mcp.executePlayerGoalTool(admin, { id: "local-head-coach", team_id: teamId, scopes: ["read"] }, "get_player_participation_history", { id: refs.player });
     assert.equal(participation.summary.training_records, 1);
-    assert.equal(participation.summary.call_ups, 2);
+    assert.equal(participation.summary.call_ups, 3);
     assert.equal(participation.summary.recorded_starts, 2);
     assert.equal(participation.summary.total_minutes_ms, 1_260_000);
     assert.equal(participation.match_records[0].positions_played.includes("Defesa"), true);
