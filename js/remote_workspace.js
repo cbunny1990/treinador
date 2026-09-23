@@ -210,6 +210,24 @@ function remoteThreeWayMerge(base, local, remote) {
   }
   return { merged: overlaps.length ? null : merged, local_changes: localChanges, remote_changes: remoteChanges, overlaps };
 }
+function remoteManualMergeFields(local, remote) {
+  if (!local || !remote || Array.isArray(local) || Array.isArray(remote)
+    || typeof local !== "object" || typeof remote !== "object") return [];
+  const keys = new Set([...Object.keys(local), ...Object.keys(remote)]);
+  return [...keys].filter((key) => key !== "updated_at"
+    && !remoteValueEqual(local[key], remote[key], Object.prototype.hasOwnProperty.call(local, key), Object.prototype.hasOwnProperty.call(remote, key)))
+    .sort().map((key) => {
+      const localPresent = Object.prototype.hasOwnProperty.call(local, key);
+      const remotePresent = Object.prototype.hasOwnProperty.call(remote, key);
+      return {
+        key,
+        local_present: localPresent,
+        remote_present: remotePresent,
+        local_value: localPresent ? remoteConflictPreview(local[key]) : null,
+        remote_value: remotePresent ? remoteConflictPreview(remote[key]) : null,
+      };
+    });
+}
 function remoteRowBelongsToTeam(row, remoteTeamId) {
   return !row?.remote_team_id || row.remote_team_id === remoteTeamId;
 }
@@ -1861,16 +1879,21 @@ const RemoteWorkspace = {
         storage_path: remote.storage_path, deleted_at: remote.deleted_at };
     } else remoteView = await this._hydratePayload(remote.kind, remote.payload, remoteTeamId);
     let mergeSuggestion = null;
+    let manualMergeFields = [];
+    let localPayload = null;
     let mergeUnavailable = "A versão comum ainda não está guardada neste dispositivo.";
-    if (REMOTE_STORE_KINDS[store] && local._sync_base && remote.payload) {
+    if (REMOTE_STORE_KINDS[store] && remote.payload) {
       try {
-        const localPayload = await this._payloadForRemote(store, local, remoteTeamId);
-        mergeSuggestion = remoteThreeWayMerge(local._sync_base, localPayload, remote.payload);
-        mergeUnavailable = mergeSuggestion?.overlaps?.length
-          ? "As duas versões alteraram os mesmos campos; a combinação automática ficou bloqueada."
-          : mergeSuggestion ? "" : "Não foi possível calcular uma combinação segura.";
+        localPayload = await this._payloadForRemote(store, local, remoteTeamId);
+        manualMergeFields = remoteManualMergeFields(localPayload, remote.payload);
+        if (local._sync_base) {
+          mergeSuggestion = remoteThreeWayMerge(local._sync_base, localPayload, remote.payload);
+          mergeUnavailable = mergeSuggestion?.overlaps?.length
+            ? "As duas versões alteraram alguns dos mesmos campos. Escolhe explicitamente o valor a manter em cada campo diferente."
+            : mergeSuggestion ? "" : "Não foi possível calcular uma combinação segura.";
+        }
       } catch (_) {
-        mergeUnavailable = "Uma referência do registo precisa de revisão antes de combinar. Ainda podes comparar as versões completas.";
+        mergeUnavailable = "Uma referência do registo precisa de revisão antes de combinar. Ainda podes escolher uma das versões completas.";
       }
     } else if (store === "media_items") {
       mergeUnavailable = "A media exige uma escolha explícita; ficheiros e referências não são combinados automaticamente.";
@@ -1884,14 +1907,15 @@ const RemoteWorkspace = {
         local_changes: mergeSuggestion.local_changes,
         remote_changes: mergeSuggestion.remote_changes,
       } : null,
+      manual_merge_fields: manualMergeFields,
       merge_unavailable: mergeSuggestion && !mergeSuggestion.overlaps.length && (!mergeSuggestion.local_changes.length || !mergeSuggestion.remote_changes.length)
         ? "Uma das versões não tem alterações de conteúdo em relação à última versão comum. Escolhe explicitamente qual manter."
         : mergeUnavailable,
     };
   },
 
-  async resolveVersionConflict(syncId, storeName, resolution, expectedRemote, expectedLocal) {
-    if (!['keep_local', 'keep_remote', 'merge_non_overlapping'].includes(resolution)) throw new Error("Escolhe como queres resolver as versões.");
+  async resolveVersionConflict(syncId, storeName, resolution, expectedRemote, expectedLocal, fieldChoices = null) {
+    if (!['keep_local', 'keep_remote', 'merge_non_overlapping', 'merge_manual_fields'].includes(resolution)) throw new Error("Escolhe como queres resolver as versões.");
     const reviewed = await this.readVersionConflict(syncId, storeName);
     if (reviewed.remote_updated_at !== expectedRemote || reviewed.local_updated_at !== expectedLocal) {
       throw new Error("Uma das versões mudou desde a comparação. Reabre o conflito antes de decidir.");
@@ -1906,15 +1930,36 @@ const RemoteWorkspace = {
     if (result.error) throw result.error;
     const remote = (result.data || []).find((item) => !item.deleted_at);
     if (!remote || remote.updated_at !== expectedRemote) throw new Error("A versão remota mudou durante a decisão. Nada foi substituído; sincroniza e compara novamente.");
-    if (resolution === "merge_non_overlapping") {
-      if (store === "media_items" || !local._sync_base) throw new Error("Não existe uma versão comum para combinar. Compara as versões e escolhe explicitamente qual manter.");
+    if (resolution === "merge_non_overlapping" || resolution === "merge_manual_fields") {
+      if (store === "media_items" || (resolution === "merge_non_overlapping" && !local._sync_base)) throw new Error("Não existe uma versão comum para combinar automaticamente. Compara as versões e escolhe explicitamente o que manter.");
       let localPayload;
       try { localPayload = await this._payloadForRemote(store, local, remoteTeamId); }
       catch (_) { throw new Error("Uma referência do registo precisa de revisão antes de combinar as versões."); }
-      const merge = remoteThreeWayMerge(local._sync_base, localPayload, remote.payload || {});
-      if (!merge || !merge.merged || !merge.local_changes.length || !merge.remote_changes.length) throw new Error("A combinação não tem alterações independentes dos dois lados. Compara as versões e escolhe explicitamente qual manter.");
-      const hydrated = await this._hydratePayload(remote.kind, merge.merged, remoteTeamId);
-      const baseHydrated = await this._hydratePayload(remote.kind, local._sync_base, remoteTeamId);
+      let mergedPayload;
+      if (resolution === "merge_non_overlapping") {
+        const merge = remoteThreeWayMerge(local._sync_base, localPayload, remote.payload || {});
+        if (!merge || !merge.merged || !merge.local_changes.length || !merge.remote_changes.length) throw new Error("A combinação não tem alterações independentes dos dois lados. Compara as versões e escolhe explicitamente qual manter.");
+        mergedPayload = merge.merged;
+      } else {
+        const currentFields = remoteManualMergeFields(localPayload, remote.payload || {});
+        const expectedKeys = currentFields.map((field) => field.key);
+        const choices = fieldChoices && typeof fieldChoices === "object" && !Array.isArray(fieldChoices) ? fieldChoices : {};
+        const chosenKeys = Object.keys(choices).sort();
+        if (!expectedKeys.length || JSON.stringify([...expectedKeys].sort()) !== JSON.stringify(chosenKeys)
+          || chosenKeys.some((key) => !["local", "remote"].includes(choices[key]))) {
+          throw new Error("Escolhe explicitamente uma versão para cada campo diferente e volta a comparar antes de sincronizar.");
+        }
+        mergedPayload = Object.create(null);
+        const keys = new Set([...Object.keys(localPayload), ...Object.keys(remote.payload || {})]);
+        for (const key of keys) {
+          const source = choices[key] === "local" ? localPayload : remote.payload || {};
+          const sourceHas = Object.prototype.hasOwnProperty.call(source, key);
+          if (sourceHas) mergedPayload[key] = source[key];
+        }
+        if (Object.prototype.hasOwnProperty.call(remote.payload || {}, "updated_at")) mergedPayload.updated_at = remote.payload.updated_at;
+      }
+      const hydrated = await this._hydratePayload(remote.kind, mergedPayload, remoteTeamId);
+      const baseHydrated = local._sync_base ? await this._hydratePayload(remote.kind, local._sync_base, remoteTeamId) : {};
       const localHydrated = await this._hydratePayload(remote.kind, localPayload, remoteTeamId);
       const remoteHydrated = await this._hydratePayload(remote.kind, remote.payload || {}, remoteTeamId);
       const payloadKeys = new Set([
