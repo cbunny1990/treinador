@@ -1,7 +1,7 @@
 const {test,expect}=require('@playwright/test');
 const path=require('node:path'),os=require('node:os');
 test.use({serviceWorkers:'block'});
-async function seed(page){await page.goto('/#/calendario');await page.waitForFunction(()=>typeof DB!=='undefined'&&typeof MatchVisualUI!=='undefined'&&typeof go==='function');return page.evaluate(async()=>{
+async function seed(page){await page.goto('/#/calendario');await page.waitForFunction(()=>typeof DB!=='undefined'&&typeof MatchVisualUI!=='undefined'&&typeof RemoteWorkspace!=='undefined'&&typeof go==='function');return page.evaluate(async()=>{
  RemoteWorkspace.scheduleSync=()=>{};const ids=[],refs=[];
  for(let i=1;i<=7;i++){const ref=crypto.randomUUID();refs.push(ref);ids.push(await DB.criar('jogadores',{team_id:DEFAULT_TEAM_ID,sync_id:ref,nome:'Atleta '+i,numero:i,plantel_ativo:true,estado_disponibilidade:'disponivel'}));}
  const id=await DB.criar('jogos',{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:'2026-09-26',adversario:'Adversário E2E',estado:'agendado',callup:{player_ids:refs},lineup:{system:'1-2-1',goalkeeper_id:refs[0],starters:refs.slice(1,5),substitutes:refs.slice(5)},post_game:{conclusoes:'Não alterar a análise'},golos_favor:2});go('#/jogo-visual/'+id);return {id,ids,refs};

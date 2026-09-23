@@ -352,7 +352,9 @@ const RemoteWorkspace = {
     remoteEmitRealtimeStatus({ teamId, status: this._realtimeStatus });
     const schedule = () => this.scheduleSync(120);
     const channel = client
-      .channel("vision-coach-" + teamId)
+      .channel("vision-coach-" + teamId, {
+        config: { postgres_changes_options: { wait: true } },
+      })
       .on("postgres_changes", { event:"*", schema:"public", table:"workspace_records", filter:"team_id=eq." + teamId }, schedule)
       .on("postgres_changes", { event:"*", schema:"public", table:"media_assets", filter:"team_id=eq." + teamId }, schedule)
       .on("postgres_changes", { event:"*", schema:"public", table:"activity_log", filter:"team_id=eq." + teamId }, schedule)

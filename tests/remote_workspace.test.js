@@ -70,8 +70,10 @@ test("realtime agenda sincronização para alterações de atividade da equipa",
   const subscriptions = [];
   const scheduled = [];
   let onStatus;
+  let channelOptions;
   const client = {
-    channel() {
+    channel(_topic, options) {
+      channelOptions = options;
       return {
         on(_type, filter, callback) { subscriptions.push({ filter, callback }); return this; },
         subscribe(callback) { onStatus = callback; return this; },
@@ -85,6 +87,7 @@ test("realtime agenda sincronização para alterações de atividade da equipa",
   RemoteWorkspace._realtimeStatus = "not_started";
   try {
     await RemoteWorkspace.startRealtime("team-1");
+    assert.deepEqual(channelOptions, { config: { postgres_changes_options: { wait: true } } });
     assert.equal(RemoteWorkspace._realtimeStatus, "connecting");
     onStatus("SUBSCRIBED");
     assert.equal(RemoteWorkspace._realtimeStatus, "connected");
