@@ -23,6 +23,17 @@ test("tokens MCP ficam em schema privado e só como hash", () => {
   assert.doesNotMatch(migrations, /token_value|raw_token/i);
 });
 
+test("tabelas internas ativam RLS sem abrir privilégios a papéis cliente", () => {
+  const migration = fs.readFileSync(path.join(root, "supabase", "migrations", "20260923140620_enable_private_internal_table_rls.sql"), "utf8");
+  for (const table of ["agent_request_log", "mcp_connector_tokens"]) {
+    assert.match(migration, new RegExp(`private\\.${table}([,\\s]|$)`, "i"));
+    assert.match(migration, new RegExp(`alter table private\\.${table} enable row level security`, "i"));
+  }
+  assert.match(migration, /revoke all on table private\.agent_request_log, private\.mcp_connector_tokens\s+from public, anon, authenticated/i);
+  assert.doesNotMatch(migration, /create policy/i);
+  assert.doesNotMatch(migration, /revoke all on table[^;]*from public, anon, authenticated, service_role/i);
+});
+
 test("RPCs de conector são exclusivas de service_role", () => {
   for (const name of ["mcp_connector_create", "mcp_connector_list", "mcp_connector_revoke", "mcp_connector_lookup"]) {
     assert.match(migrations, new RegExp("revoke all on function public\\." + name + "[\\s\\S]*from public, anon, authenticated", "i"));
