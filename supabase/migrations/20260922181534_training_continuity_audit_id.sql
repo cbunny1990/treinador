@@ -7,4 +7,4 @@ begin
  if patched=definition then raise exception 'audit_patch_did_not_match_expected_definition'; end if;
  execute patched;
 end;
-$fix$;
+$fix$;;

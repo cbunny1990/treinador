@@ -1,3 +1,4 @@
+
 create or replace function public.mcp_connector_create(
   p_team_id uuid,
   p_owner_id uuid,
@@ -168,3 +169,4 @@ revoke all on function public.mcp_connector_lookup(text)
   from public, anon, authenticated;
 grant execute on function public.mcp_connector_lookup(text)
   to service_role;
+;

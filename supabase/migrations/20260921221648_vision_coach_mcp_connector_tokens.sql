@@ -1,3 +1,4 @@
+
 create table if not exists private.mcp_connector_tokens (
   id uuid primary key default gen_random_uuid(),
   team_id uuid not null references public.teams(id) on delete cascade,
@@ -33,3 +34,4 @@ create index if not exists mcp_connector_tokens_active_hash_idx
 revoke all on private.mcp_connector_tokens from public, anon, authenticated;
 grant usage on schema private to service_role;
 grant select, insert, update, delete on private.mcp_connector_tokens to service_role;
+;
