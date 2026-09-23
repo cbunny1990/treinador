@@ -244,10 +244,14 @@ window.addEventListener("visioncoach:sync-complete",async function(){
   if(document.querySelector('#exercise-image-viewer[open]')) return;
   var activeRoot=((location.hash||"#/").slice(1).split("?")[0].split("/").filter(Boolean)[0]||"");
   skipNextRemoteSync=true;
+  var routeAtSync=location.hash||"#/";
   var scrollX=window.scrollX;
   var scrollY=window.scrollY;
+  var intentAtSync=userScrollIntentSequence;
   await router();
-  requestAnimationFrame(function(){ window.scrollTo(scrollX,scrollY); });
+  requestAnimationFrame(function(){
+    if(intentAtSync===userScrollIntentSequence&&routeAtSync===(location.hash||"#/"))window.scrollTo(scrollX,scrollY);
+  });
 });
 window.addEventListener("visioncoach:realtime-status",function(event){
   refreshRemoteIndicator();
@@ -792,7 +796,15 @@ function remoteConflictQueueHTML(conflicts){
   return '<div class="notice" style="margin-top:12px"><strong>'+conflicts.length+' ocorrências detetadas</strong><p>'+summary.join(' · ')+'. As versões locais e remotas continuam preservadas.</p></div><div class="list section">'+conflicts.map(remoteConflictCardHTML).join('')+'</div>';
 }
 function remoteConflictReviewHTML(versions){
-  return '<div class="notice"><strong>Revê as duas versões · '+esc(versions.store)+'</strong><p>A versão local mantém as alterações deste dispositivo. A versão remota é a última gravação do workspace. A decisão só é aplicada se nenhuma delas tiver mudado desde esta comparação.</p></div><div class="grid cols-2"><section><h4>Neste dispositivo</h4><pre class="conflict-preview">'+esc(JSON.stringify(versions.local,null,2))+'</pre></section><section><h4>No workspace remoto</h4><pre class="conflict-preview">'+esc(JSON.stringify(versions.remote,null,2))+'</pre></section></div><div class="toolbar"><button class="btn secondary" type="button" data-action="resolve-version-conflict" data-resolution="keep_local" data-sync-id="'+esc(versions.sync_id)+'" data-store="'+esc(versions.store)+'" data-remote-version="'+esc(versions.remote_updated_at)+'" data-local-version="'+esc(versions.local_updated_at||'')+'">Manter versão deste dispositivo</button><button class="btn secondary" type="button" data-action="resolve-version-conflict" data-resolution="keep_remote" data-sync-id="'+esc(versions.sync_id)+'" data-store="'+esc(versions.store)+'" data-remote-version="'+esc(versions.remote_updated_at)+'" data-local-version="'+esc(versions.local_updated_at||'')+'">Usar versão do workspace remoto</button></div>';
+  var merge=versions.merge_suggestion;
+  var fields={nome:'Nome',title:'Título',titulo:'Título',objetivo:'Objetivo',descricao:'Descrição',note:'Nota',data:'Data',hora:'Hora',local:'Local',adversario:'Adversário',status:'Estado',observacoes:'Observações',summary:'Resumo'};
+  var fieldList=function(keys){return (keys||[]).map(function(key){return fields[key]||key.replace(/_/g,' ');}).join(', ');};
+  var html='<div class="notice"><strong>Revê as duas versões · '+esc(versions.store)+'</strong><p>A versão local mantém as alterações deste dispositivo. A versão remota é a última gravação do workspace. A decisão só é aplicada se nenhuma delas tiver mudado desde esta comparação.</p></div><div class="grid cols-2"><section><h4>Neste dispositivo</h4><pre class="conflict-preview">'+esc(JSON.stringify(versions.local,null,2))+'</pre></section><section><h4>No workspace remoto</h4><pre class="conflict-preview">'+esc(JSON.stringify(versions.remote,null,2))+'</pre></section></div>';
+  if(merge){
+    html+='<section class="notice section"><strong>Combinação segura disponível</strong><p>O dispositivo alterou: '+esc(fieldList(merge.local_changes)||'nenhum campo')+'. O workspace alterou: '+esc(fieldList(merge.remote_changes)||'nenhum campo')+'. Os campos não se sobrepõem.</p><details open><summary>Pré-visualizar a combinação</summary><pre class="conflict-preview">'+esc(JSON.stringify(merge.payload,null,2))+'</pre></details><button class="btn accent" type="button" data-action="resolve-version-conflict" data-resolution="merge_non_overlapping" data-sync-id="'+esc(versions.sync_id)+'" data-store="'+esc(versions.store)+'" data-remote-version="'+esc(versions.remote_updated_at)+'" data-local-version="'+esc(versions.local_updated_at||'')+'">Combinar alterações independentes</button></section>';
+  }else html+='<p class="notice section">'+esc(versions.merge_unavailable||'Não foi possível combinar estas versões. Escolhe explicitamente qual manter.')+'</p>';
+  html+='<div class="toolbar"><button class="btn secondary" type="button" data-action="resolve-version-conflict" data-resolution="keep_local" data-sync-id="'+esc(versions.sync_id)+'" data-store="'+esc(versions.store)+'" data-remote-version="'+esc(versions.remote_updated_at)+'" data-local-version="'+esc(versions.local_updated_at||'')+'">Manter versão deste dispositivo</button><button class="btn secondary" type="button" data-action="resolve-version-conflict" data-resolution="keep_remote" data-sync-id="'+esc(versions.sync_id)+'" data-store="'+esc(versions.store)+'" data-remote-version="'+esc(versions.remote_updated_at)+'" data-local-version="'+esc(versions.local_updated_at||'')+'">Usar versão do workspace remoto</button></div>';
+  return html;
 }
 function remoteAccountHTML(status,teams,options){
   if(!status.configured){
@@ -999,10 +1011,11 @@ app.addEventListener("click",async function(event){
   }
   if(action==="resolve-version-conflict"){
     var keepLocal=target.dataset.resolution==="keep_local";
-    var message=keepLocal?"Manter a versão deste dispositivo e sincronizá-la sobre a versão remota? A outra versão deixará de ser a ativa, mas a escrita será recusada se o remoto tiver mudado desde a comparação.":"Usar a versão remota neste dispositivo? As alterações locais em conflito serão substituídas depois de confirmar que as duas versões continuam iguais às comparadas.";
+    var mergeIndependent=target.dataset.resolution==="merge_non_overlapping";
+    var message=mergeIndependent?"Aplicar a combinação pré-visualizada? Só serão combinados campos alterados separadamente. Se qualquer versão tiver mudado, a operação será recusada.":keepLocal?"Manter a versão deste dispositivo e sincronizá-la sobre a versão remota? A outra versão deixará de ser a ativa, mas a escrita será recusada se o remoto tiver mudado desde a comparação.":"Usar a versão remota neste dispositivo? As alterações locais em conflito serão substituídas depois de confirmar que as duas versões continuam iguais às comparadas.";
     if(!confirm(message))return;
     target.disabled=true;
-    try{var resolved=await RemoteWorkspace.resolveVersionConflict(target.dataset.syncId,target.dataset.store,target.dataset.resolution,target.dataset.remoteVersion,target.dataset.localVersion||null);var resolvedMessage=resolved.conflicts.length?"A sincronização encontrou novos conflitos. As versões mantêm-se preservadas.":keepLocal?"Versão deste dispositivo sincronizada.":"Versão remota aplicada neste dispositivo.";alert(resolvedMessage);return router();}
+    try{var resolved=await RemoteWorkspace.resolveVersionConflict(target.dataset.syncId,target.dataset.store,target.dataset.resolution,target.dataset.remoteVersion,target.dataset.localVersion||null);var resolvedMessage=resolved.conflicts.length?"A sincronização encontrou novos conflitos. As versões mantêm-se preservadas.":mergeIndependent?"Alterações independentes combinadas e sincronizadas.":keepLocal?"Versão deste dispositivo sincronizada.":"Versão remota aplicada neste dispositivo.";alert(resolvedMessage);return router();}
     catch(error){alert("Não foi possível resolver o conflito: "+error.message);return;}
     finally{target.disabled=false;}
   }

@@ -48,6 +48,7 @@ test("payload remoto remove chaves locais e data_url", () => {
     sync_actor_type: "agent",
     sync_actor_label: "Head Coach",
     data_url: "data:image/png;base64,secret",
+    _sync_base: { adversario: "Rivais" },
     nome: "Jogador",
   });
   assert.deepEqual(payload, { nome: "Jogador" });
@@ -1660,6 +1661,7 @@ test("edições concorrentes em dois dispositivos produzem conflito sem overwrit
     const versions = await RemoteWorkspace.readVersionConflict(firstLocal.sync_id, "jogos");
     assert.equal(versions.local.nota_tatica, "Versão do PC");
     assert.equal(versions.remote.nota_tatica, "Versão do telemóvel");
+    assert.equal(versions.merge_suggestion, null, "overlapping edits to the same field still require a coach decision");
     RemoteWorkspace.syncNow = () => RemoteWorkspace._syncRecords(remoteTeamId, "coach");
     const actualRemoteVersion = remote.rows[0].updated_at;
     remote.rows[0].updated_at = "changed-after-review";
@@ -1688,6 +1690,40 @@ test("edições concorrentes em dois dispositivos produzem conflito sem overwrit
     const finalLocal = await devices[0].obter("jogos", localId);
     assert.equal(finalLocal.nota_tatica, "Segunda versão do telemóvel");
     assert.equal(finalLocal.sync_dirty, false);
+
+    useDevice(0);
+    const independentId = await devices[0].criar("jogos", {
+      team_id: "default", adversario: "Rivais", data: "2026-10-04",
+      external_key: "match-two-devices-independent-edits", nota_tatica: "Princípio inicial", observacao: "Nota antiga",
+      sync_dirty: true,
+    });
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    useDevice(1);
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    const phoneVersion = (await devices[1].listar("jogos")).find((row) => row.external_key === "match-two-devices-independent-edits");
+    const phoneChanges = { ...phoneVersion, nota_tatica: "Apoio após passe", sync_dirty: true };
+    delete phoneChanges.observacao;
+    await devices[1].atualizar("jogos", phoneChanges);
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    useDevice(0);
+    const pcVersion = await devices[0].obter("jogos", independentId);
+    await devices[0].atualizar("jogos", { ...pcVersion, resultado: "2–1", sync_dirty: true });
+    const independentConflict = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(independentConflict.conflicts[0].reason, "version_mismatch");
+    conflictStorage.set("treinador.remote.supabase.v1", JSON.stringify({ remoteTeamId, conflicts: independentConflict.conflicts }));
+    const independentReview = await RemoteWorkspace.readVersionConflict(pcVersion.sync_id, "jogos");
+    assert.ok(independentReview.merge_suggestion);
+    assert.deepEqual(independentReview.merge_suggestion.local_changes, ["resultado"]);
+    assert.deepEqual(independentReview.merge_suggestion.remote_changes, ["nota_tatica", "observacao"]);
+    const merged = await RemoteWorkspace.resolveVersionConflict(pcVersion.sync_id, "jogos", "merge_non_overlapping", independentReview.remote_updated_at, independentReview.local_updated_at);
+    assert.equal(merged.pushed, 1);
+    const combinedRemote = remote.rows.find((row) => row.id === pcVersion.sync_id);
+    assert.equal(combinedRemote.payload.resultado, "2–1");
+    assert.equal(combinedRemote.payload.nota_tatica, "Apoio após passe");
+    assert.equal(Object.hasOwn(combinedRemote.payload, "observacao"), false, "a combinação preserva uma eliminação de campo local");
+    const combinedLocal = await devices[0].obter("jogos", independentId);
+    assert.equal(combinedLocal.sync_dirty, false);
+    assert.equal(Object.hasOwn(combinedLocal, "observacao"), false);
   });
   } finally {
     globalThis.localStorage = originalStorage;

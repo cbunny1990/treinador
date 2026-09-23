@@ -937,7 +937,7 @@ test("conflito de edição compara as duas versões antes de permitir uma decis�
     RemoteWorkspace.getConfig = () => ({ url: "https://example.supabase.co", publishableKey: "sb_publishable_test" });
     RemoteWorkspace.listTeams = async () => [{ id: "team-test", name: "Equipa de teste" }];
     MCPConnectors.list = async () => [];
-    RemoteWorkspace.readVersionConflict = async (id, store) => ({ sync_id: id, store, local_updated_at: "local-v2", remote_updated_at: "v2", local: { nota_tatica: "Versão escrita no telemóvel" }, remote: { nota_tatica: "Versão atual do PC" } });
+    RemoteWorkspace.readVersionConflict = async (id, store) => ({ sync_id: id, store, local_updated_at: "local-v2", remote_updated_at: "v2", local: { nota_tatica: "Versão escrita no telemóvel" }, remote: { nota_tatica: "Versão atual do PC" }, merge_suggestion: null, merge_unavailable: "As duas versões alteraram os mesmos campos; a combinação automática ficou bloqueada." });
     RemoteWorkspace.resolveVersionConflict = async (...args) => { window.__versionResolution = args; return { conflicts: [] }; };
     go("#/definicoes");
   });
@@ -945,9 +945,69 @@ test("conflito de edição compara as duas versões antes de permitir uma decis�
   await page.getByRole("button", { name: "Comparar versões" }).click();
   await expect(page.getByText('"nota_tatica": "Versão escrita no telemóvel"')).toBeVisible();
   await expect(page.getByText('"nota_tatica": "Versão atual do PC"')).toBeVisible();
+  await expect(page.getByText("As duas versões alteraram os mesmos campos; a combinação automática ficou bloqueada.")).toBeVisible();
   page.on("dialog", dialog => dialog.accept());
   await page.getByRole("button", { name: "Manter versão deste dispositivo" }).click();
   await expect.poll(() => page.evaluate(() => window.__versionResolution)).toEqual(["match-conflict", "jogos", "keep_local", "v2", "local-v2"]);
+});
+
+test.describe("combinação explícita de conflitos", () => {
+test.use({ serviceWorkers: "block" });
+test("conflito com campos independentes mostra combinação antes da confirmação", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined" && typeof router === "function");
+  await page.evaluate(() => {
+    RemoteWorkspace.status = async () => ({ configured: true, signedIn: true, email: "treinador@example.test", remoteTeamId: "team-test", conflicts: [{ store: "jogos", local_id: 12, sync_id: "match-merge", reason: "version_mismatch", expected_updated_at: "v1", remote_updated_at: "v2" }] });
+    RemoteWorkspace.getConfig = () => ({ url: "https://example.supabase.co", publishableKey: "sb_publishable_test" });
+    RemoteWorkspace.listTeams = async () => [{ id: "team-test", name: "Equipa de teste" }];
+    MCPConnectors.list = async () => [];
+    RemoteWorkspace.readVersionConflict = async (id, store) => ({
+      sync_id: id, store, local_updated_at: "local-v2", remote_updated_at: "v2",
+      local: { nota_tatica: "Apoio após passe" }, remote: { resultado: "2–1" },
+      merge_suggestion: { payload: { nota_tatica: "Apoio após passe", resultado: "2–1" }, local_changes: ["nota_tatica"], remote_changes: ["resultado"] },
+    });
+    RemoteWorkspace.resolveVersionConflict = async (...args) => { window.__mergeResolution = args; return { conflicts: [] }; };
+    go("#/definicoes");
+  });
+  await page.getByRole("button", { name: "Comparar versões" }).click();
+  await expect(page.getByText("Combinação segura disponível")).toBeVisible();
+  await page.getByText("Pré-visualizar a combinação").click();
+  await expect(page.locator("details pre.conflict-preview")).toContainText('"resultado": "2–1"');
+  page.on("dialog", dialog => dialog.accept());
+  await page.getByRole("button", { name: "Combinar alterações independentes" }).click();
+  await expect.poll(() => page.evaluate(() => window.__mergeResolution)).toEqual(["match-merge", "jogos", "merge_non_overlapping", "v2", "local-v2"]);
+});
+
+test("sync concluída não repõe o scroll antigo se o treinador rolar durante a atualização", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.waitForFunction(() => typeof router === "function" && typeof WorkspaceStore !== "undefined");
+  await page.evaluate(async () => {
+    const buildSnapshot = WorkspaceStore.buildSnapshot.bind(WorkspaceStore);
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    window.__releaseWorkspaceRender = release;
+    window.__workspaceRenderPending = false;
+    WorkspaceStore.buildSnapshot = async (...args) => {
+      if (!window.__workspaceRenderPending) {
+        window.__workspaceRenderPending = true;
+        await gate;
+      }
+      return buildSnapshot(...args);
+    };
+    document.getElementById("app").style.minHeight = "1800px";
+    window.scrollTo(0, 640);
+    window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", { detail: { pulled: 1, pushed: 0, conflicts: [], deleted: 0 } }));
+  });
+  await expect.poll(() => page.evaluate(() => window.__workspaceRenderPending)).toBe(true);
+  await page.evaluate(() => {
+    window.scrollTo(0, 920);
+    window.dispatchEvent(new WheelEvent("wheel", { deltaY: 280 }));
+    window.__releaseWorkspaceRender();
+  });
+  await expect(page.getByText("Human–AI Shared Workspace")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(920);
+});
 });
 
 test("IndexedDB recusa eliminação remota quando a ficha local mudou", async ({ page }) => {
@@ -989,7 +1049,7 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
   await expect(page.getByText(/Atualização disponível\. Guarda o que estás a fazer/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeVisible();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v122"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v123"))).toBeNull();
 });
 
 test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
@@ -1002,7 +1062,7 @@ test("service worker update after an older cached reload does not stay suppresse
   }).catch(() => {});
   await reloaded;
   await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v122"))).toBe("1");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v123"))).toBe("1");
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {

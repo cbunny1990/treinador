@@ -97,7 +97,7 @@ function remotePayload(row) {
   const payload = { ...row };
   for (const key of [
     "id", "team_id", "sync_id", "sync_dirty", "sync_local_updated_at",
-    "remote_updated_at", "remote_team_id", "sync_actor_type", "sync_actor_label", "data_url", "profile_media_ref",
+    "remote_updated_at", "remote_team_id", "sync_actor_type", "sync_actor_label", "data_url", "profile_media_ref", "_sync_base",
   ]) {
     delete payload[key];
   }
@@ -172,6 +172,43 @@ function remoteActivityMatches(expected, remote) {
     .every((key) => (expected[key] ?? null) === (remote[key] ?? null)) &&
     sameInstant(expected.created_at, remote.created_at) &&
     JSON.stringify(stable(expected.metadata || {})) === JSON.stringify(stable(remote.metadata || {}));
+}
+function remoteStableValue(value) {
+  if (Array.isArray(value)) return value.map(remoteStableValue);
+  if (value && typeof value === "object") return Object.fromEntries(
+    Object.keys(value).sort().map((key) => [key, remoteStableValue(value[key])])
+  );
+  return value;
+}
+function remoteValueEqual(left, right, leftHas = true, rightHas = true) {
+  return leftHas === rightHas && (!leftHas || JSON.stringify(remoteStableValue(left)) === JSON.stringify(remoteStableValue(right)));
+}
+function remoteThreeWayMerge(base, local, remote) {
+  if (!base || !local || !remote || Array.isArray(base) || Array.isArray(local) || Array.isArray(remote)
+    || typeof base !== "object" || typeof local !== "object" || typeof remote !== "object") return null;
+  const has = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+  const keys = new Set([...Object.keys(base), ...Object.keys(local), ...Object.keys(remote)]);
+  const merged = Object.create(null);
+  const localChanges = [], remoteChanges = [], overlaps = [];
+  for (const key of keys) {
+    if (key === "updated_at") {
+      if (has(remote, key)) merged[key] = remote[key];
+      continue;
+    }
+    const baseHas = has(base, key), localHas = has(local, key), remoteHas = has(remote, key);
+    const localChanged = !remoteValueEqual(local[key], base[key], localHas, baseHas);
+    const remoteChanged = !remoteValueEqual(remote[key], base[key], remoteHas, baseHas);
+    if (localChanged) localChanges.push(key);
+    if (remoteChanged) remoteChanges.push(key);
+    if (localChanged && remoteChanged && !remoteValueEqual(local[key], remote[key], localHas, remoteHas)) {
+      overlaps.push(key);
+      continue;
+    }
+    const source = localChanged ? local : remote;
+    const sourceHas = localChanged ? localHas : remoteHas;
+    if (sourceHas) merged[key] = source[key];
+  }
+  return { merged: overlaps.length ? null : merged, local_changes: localChanges, remote_changes: remoteChanges, overlaps };
 }
 function remoteRowBelongsToTeam(row, remoteTeamId) {
   return !row?.remote_team_id || row.remote_team_id === remoteTeamId;
@@ -833,6 +870,7 @@ const RemoteWorkspace = {
             : null,
         } : {}),
         sync_dirty: !unchanged,
+        _sync_base: payload,
         remote_updated_at: saved.updated_at,
         remote_team_id: remoteTeamId,
         sync_actor_type: saved.actor_type,
@@ -1068,6 +1106,7 @@ const RemoteWorkspace = {
       const merged = {
         ...(local || {}),
         ...payload,
+        _sync_base: remote.payload || {},
         ...(store === "exercicios" ? { workspace_v2: true } : {}),
         team_id: DEFAULT_TEAM_ID,
         sync_id: remote.id,
@@ -1092,7 +1131,13 @@ const RemoteWorkspace = {
       }
       if (local) {
         merged.id = local.id;
-        if (local.remote_updated_at === remote.updated_at) continue;
+        if (local.remote_updated_at === remote.updated_at) {
+          if (!local._sync_base) await DB.modificar(store, local.id, (current) => {
+            if (current.sync_dirty || current.remote_updated_at !== remote.updated_at) return current;
+            return { ...current, _sync_base: remote.payload || {} };
+          }, { remote: true });
+          continue;
+        }
         const applied = await this._applyPulledRecord(store, local, merged);
         if (!applied.applied) {
           if (applied.current?.sync_dirty && applied.current.remote_updated_at !== remote.updated_at) {
@@ -1807,7 +1852,7 @@ const RemoteWorkspace = {
     const remote = (remoteResult.data || []).find((item) => !item.deleted_at);
     if (!remote || remote.updated_at !== conflict.remote_updated_at) throw new Error("A versão remota mudou desde a deteção. Sincroniza novamente para rever a versão atual.");
     let localView = { ...local };
-    delete localView.id;delete localView.sync_dirty;delete localView.sync_local_updated_at;delete localView.remote_team_id;delete localView.remote_updated_at;
+    delete localView.id;delete localView.sync_dirty;delete localView.sync_local_updated_at;delete localView.remote_team_id;delete localView.remote_updated_at;delete localView._sync_base;
     let remoteView;
     if (store === "media_items") {
       remoteView = { subject_type: remote.subject_type, subject_ref: remote.subject_ref, type: remote.media_type,
@@ -1815,15 +1860,38 @@ const RemoteWorkspace = {
         file_name: remote.file_name, mime_type: remote.mime_type, size_bytes: remote.size_bytes,
         storage_path: remote.storage_path, deleted_at: remote.deleted_at };
     } else remoteView = await this._hydratePayload(remote.kind, remote.payload, remoteTeamId);
+    let mergeSuggestion = null;
+    let mergeUnavailable = "A versão comum ainda não está guardada neste dispositivo.";
+    if (REMOTE_STORE_KINDS[store] && local._sync_base && remote.payload) {
+      try {
+        const localPayload = await this._payloadForRemote(store, local, remoteTeamId);
+        mergeSuggestion = remoteThreeWayMerge(local._sync_base, localPayload, remote.payload);
+        mergeUnavailable = mergeSuggestion?.overlaps?.length
+          ? "As duas versões alteraram os mesmos campos; a combinação automática ficou bloqueada."
+          : mergeSuggestion ? "" : "Não foi possível calcular uma combinação segura.";
+      } catch (_) {
+        mergeUnavailable = "Uma referência do registo precisa de revisão antes de combinar. Ainda podes comparar as versões completas.";
+      }
+    } else if (store === "media_items") {
+      mergeUnavailable = "A media exige uma escolha explícita; ficheiros e referências não são combinados automaticamente.";
+    }
     return {
       store, sync_id: syncId, remote_updated_at: remote.updated_at,
       local_updated_at: local.sync_local_updated_at || local.updated_at || null,
       local: remoteConflictPreview(localView), remote: remoteConflictPreview(remoteView),
+      merge_suggestion: mergeSuggestion && !mergeSuggestion.overlaps.length && mergeSuggestion.local_changes.length && mergeSuggestion.remote_changes.length ? {
+        payload: remoteConflictPreview(mergeSuggestion.merged),
+        local_changes: mergeSuggestion.local_changes,
+        remote_changes: mergeSuggestion.remote_changes,
+      } : null,
+      merge_unavailable: mergeSuggestion && !mergeSuggestion.overlaps.length && (!mergeSuggestion.local_changes.length || !mergeSuggestion.remote_changes.length)
+        ? "Uma das versões não tem alterações de conteúdo em relação à última versão comum. Escolhe explicitamente qual manter."
+        : mergeUnavailable,
     };
   },
 
   async resolveVersionConflict(syncId, storeName, resolution, expectedRemote, expectedLocal) {
-    if (!['keep_local', 'keep_remote'].includes(resolution)) throw new Error("Escolhe qual versão queres manter.");
+    if (!['keep_local', 'keep_remote', 'merge_non_overlapping'].includes(resolution)) throw new Error("Escolhe como queres resolver as versões.");
     const reviewed = await this.readVersionConflict(syncId, storeName);
     if (reviewed.remote_updated_at !== expectedRemote || reviewed.local_updated_at !== expectedLocal) {
       throw new Error("Uma das versões mudou desde a comparação. Reabre o conflito antes de decidir.");
@@ -1838,6 +1906,36 @@ const RemoteWorkspace = {
     if (result.error) throw result.error;
     const remote = (result.data || []).find((item) => !item.deleted_at);
     if (!remote || remote.updated_at !== expectedRemote) throw new Error("A versão remota mudou durante a decisão. Nada foi substituído; sincroniza e compara novamente.");
+    if (resolution === "merge_non_overlapping") {
+      if (store === "media_items" || !local._sync_base) throw new Error("Não existe uma versão comum para combinar. Compara as versões e escolhe explicitamente qual manter.");
+      let localPayload;
+      try { localPayload = await this._payloadForRemote(store, local, remoteTeamId); }
+      catch (_) { throw new Error("Uma referência do registo precisa de revisão antes de combinar as versões."); }
+      const merge = remoteThreeWayMerge(local._sync_base, localPayload, remote.payload || {});
+      if (!merge || !merge.merged || !merge.local_changes.length || !merge.remote_changes.length) throw new Error("A combinação não tem alterações independentes dos dois lados. Compara as versões e escolhe explicitamente qual manter.");
+      const hydrated = await this._hydratePayload(remote.kind, merge.merged, remoteTeamId);
+      const baseHydrated = await this._hydratePayload(remote.kind, local._sync_base, remoteTeamId);
+      const localHydrated = await this._hydratePayload(remote.kind, localPayload, remoteTeamId);
+      const remoteHydrated = await this._hydratePayload(remote.kind, remote.payload || {}, remoteTeamId);
+      const payloadKeys = new Set([
+        ...Object.keys(baseHydrated), ...Object.keys(localHydrated), ...Object.keys(remoteHydrated), ...Object.keys(hydrated),
+      ]);
+      await DB.modificar(store, local.id, (current) => {
+        if (!current.sync_dirty || current.sync_id !== syncId || current.sync_local_updated_at !== local.sync_local_updated_at) throw new Error("A versão local mudou durante a combinação. Reabre o conflito.");
+        const next = { ...current };
+        for (const key of payloadKeys) delete next[key];
+        return {
+          ...next,
+          ...hydrated,
+          sync_id: syncId,
+          sync_dirty: true,
+          _sync_base: remote.payload || {},
+          remote_updated_at: remote.updated_at,
+          remote_team_id: remoteTeamId,
+        };
+      }, { remote: true });
+      return this.syncNow();
+    }
     if (resolution === "keep_local") {
       await DB.modificar(store, local.id, (current) => {
         if (!current.sync_dirty || current.sync_id !== syncId || current.sync_local_updated_at !== local.sync_local_updated_at) throw new Error("A versão local mudou durante a decisão. Reabre o conflito.");
