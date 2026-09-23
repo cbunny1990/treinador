@@ -427,13 +427,15 @@ test("alteração offline recebe UUID e eliminação cria tombstone", async ({ p
     const row = await DB.obter("jogadores", id);
     const originalTransaction = IDBDatabase.prototype.transaction;
     const tombstoneTransactions = [];
+    let captureTransactions = false;
     IDBDatabase.prototype.transaction = function (stores, mode, options) {
       const names = typeof stores === "string" ? [stores] : Array.from(stores);
-      if (mode === "readwrite" && names.includes("sync_tombstones")) tombstoneTransactions.push(names);
+      if (captureTransactions && mode === "readwrite") tombstoneTransactions.push(names);
       return originalTransaction.call(this, stores, mode, options);
     };
-    try { await DB.apagar("jogadores", id); }
-    finally { IDBDatabase.prototype.transaction = originalTransaction; }
+    captureTransactions = true;
+    await DB.apagar("jogadores", id);
+    captureTransactions = false;
     const syncedId = await DB.criar("jogadores", {
       team_id: DEFAULT_TEAM_ID,
       nome: "Sync com versão",
@@ -442,12 +444,27 @@ test("alteração offline recebe UUID e eliminação cria tombstone", async ({ p
       sync_dirty: false,
       remote_updated_at: "2026-09-21T12:00:00.000Z",
     }, { remote: true });
+    captureTransactions = true;
     await DB.apagar("jogadores", syncedId);
+    captureTransactions = false;
+    const remoteDeletedId = await DB.criar("jogadores", {
+      team_id: DEFAULT_TEAM_ID,
+      nome: "Eliminação recebida",
+      sync_id: "33333333-3333-4333-8333-333333333333",
+      sync_dirty: false,
+      remote_updated_at: "2026-09-22T12:00:00.000Z",
+    }, { remote: true });
+    const remoteRow = await DB.obter("jogadores", remoteDeletedId);
+    captureTransactions = true;
+    await DB.apagar("jogadores", remoteDeletedId, { remote: true, expected: remoteRow });
+    captureTransactions = false;
+    IDBDatabase.prototype.transaction = originalTransaction;
     return {
       syncId: row.sync_id,
       dirty: row.sync_dirty,
       tombstones: await DB.listar("sync_tombstones"),
       tombstoneTransactions,
+      remoteCopyExists: !!(await DB.obter("jogadores", remoteDeletedId)),
       originRemoteTeamId,
     };
   });
@@ -457,8 +474,11 @@ test("alteração offline recebe UUID e eliminação cria tombstone", async ({ p
   expect(state.tombstones[0].sync_id).toBe(state.syncId);
   expect(state.tombstones[0].remote_team_id).toBe(state.originRemoteTeamId);
   expect(state.tombstones[1].expected_updated_at).toBe("2026-09-21T12:00:00.000Z");
-  expect(state.tombstoneTransactions).toHaveLength(1);
+  expect(state.remoteCopyExists).toBe(false);
+  expect(state.tombstoneTransactions).toHaveLength(3);
   expect(state.tombstoneTransactions[0]).toEqual(expect.arrayContaining(["jogadores", "sync_tombstones"]));
+  expect(state.tombstoneTransactions[1]).toEqual(expect.arrayContaining(["jogadores", "sync_tombstones"]));
+  expect(state.tombstoneTransactions[2]).toEqual(["jogadores"]);
 });
 
 test("interface local mostra apenas dados do workspace remoto selecionado", async ({ page }) => {
@@ -804,7 +824,7 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
   await expect(page.getByText(/Atualização disponível\. Guarda o que estás a fazer/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeVisible();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v108"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v109"))).toBeNull();
 });
 
 test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
@@ -817,7 +837,7 @@ test("service worker update after an older cached reload does not stay suppresse
   }).catch(() => {});
   await reloaded;
   await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v108"))).toBe("1");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v109"))).toBe("1");
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {

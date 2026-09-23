@@ -237,7 +237,7 @@ const DB = {
             return;
           }
           os.delete(key);
-          if (anterior?.sync_id) tx.objectStore("sync_tombstones").add({
+          if (keepTombstone && anterior?.sync_id) tx.objectStore("sync_tombstones").add({
             store,
             sync_id: anterior.sync_id,
             team_id: anterior.team_id || DEFAULT_TEAM_ID,
