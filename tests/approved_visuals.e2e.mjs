@@ -47,7 +47,7 @@ try{
     await page.screenshot({path:path.join(output,'original-size-'+viewport.width+'.png')});
     await page.getByRole('button',{name:'Fechar',exact:true}).click();
     await page.waitForSelector('#exercise-image-viewer',{state:'detached'});
-    const cached=await page.evaluate(async()=>{const cache=await caches.open('vision-coach-v102');return (await cache.keys()).filter(x=>x.url.includes('/approved-20260922/')).length;});
+    const cached=await page.evaluate(async()=>{const cache=await caches.open('vision-coach-v103');return (await cache.keys()).filter(x=>x.url.includes('/approved-20260922/')).length;});
     assert.equal(cached,5);
     await context.setOffline(true);await page.reload({waitUntil:'domcontentloaded'});
     await page.waitForFunction(()=>document.querySelector('.consult-exercise img')?.naturalWidth===1448);

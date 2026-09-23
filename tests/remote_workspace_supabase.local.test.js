@@ -104,7 +104,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     }).select("id");
     assert.ok(forbiddenInsert.error, "RLS must reject a write to another team's workspace.");
 
-    const refs = { player: crypto.randomUUID(), liveMatch: crypto.randomUUID(), deletedMatch: crypto.randomUUID(), historyMatch: crypto.randomUUID(), historyTraining: crypto.randomUUID(), proposal: crypto.randomUUID(), pcDeletedProposal: crypto.randomUUID(), photo: crypto.randomUUID(), latestPhoto: crypto.randomUUID(), lossEvent: crypto.randomUUID() };
+    const refs = { player: crypto.randomUUID(), liveMatch: crypto.randomUUID(), deletedMatch: crypto.randomUUID(), historyMatch: crypto.randomUUID(), historyTraining: crypto.randomUUID(), exercise: crypto.randomUUID(), proposal: crypto.randomUUID(), pcDeletedProposal: crypto.randomUUID(), photo: crypto.randomUUID(), latestPhoto: crypto.randomUUID(), lossEvent: crypto.randomUUID() };
     globalThis.DEFAULT_TEAM_ID = "local-coach";
     globalThis.mediaSubjectKey = (team, type, id) => `${team}|${type}|${id}`;
     globalThis.DB = devices[0];
@@ -146,9 +146,14 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     participationMatch = MatchVisual.apply(participationMatch, { type: "start", confirmed: true, expected_revision: 0 }, { controller_id: "local-integration", players: matchPlayers, now: matchStart });
     participationMatch = MatchVisual.apply(participationMatch, { type: "pause", expected_revision: 1 }, { controller_id: "local-integration", players: matchPlayers, now: matchStart + 600_000 });
     await devices[0].criar("jogos", participationMatch);
+    const exerciseId = await devices[0].criar("exercicios", {
+      team_id: "local-coach", sync_id: refs.exercise, remote_team_id: teamId, sync_dirty: true,
+      workspace_v2: true, external_key: "local-sync-passe-apoio", nome: "Passe + apoio",
+    });
     await devices[0].criar("treinos", {
       team_id: "local-coach", sync_id: refs.historyTraining, remote_team_id: teamId, sync_dirty: true,
       external_key: "local-player-history-training", data: "2026-09-02", objetivo: "Passe + apoio",
+      blocos: [{ exercise_ref: String(exerciseId), duration_min: 12 }],
       session: { attendance: [{ player_ref: refs.player, name: "Atleta sintético", status: "present" }] },
     });
     const proposalBody = { objective: "Apoio após passe", agent_proposal: { status: "proposed", rationale: "Proposta para revisão do treinador", evidence: [{ type: "match", id: refs.liveMatch }, { type: "training", id: refs.historyTraining }] } };
@@ -163,18 +168,19 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
       body: JSON.stringify({ objective: "Apoio defensivo", agent_proposal: { status: "proposed" } }), status: "ready", target_date: "2026-09-03",
     });
     const firstPush = await RemoteWorkspace._syncRecords(teamId, owner.user.id);
-    assert.equal(firstPush.pushed, 8);
+    assert.equal(firstPush.pushed, 9);
 
     globalThis.DB = devices[1];
     RemoteWorkspace.init = async () => coach.client;
     await devices[1].criar("sync_tombstones", { store: "seed", sync_id: "force-distinct-local-ids" });
     const pulled = await RemoteWorkspace._syncRecords(teamId, coach.user.id);
-    assert.equal(pulled.pulled, 8);
+    assert.equal(pulled.pulled, 9);
     const phonePlayer = (await devices[1].listar("jogadores"))[0];
     const phoneLive = (await devices[1].listar("jogos")).find((row) => row.sync_id === refs.liveMatch);
     const phoneLegacyId = (await devices[1].listar("jogos")).find((row) => row.external_key === "local-sync-legacy-default-id");
     const phoneDeleted = (await devices[1].listar("jogos")).find((row) => row.sync_id === refs.deletedMatch);
     const phoneHistoryTraining = (await devices[1].listar("treinos")).find((row) => row.sync_id === refs.historyTraining);
+    const phoneExercise = (await devices[1].listar("exercicios")).find((row) => row.sync_id === refs.exercise);
     const phoneProposal = (await devices[1].listar("workspace_documents")).find((row) => row.sync_id === refs.proposal);
     const phonePcDeletedProposal = (await devices[1].listar("workspace_documents")).find((row) => row.sync_id === refs.pcDeletedProposal);
     assert.notEqual(phonePlayer.id, playerId);
@@ -183,6 +189,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.match(phoneLegacyId.sync_id, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     assert.notEqual(phoneLegacyId.sync_id, "default");
     assert.notEqual(phoneDeleted.id, deletedId);
+    assert.equal(phoneHistoryTraining.blocos[0].exercise_ref, phoneExercise.sync_id);
     assert.equal(JSON.parse(phoneProposal.body).agent_proposal.status, "proposed");
     assert.equal(JSON.parse(phonePcDeletedProposal.body).agent_proposal.status, "proposed");
     assert.equal(phoneLive.match_events.events[0].id, refs.lossEvent);

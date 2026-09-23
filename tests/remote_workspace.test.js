@@ -291,7 +291,7 @@ test("referências media usam UUIDs estáveis e não atravessam workspaces", asy
     assert.equal(await RemoteWorkspace._localIdForRemoteRef("player", playerRef, "team-b"), playerRef);
     await assert.rejects(
       RemoteWorkspace._subjectRemoteRef("player", 7, "team-b"),
-      /pertence a outro workspace/,
+      error => error.code === "LOCAL_REFERENCE_CONFLICT" && error.reason === "subject_other_team",
     );
 
     player = undefined;
@@ -762,6 +762,27 @@ test("referências locais sem chave válida ficam por reconciliar sem acesso Ind
   } finally { globalThis.DB = originalDB; RemoteWorkspace.init = originalInit; }
 });
 
+test("treino sincronizado converte exercício local em UUID estável sem alterar o plano local", async () => {
+  const team = "22222222-2222-4222-8222-222222222222";
+  const originalDB = globalThis.DB, originalTeam = globalThis.DEFAULT_TEAM_ID;
+  let exercise = { id: 7, team_id: "default", workspace_v2: true, nome: "Passe e apoio" };
+  globalThis.DEFAULT_TEAM_ID = "default";
+  globalThis.DB = {
+    async obter(store, id) { assert.equal(store, "exercicios"); return id === 7 ? { ...exercise } : null; },
+    async atualizar(store, row) { assert.equal(store, "exercicios"); exercise = { ...row }; return row; },
+  };
+  const training = { id: 3, team_id: "default", blocos: [{ exercise_ref: "7", duration_min: 12 }] };
+  try {
+    const payload = await RemoteWorkspace._payloadForRemote("treinos", training, team);
+    assert.match(payload.blocos[0].exercise_ref, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    assert.equal(payload.blocos[0].exercise_ref, exercise.sync_id);
+    assert.equal(training.blocos[0].exercise_ref, "7");
+    await assert.rejects(RemoteWorkspace._payloadForRemote("treinos", { ...training, blocos: [{ exercise_ref: "999" }] }, team), error => error.code === "LOCAL_REFERENCE_CONFLICT" && error.reason === "subject_not_found_locally");
+    exercise.remote_team_id = "33333333-3333-4333-8333-333333333333";
+    await assert.rejects(RemoteWorkspace._payloadForRemote("treinos", training, team), error => error.code === "LOCAL_REFERENCE_CONFLICT" && error.reason === "subject_other_team");
+  } finally { globalThis.DB = originalDB; globalThis.DEFAULT_TEAM_ID = originalTeam; }
+});
+
 test("um documento com referência inválida fica em conflito e não bloqueia outro documento", async () => {
   const team = "22222222-2222-4222-8222-222222222222";
   const originals = { DB: globalThis.DB, DEFAULT_TEAM_ID: globalThis.DEFAULT_TEAM_ID, init: RemoteWorkspace.init };
@@ -986,6 +1007,34 @@ test("dois dispositivos sincronizam criação, edição e eliminação sem dupli
     assert.equal(repeated.pulled, 0);
     assert.equal((await devices[1].listar("jogos")).length, 0);
     assert.equal(remote.rows.length, 1);
+  });
+});
+
+test("plano antigo com referência numérica de exercício chega ao segundo dispositivo com UUID", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    useDevice(0);
+    const exerciseId = await devices[0].criar("exercicios", {
+      team_id: "default", workspace_v2: true, nome: "Passe e apoio",
+      external_key: "exercise-passe-apoio", sync_dirty: true,
+    });
+    await devices[0].criar("treinos", {
+      team_id: "default", data: "2026-10-04", external_key: "training-legacy-exercise-ref",
+      blocos: [{ exercise_ref: String(exerciseId), duration_min: 12 }], sync_dirty: true,
+    });
+    const pushed = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(pushed.pushed, 2);
+    assert.equal(pushed.conflicts.length, 0);
+    const exerciseRemote = remote.rows.find(row => row.kind === "exercise");
+    const trainingRemote = remote.rows.find(row => row.kind === "training");
+    assert.equal(trainingRemote.payload.blocos[0].exercise_ref, exerciseRemote.id);
+
+    useDevice(1);
+    const received = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(received.pulled, 2);
+    const [exercise] = await devices[1].listar("exercicios");
+    const [training] = await devices[1].listar("treinos");
+    assert.equal(training.blocos[0].exercise_ref, exercise.sync_id);
+    assert.equal((await devices[1].listar("treinos")).length, 1);
   });
 });
 

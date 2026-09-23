@@ -9,8 +9,8 @@ const REMOTE_DEFAULT_CONFIG = {
 const REMOTE_STORE_KINDS = {
   jogadores: "player",
   jogos: "match",
-  treinos: "training",
   exercicios: "exercise",
+  treinos: "training",
   memory_items: "memory",
   workspace_documents: "document",
   game_models: "game_model",
@@ -599,7 +599,7 @@ const RemoteWorkspace = {
       throw remoteReferenceError("subject_not_found_locally");
     }
     if (local.remote_team_id && local.remote_team_id !== remoteTeamId) {
-      throw new Error("O registo associado pertence a outro workspace remoto.");
+      throw remoteReferenceError("subject_other_team");
     }
     const withId = await this._ensureSyncId(store, local);
     return withId.sync_id;
@@ -626,6 +626,17 @@ const RemoteWorkspace = {
   },
   async _payloadForRemote(store, local, remoteTeamId) {
     const payload = remotePayload(local);
+    if (store === "treinos" && Array.isArray(payload.blocos)) {
+      const blocks = [];
+      for (const block of payload.blocos) {
+        if (!block?.exercise_ref) { blocks.push(block); continue; }
+        blocks.push({
+          ...block,
+          exercise_ref: await this._subjectRemoteRef("exercise", block.exercise_ref, remoteTeamId),
+        });
+      }
+      payload.blocos = blocks;
+    }
     if (Array.isArray(payload.subject_refs)) {
       payload.subject_refs = await this._refsForRemote(payload.subject_refs, remoteTeamId);
     }
