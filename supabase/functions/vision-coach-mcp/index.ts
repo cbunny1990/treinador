@@ -14,7 +14,7 @@ import { SEASON_TOOLS, executeSeasonTool } from "./seasons.mjs";
 import { REPORT_TOOLS, executeReportTool } from "./reports.mjs";
 
 const SERVER_NAME = "vision-coach";
-const SERVER_VERSION = "1.11.0";
+const SERVER_VERSION = "1.12.0";
 const MODERN_PROTOCOL = "2026-07-28";
 const LEGACY_PROTOCOLS = new Set(["2025-11-25", "2025-06-18", "2025-03-26"]);
 const MAX_BODY_BYTES = 256 * 1024;
@@ -302,6 +302,35 @@ const TOOLS = [
       additionalProperties: false,
       required: ["expected_updated_at", "confirmed"],
       oneOf: [{ required: ["id"], not: { required: ["external_key"] } }, { required: ["external_key"], not: { required: ["id"] } }],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "get_media",
+    description: "Lê um media do workspace pelo UUID estável, incluindo a revisão atual e a associação.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string", format: "uuid" } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false },
+  },
+  {
+    name: "update_external_media",
+    description: "Atualiza metadados ou URL HTTPS de um media externo após leitura e confirmação explícita do treinador. Não altera ficheiros privados.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", format: "uuid" },
+        expected_updated_at: { type: "string", minLength: 1 },
+        title: { type: "string", minLength: 1, maxLength: 160 },
+        note: { type: "string", maxLength: 2000 },
+        url: { type: "string", minLength: 8, maxLength: 8000 },
+        confirmed: { type: "boolean", const: true },
+      },
+      required: ["id", "expected_updated_at", "confirmed"],
+      additionalProperties: false,
     },
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
@@ -693,6 +722,59 @@ async function executeTool(admin: any, connector: any, name: string, args: any, 
     });
     if (error) throw error;
     return { created: true, media: data };
+  }
+
+  if (name === "get_media") {
+    requireScope(connector, "read");
+    if (!validUuid(args?.id)) throw new Error("invalid_media_uuid");
+    const { data, error } = await admin.from("media_assets")
+      .select("id,team_id,subject_type,subject_ref,media_type,title,note,external_url,storage_path,file_name,mime_type,size_bytes,actor_type,actor_label,created_at,updated_at,deleted_at")
+      .eq("team_id", teamId).eq("id", args.id).maybeSingle();
+    if (error) throw error;
+    if (!data || data.deleted_at) throw new Error("media_not_found");
+    return data;
+  }
+
+  if (name === "update_external_media") {
+    requireScope(connector, "media");
+    if (args?.confirmed !== true) throw new Error("explicit_confirmation_required");
+    if (!validUuid(args?.id)) throw new Error("invalid_media_uuid");
+    if (!args?.expected_updated_at) throw new Error("expected_updated_at_required");
+    if (!["title", "note", "url"].some((key) => Object.prototype.hasOwnProperty.call(args, key))) {
+      throw new Error("media_update_field_required");
+    }
+    const { data: existing, error: readError } = await admin.from("media_assets")
+      .select("id,team_id,subject_type,subject_ref,media_type,title,note,external_url,storage_path,file_name,mime_type,size_bytes,updated_at,deleted_at")
+      .eq("team_id", teamId).eq("id", args.id).maybeSingle();
+    if (readError) throw readError;
+    if (!existing || existing.deleted_at) throw new Error("media_not_found");
+    if (!existing.external_url || existing.storage_path) throw new Error("private_or_local_media_is_not_editable_via_agent");
+    if (existing.updated_at !== args.expected_updated_at) throw new Error("record_conflict_read_again");
+    const url = Object.prototype.hasOwnProperty.call(args, "url") ? String(args.url || "").trim() : existing.external_url;
+    if (!/^https:\/\//i.test(url)) throw new Error("https_url_required");
+    const title = Object.prototype.hasOwnProperty.call(args, "title") ? String(args.title || "").trim() : existing.title;
+    if (!title) throw new Error("media_title_required");
+    const note = Object.prototype.hasOwnProperty.call(args, "note") ? String(args.note || "") : existing.note;
+    if (title.length > 160 || note.length > 2000 || url.length > 8000) throw new Error("media_field_too_long");
+    const { data, error } = await admin.rpc("head_coach_register_media", {
+      p_team_id: teamId,
+      p_subject_type: existing.subject_type,
+      p_subject_ref: existing.subject_ref,
+      p_media_type: existing.media_type,
+      p_title: title,
+      p_note: note,
+      p_external_url: url,
+      p_storage_path: existing.storage_path,
+      p_file_name: existing.file_name,
+      p_mime_type: existing.mime_type,
+      p_size_bytes: existing.size_bytes,
+      p_media_id: existing.id,
+      p_expected_updated_at: existing.updated_at,
+      p_idempotency_key: "mcp:" + connector.id + ":media-update:" + String(requestId ?? crypto.randomUUID()),
+      p_agent_subject: "head-coach",
+    });
+    if (error) throw error;
+    return { updated: true, media: data };
   }
 
   throw new Error("unknown_tool");

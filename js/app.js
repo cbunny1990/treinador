@@ -159,6 +159,7 @@ async function routeOnce(){
     }
     if(root==="media"){
       if(parts[1]==="novo") return viewMediaForm(parts[2],parts[3]);
+      if(parts[1] && parts[2]==="editar") return viewMediaForm(null,null,parts[1]);
       return viewMedia();
     }
     if(root==="timeline") return viewTimeline(parts[1]||null,parts[2]||null);
@@ -567,7 +568,7 @@ function renderMediaCards(items){
   return '<div class="media-grid">'+items.map(function(item){
     var href=item.data_url||item.url||"#";
     var attrs=item.url?'target="_blank" rel="noopener"':'download="'+esc(item.file_name||item.title)+'"';
-    return '<article class="panel media-card">'+mediaPreview(item)+'<div class="media-info"><div class="row"><div class="grow"><div class="title">'+esc(item.title)+'</div><div class="meta">'+esc(item.note||item.file_name||"Media")+'</div></div><button class="link" data-action="delete-media" data-id="'+item.id+'">Remover</button></div><a class="link" href="'+esc(href)+'" '+attrs+'>Abrir</a></div></article>';
+    return '<article class="panel media-card">'+mediaPreview(item)+'<div class="media-info"><div class="row"><div class="grow"><div class="title">'+esc(item.title)+'</div><div class="meta">'+esc(item.note||item.file_name||"Media")+'</div></div><a class="link" href="#/media/'+item.id+'/editar">Editar</a><button class="link" data-action="delete-media" data-id="'+item.id+'">Remover</button></div><a class="link" href="'+esc(href)+'" '+attrs+'>Abrir</a></div></article>';
   }).join("")+'</div>';
 }
 async function viewDocument(id){
@@ -610,16 +611,33 @@ async function subjectOptions(selectedType,selectedId){
   data[3].slice(0,30).forEach(function(x){options.push('<option value="memory:'+x.id+'">Memória · '+esc(x.title)+'</option>');});
   return options.join("").replace('value="'+esc(selected)+'"','value="'+esc(selected)+'" selected');
 }
-async function viewMediaForm(subjectType,subjectId){
-  var options=await subjectOptions(subjectType,subjectId);
-  var html='<section class="panel hero-main" style="max-width:760px"><form class="form" data-form="media">';
-  html+='<label class="field"><span>Associar a</span><select name="subject_key">'+options+'</select></label>';
-  html+='<div class="form-grid"><label class="field"><span>Tipo</span><select name="type"><option value="photo">Fotografia</option><option value="video">Vídeo</option><option value="file">Ficheiro</option></select></label><label class="field"><span>Título</span><input name="title" required></label></div>';
-  html+='<label class="field"><span>Link externo</span><input name="url" type="url" placeholder="https://..."><small class="hint">Usa links para vídeos grandes.</small></label>';
-  html+='<label class="field"><span>Ou ficheiro local</span><input name="file" type="file"><small class="hint">Sem backend remoto: até 5 MB no dispositivo. Com remoto ligado, ficheiros maiores seguem diretamente para Storage privado.</small></label>';
-  html+='<label class="field"><span>Nota / contexto</span><textarea name="note"></textarea></label>';
-  html+='<div class="toolbar"><button class="btn accent" type="submit">Guardar media</button><a class="btn secondary" href="#/media">Cancelar</a></div></form></section>';
-  setView("Adicionar media",html,"Media");
+function mediaSubjectHref(item){
+  if(!item)return "#/media";
+  if(item.subject_type==="player")return "#/equipa/jogador/"+item.subject_id;
+  if(item.subject_type==="match")return "#/equipa/jogo/"+item.subject_id;
+  if(item.subject_type==="training")return "#/treinos/"+item.subject_id;
+  if(item.subject_type==="document")return "#/planos/"+item.subject_id;
+  if(item.subject_type==="exercise")return "#/exercicios/"+item.subject_id;
+  return "#/media";
+}
+async function viewMediaForm(subjectType,subjectId,itemId){
+  var item=itemId?await DB.obter("media_items",Number(itemId)):null;
+  if(itemId&&!item)return go("#/media");
+  var editing=!!item;
+  var options=editing?"":await subjectOptions(subjectType,subjectId);
+  var typeOptions=[["photo","Fotografia"],["video","Vídeo"],["file","Ficheiro"]].map(function(x){return '<option value="'+x[0]+'" '+((item?.type||"photo")===x[0]?"selected":"")+'>'+x[1]+'</option>';}).join("");
+  var html='<section class="panel hero-main" style="max-width:760px"><form class="form" data-form="'+(editing?"media-edit":"media")+'" '+(editing?'data-id="'+item.id+'"':'')+'>';
+  if(editing){
+    html+='<input type="hidden" name="expected_updated_at" value="'+esc(item.updated_at||"")+'"><p class="meta">A media continua associada ao mesmo registo do workspace.</p>';
+  }else html+='<label class="field"><span>Associar a</span><select name="subject_key">'+options+'</select></label>';
+  html+='<div class="form-grid"><label class="field"><span>Tipo</span><select name="type">'+typeOptions+'</select></label><label class="field"><span>Título</span><input name="title" required value="'+esc(item?.title||"")+'"></label></div>';
+  if(!editing)html+='<label class="field"><span>Link externo</span><input name="url" type="url" placeholder="https://..."><small class="hint">Usa links para vídeos grandes.</small></label>';
+  else if(!item.storage_path&&!item.data_url)html+='<label class="field"><span>Link externo</span><input name="url" type="url" placeholder="https://..." value="'+esc(item.url||"")+'"></label>';
+  else html+='<p class="hint">O ficheiro fica no armazenamento privado. Aqui podes corrigir os metadados sem alterar os bytes.</p>';
+  if(!editing)html+='<label class="field"><span>Ou ficheiro local</span><input name="file" type="file"><small class="hint">Sem backend remoto: até 5 MB no dispositivo. Com remoto ligado, ficheiros maiores seguem diretamente para Storage privado.</small></label>';
+  html+='<label class="field"><span>Nota / contexto</span><textarea name="note">'+esc(item?.note||"")+'</textarea></label>';
+  html+='<div class="toolbar"><button class="btn accent" type="submit">'+(editing?"Guardar alterações":"Guardar media")+'</button><a class="btn secondary" href="'+(editing?mediaSubjectHref(item):"#/media")+'">Cancelar</a></div><p class="notice" data-media-feedback role="alert" hidden></p></form></section>';
+  setView(editing?"Editar media":"Adicionar media",html,"Media");
 }
 
 function timelineLabel(row){
@@ -1332,6 +1350,25 @@ app.addEventListener("submit",async function(event){
       refs:subject.type?[{type:subject.type,id:subject.id}]:[]
     });
     return go("#/");
+  }
+  if(type==="media-edit"){
+    var existingMedia=await DB.obter("media_items",Number(id));
+    if(!existingMedia)return go("#/media");
+    try{
+      await HeadCoachMedia.update(id,{
+        type:fd.get("type"),
+        title:fd.get("title"),
+        note:fd.get("note"),
+        url:fd.get("url"),
+      },{expectedUpdatedAt:fd.get("expected_updated_at")});
+      await logHuman("updated_media","Editou media · "+fd.get("title"),"media",existingMedia.sync_id||id);
+      return go(mediaSubjectHref(existingMedia));
+    }catch(error){
+      var mediaFeedback=form.querySelector("[data-media-feedback]");
+      if(mediaFeedback){mediaFeedback.textContent=error.message;mediaFeedback.hidden=false;}
+      else alert(error.message);
+      return;
+    }
   }
   if(type==="media"){
     var mediaSubject=splitSubject(fd.get("subject_key"));

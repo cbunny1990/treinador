@@ -244,6 +244,7 @@ test("confirmação de sync na IndexedDB preserva a revisão local e uma ediçã
 });
 
 test("cria plano partilhado e associa media", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/#/planos/novo");
   await page.getByLabel("Tipo").selectOption("training_plan");
   await page.getByLabel("Estado").selectOption("ready");
@@ -275,6 +276,25 @@ test("cria plano partilhado e associa media", async ({ page }) => {
   expect(state.media[0].subject_type).toBe("document");
   expect(state.activity.some((x) => x.action === "created_document")).toBeTruthy();
   expect(state.activity.some((x) => x.action === "added_media")).toBeTruthy();
+
+  await page.getByRole("link", { name: "Editar", exact: true }).click();
+  await page.getByLabel("Título").fill("Saída de bola corrigida");
+  await page.getByLabel("Link externo").fill("https://example.com/video-edited");
+  await page.getByLabel("Nota / contexto").fill("Minuto 3 · apoio após passe");
+  await page.getByRole("button", { name: "Guardar alterações" }).click();
+  await expect(page.getByText("Saída de bola corrigida")).toBeVisible();
+  const edited = await page.evaluate(async () => ({
+    media: await DB.listar("media_items"),
+    activity: await DB.listar("activity_items"),
+  }));
+  expect(edited.media).toHaveLength(1);
+  expect(edited.media[0].id).toBe(state.media[0].id);
+  expect(edited.media[0].sync_id).toBe(state.media[0].sync_id);
+  expect(edited.media[0].title).toBe("Saída de bola corrigida");
+  expect(edited.media[0].url).toBe("https://example.com/video-edited");
+  expect(edited.media[0].note).toBe("Minuto 3 · apoio após passe");
+  expect(edited.media[0].sync_dirty).toBe(true);
+  expect(edited.activity.some((x) => x.action === "updated_media")).toBeTruthy();
 
   let removeNotice = "";
   page.on("dialog", async (dialog) => { removeNotice = dialog.message(); await dialog.accept(); });
@@ -784,7 +804,7 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
   await expect(page.getByText(/Atualização disponível\. Guarda o que estás a fazer/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeVisible();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v107"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v108"))).toBeNull();
 });
 
 test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
@@ -797,7 +817,7 @@ test("service worker update after an older cached reload does not stay suppresse
   }).catch(() => {});
   await reloaded;
   await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v107"))).toBe("1");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v108"))).toBe("1");
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {

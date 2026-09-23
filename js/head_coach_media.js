@@ -59,6 +59,36 @@ const HeadCoachMedia = {
     return DB.criar("media_items", item);
   },
 
+  async update(id, input, options = {}) {
+    const current = await DB.obter("media_items", Number(id));
+    if (!current) throw new Error("O item de media já não existe.");
+    if (options.expectedUpdatedAt && current.updated_at !== options.expectedUpdatedAt) {
+      throw new Error("O item de media mudou noutro dispositivo. Reabre e compara antes de guardar.");
+    }
+    const normalized = normalizarMediaItem({
+      ...current,
+      type: input.type ?? current.type,
+      title: input.title ?? current.title,
+      note: input.note ?? current.note,
+      url: current.storage_path || current.data_url ? current.url : (input.url ?? current.url),
+      data_url: current.data_url,
+    });
+    await DB.modificar("media_items", current.id, (latest) => {
+      if (latest.updated_at !== current.updated_at || latest.sync_id !== current.sync_id) {
+        throw new Error("O item de media mudou durante a edição. Atualiza e tenta novamente.");
+      }
+      return {
+        ...latest,
+        type: normalized.type,
+        title: normalized.title,
+        note: normalized.note,
+        url: normalized.url,
+        updated_at: normalized.updated_at,
+      };
+    });
+    return current.id;
+  },
+
   async remove(id) {
     return DB.apagar("media_items", id);
   },
@@ -67,6 +97,6 @@ const HeadCoachMedia = {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     HEAD_COACH_MEDIA_TYPES, HEAD_COACH_MEDIA_SUBJECTS,
-    mediaSubjectKey, mediaSafeUrl, normalizarMediaItem,
+    mediaSubjectKey, mediaSafeUrl, normalizarMediaItem, HeadCoachMedia,
   };
 }

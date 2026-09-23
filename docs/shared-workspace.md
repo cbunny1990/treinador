@@ -105,6 +105,8 @@ Operações atuais:
 - `listMedia(input)`
 - `addMediaLink(input)`
 
+O MCP permite também `get_media` por UUID remota e `update_external_media` para links externos. A edição requer `confirmed: true`, `expected_updated_at` obtido na leitura e scope `media`; a operação volta a ler a linha na equipa autorizada e usa a RPC versionada. Não edita bytes nem media em Storage privado.
+
 As operações de leitura usam os mesmos stores e UUIDs da interface. A API do browser limita a escrita genérica a `brief` em rascunho. `updateDocument` só edita um brief de agente ainda em rascunho e exige `expected_updated_at`; não pode aprovar ou mudar o tipo do documento. `addHypothesis` só guarda uma hipótese após `confirmed: true`, com citações presentes em registos do workspace e identidade idempotente. Não cria factos nem observações atribuídas ao treinador. `addObservation` é um alias de compatibilidade para `addHypothesis` na versão 2. Para planos, análise de jogo, objetivos e decisões, o Head Coach usa as operações MCP específicas com revisão, evidências e confirmação requeridas por cada módulo.
 
 ### Exemplo conceptual

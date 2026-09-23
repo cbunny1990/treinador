@@ -44,12 +44,12 @@ test("MCP expõe ferramentas Vision Coach essenciais", () => {
   for (const tool of [
     "workspace_summary", "search_workspace", "list_players", "list_matches", "get_match",
     "list_exercises", "list_trainings", "update_player_availability", "create_exercise", "create_training",
-    "update_match_pre_game", "add_external_media",
+    "update_match_pre_game", "add_external_media", "get_media", "update_external_media",
   ]) assert.match(mcp, new RegExp('name: "' + tool + '"'));
   assert.match(mcp, /REPORT_TOOLS, executeReportTool/);
   assert.match(mcp, /\.\.\.REPORT_TOOLS/);
   assert.match(mcp, /REPORT_TOOLS\.some\(\(tool\) => tool\.name === name\).*executeReportTool/);
-  assert.match(mcp, /SERVER_VERSION = "1\.11\.0"/);
+  assert.match(mcp, /SERVER_VERSION = "1\.12\.0"/);
   assert.match(mcp, /2026-07-28/);
   assert.match(mcp, /2025-11-25/);
 });
@@ -116,6 +116,23 @@ test("MCP external media registration requires explicit coach confirmation", () 
   assert.match(block, /confirmed:\s*\{\s*type:\s*"boolean",\s*const:\s*true\s*\}/);
   assert.match(block, /required:[^\]]*confirmed/);
   assert.match(mcp, /if \(args\?\.confirmed !== true\) throw new Error\("explicit_confirmation_required"\);[\s\S]{0,100}const url = String\(args\?\.url/);
+});
+
+test("MCP external media edits read the current row and require coach confirmation plus expected revision", () => {
+  const schemaStart = mcp.indexOf('name: "update_external_media"');
+  const schema = mcp.slice(schemaStart, mcp.indexOf("\n  },", schemaStart));
+  assert.match(schema, /expected_updated_at/);
+  assert.match(schema, /confirmed:\s*\{\s*type:\s*"boolean",\s*const:\s*true\s*\}/);
+  assert.match(schema, /title:\s*\{\s*type:\s*"string",\s*minLength:\s*1,\s*maxLength:\s*160\s*\}/);
+  assert.match(schema, /url:\s*\{\s*type:\s*"string",\s*minLength:\s*8,\s*maxLength:\s*8000\s*\}/);
+  assert.match(schema, /required:\s*\["id",\s*"expected_updated_at",\s*"confirmed"\]/);
+  const handlerStart = mcp.indexOf('if (name === "update_external_media")');
+  const handler = mcp.slice(handlerStart, mcp.indexOf("\n  throw new Error(\"unknown_tool\")", handlerStart));
+  assert.ok(handler.indexOf('.from("media_assets")') < handler.indexOf('rpc("head_coach_register_media"'), "reads before writing");
+  assert.match(handler, /existing\.updated_at !== args\.expected_updated_at/);
+  assert.match(handler, /existing\.storage_path\) throw new Error\("private_or_local_media_is_not_editable_via_agent"\)/);
+  assert.match(handler, /title\.length > 160 \|\| note\.length > 2000 \|\| url\.length > 8000/);
+  assert.match(handler, /rpc\("head_coach_register_media"/);
 });
 
 test("MCP rejects ambiguous record selectors and permanently removes athletes through the audited versioned RPC", () => {
