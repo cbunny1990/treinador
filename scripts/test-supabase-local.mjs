@@ -3,8 +3,9 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const supabaseWorkdir = resolve(root, process.env.VISION_COACH_SUPABASE_LOCAL_WORKDIR || ".");
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-const status = spawnSync(npx, ["--yes", "supabase@2.117.0", "status", "--output", "env"], {
+const status = spawnSync(npx, ["--yes", "supabase@2.117.0", "status", "--output", "env", "--workdir", supabaseWorkdir], {
   cwd: root,
   encoding: "utf8",
   shell: process.platform === "win32",
