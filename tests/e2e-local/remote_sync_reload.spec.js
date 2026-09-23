@@ -152,6 +152,36 @@ test("duas PWA sincronizam ida e volta; offline, edição mobile e eliminação 
     await phone.evaluate((syncId) => RemoteWorkspace.syncNow(), gameSyncId);
     const noResurrection = await phone.evaluate(async (syncId) => (await DB.listar("jogos")).filter((item) => item.sync_id === syncId).length, gameSyncId);
     expect(noResurrection).toBe(0);
+
+    const phoneDeletedSyncId = crypto.randomUUID();
+    await page.evaluate(async (syncId) => {
+      await DB.criar("jogos", {
+        team_id: DEFAULT_TEAM_ID, sync_id: syncId, data: "2026-09-24",
+        adversario: "Criado no PC, apagado no telemóvel", estado: "agendado",
+      });
+      const result = await RemoteWorkspace.syncNow();
+      if (result.conflicts.length) throw new Error(JSON.stringify(result.conflicts));
+    }, phoneDeletedSyncId);
+    await phone.evaluate(async (syncId) => {
+      const result = await RemoteWorkspace.syncNow();
+      if (result.conflicts.length) throw new Error(JSON.stringify(result.conflicts));
+      const row = (await DB.listar("jogos")).find((item) => item.sync_id === syncId);
+      if (!row) throw new Error("O telemóvel não recebeu o jogo de teste.");
+      await DB.apagar("jogos", row.id, { expected: row });
+      const removal = await RemoteWorkspace.syncNow();
+      if (removal.conflicts.length) throw new Error(JSON.stringify(removal.conflicts));
+    }, phoneDeletedSyncId);
+    const desktopAfterPhoneDelete = await page.evaluate(async (syncId) => {
+      const result = await RemoteWorkspace.syncNow();
+      const localCopies = (await DB.listar("jogos")).filter((item) => item.sync_id === syncId).length;
+      const remote = await (await RemoteWorkspace.init()).from("workspace_records")
+        .select("deleted_at").eq("id", syncId).maybeSingle();
+      if (remote.error) throw remote.error;
+      return { conflicts: result.conflicts, localCopies, deletedAt: remote.data?.deleted_at || null };
+    }, phoneDeletedSyncId);
+    expect(desktopAfterPhoneDelete.conflicts).toEqual([]);
+    expect(desktopAfterPhoneDelete.localCopies).toBe(0);
+    expect(desktopAfterPhoneDelete.deletedAt).not.toBeNull();
   } finally {
     await context.setOffline(false).catch(() => {});
     await mobileContext?.close().catch(() => {});
