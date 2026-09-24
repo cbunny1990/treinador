@@ -54,8 +54,8 @@
         if(!removedMemory){
           if(existingMemory&&existingMemory.metadata?.managed_by!=='training_review_v1')throw new Error('A memória de origem já existe noutro formato. Não foi substituída.');
           const memory=C.memory(next,ids),now=new Date().toISOString(),newMem={...(existingMemory||{}),...memory,created_at:existingMemory?.created_at||now,updated_at:now,team_id:team,sync_id:existingMemory?.sync_id||memId,subject_refs:[{type:'training',id:String(source.id),relation:'review_of'}]};
-          if(existingMemory||next.review?.status==='done')tx.objectStore('memory_items').put(_prepareSyncRecord('memory_items',newMem));
-          next.continuity={...C.state(next),memory_ref:existingMemory?.sync_id||memId};result.memory_linked=next.review?.status==='done';
+          if(existingMemory||C.effectiveReview(next).status==='done')tx.objectStore('memory_items').put(_prepareSyncRecord('memory_items',newMem));
+          next.continuity={...C.state(next),memory_ref:existingMemory?.sync_id||memId};result.memory_linked=C.effectiveReview(next).status==='done';
         }else result.memory_linked=false;
         tx.objectStore('treinos').put(_prepareSyncRecord('treinos',next));
         if(target){const req=tx.objectStore('treinos').add(_prepareSyncRecord('treinos',target));req.onsuccess=()=>{result.target_id=req.result;};}

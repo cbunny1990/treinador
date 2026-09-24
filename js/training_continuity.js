@@ -8,9 +8,10 @@
   const txt=(x,max=5000)=>String(x??'').trim().slice(0,max);
   const stamp=n=>new Date(n??Date.now()).toISOString();
   const uuid=x=>/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(x||''));
+  function effectiveReview(row){const plan=row?.review,session=row?.session?.review;if(typeof plan?.status==='string'&&plan.status.trim())return plan;if(typeof session?.status==='string'&&session.status.trim())return session;return plan||session||{status:'pending'};}
   function state(row){const s=row?.continuity||{};if(s.schema&&s.schema!==SCHEMA)throw new Error('Atualiza a app para ler esta proposta.');return {schema:SCHEMA,revision:0,proposal:null,...clone(s)};}
   function reviewKey(review){return JSON.stringify({status:review?.status||'pending',...Object.fromEntries(Object.keys(FIELDS).map(k=>[k,txt(review?.[k])])),focus_outcome:review?.focus_outcome||'pending'});}
-  function sourceData(row){return {source_ref:row.sync_id,date:row.data||null,objective:txt(row.objetivo),review:JSON.parse(reviewKey(row.review)),notes:(row.session?.blocks||[]).flatMap(b=>(b.notes||[]).map(n=>({id:n.id,block_key:b.key,exercise:b.exercise_name||'',text:txt(n.text)}))).sort((a,b)=>String(a.id).localeCompare(String(b.id)))};}
+  function sourceData(row){return {source_ref:row.sync_id,date:row.data||null,objective:txt(row.objetivo),review:JSON.parse(reviewKey(effectiveReview(row))),notes:(row.session?.blocks||[]).flatMap(b=>(b.notes||[]).map(n=>({id:n.id,block_key:b.key,exercise:b.exercise_name||'',text:txt(n.text)}))).sort((a,b)=>String(a.id).localeCompare(String(b.id)))};}
   const sourceKey=row=>JSON.stringify(sourceData(row));
   async function digest(value,algorithm='SHA-256'){return new Uint8Array(await crypto.subtle.digest(algorithm,new TextEncoder().encode(value)));}
   async function stableId(value){
@@ -26,26 +27,28 @@
     return {source_key:key,fingerprint,memory_ref:await stableId('vision-review:'+row.sync_id),proposal_id:await stableId('vision-proposal:'+row.sync_id+':'+fingerprint),target_ref:await stableId('vision-followup:'+row.sync_id)};
   }
   function evidence(row){
-    const review=row.review||{},list=[];
+    const review=effectiveReview(row),list=[];
     if(review.status==='done')for(const [field,label] of Object.entries(FIELDS))if(txt(review[field]))list.push({source_type:'training',source_ref:row.sync_id,date:row.data||null,field:'review.'+field,label,quote:txt(review[field])});
     for(const b of row.session?.blocks||[])for(const n of b.notes||[])if(txt(n.text))list.push({source_type:'training',source_ref:row.sync_id,date:row.data||null,field:'session.note:'+n.id,label:'Observação · '+txt(b.exercise_name,200),quote:txt(n.text)});
     return list;
   }
   function saveReview(row,input,{expected_review_key,actor='Treinador',now}={}){
-    if(reviewKey(row.review)!==expected_review_key)throw new Error('A avaliação mudou. Atualiza antes de guardar; o texto foi preservado.');
-    const r={status:'done',...Object.fromEntries(Object.keys(FIELDS).map(k=>[k,txt(input[k])||null])),focus_outcome:input.focus_outcome||'pending'};
+    const current=effectiveReview(row);
+    if(reviewKey(current)!==expected_review_key)throw new Error('A avaliação mudou. Atualiza antes de guardar; o texto foi preservado.');
+    const r={...current,status:'done',...Object.fromEntries(Object.keys(FIELDS).map(k=>[k,txt(input[k])||null])),focus_outcome:input.focus_outcome||'pending'};
     if(!Object.keys(FIELDS).some(k=>r[k]))throw new Error('Escreve pelo menos uma observação na avaliação.');
     if(!Object.hasOwn(OUTCOMES,r.focus_outcome))throw new Error('Resultado do foco inválido.');
-    const next=clone(row);next.review={...r,revision:(row.review?.revision||0)+1,updated_at:stamp(now),actor};
+    const next=clone(row);next.review={...r,revision:(current.revision||0)+1,updated_at:stamp(now),actor};
     next.continuity={...state(row),revision:state(row).revision+1};return next;
   }
   function clearReview(row,{expected_review_key,confirmed,now}={}){
     if(!confirmed)throw new Error('Confirma a remoção da avaliação.');
-    if(reviewKey(row.review)!==expected_review_key)throw new Error('A avaliação mudou. Atualiza antes de apagar.');
-    return {...clone(row),review:{status:'pending',revision:(row.review?.revision||0)+1,focus_outcome:'pending',updated_at:stamp(now)},continuity:{...state(row),revision:state(row).revision+1}};
+    const current=effectiveReview(row);
+    if(reviewKey(current)!==expected_review_key)throw new Error('A avaliação mudou. Atualiza antes de apagar.');
+    return {...clone(row),review:{status:'pending',revision:(current.revision||0)+1,focus_outcome:'pending',updated_at:stamp(now)},continuity:{...state(row),revision:state(row).revision+1}};
   }
   function memory(row,ids,{actor='Treinador',now}={}){
-    const review=row.review||{},active=review.status==='done'&&Object.keys(FIELDS).some(k=>txt(review[k]));
+    const review=effectiveReview(row),active=review.status==='done'&&Object.keys(FIELDS).some(k=>txt(review[k]));
     return {kind:'observation',title:'Avaliação do treino · '+(row.data||''),content:Object.entries(FIELDS).filter(([k])=>txt(review[k])).map(([k,label])=>label+': '+txt(review[k])).join('\n')||'Avaliação removida pelo treinador.',occurred_at:row.data||stamp(now).slice(0,10),source:{type:'training',label:'Avaliação do treinador',ref_type:'training',ref_id:row.sync_id},subject_refs:[{type:'training',id:row.sync_id,relation:'review_of'}],evidence_ids:[],related_ids:[],status:active?'active':'archived',external_key:'training-review-'+row.sync_id,metadata:{managed_by:'training_review_v1',source_training_ref:row.sync_id,source_fingerprint:ids.fingerprint,actor:actor==='Head Coach'?'agent':'human',actor_label:actor,focus_outcome:review.focus_outcome||'pending',source_review:JSON.parse(reviewKey(review))}};
   }
   const ref=x=>String(x.sync_id||x.id||'');
@@ -63,8 +66,8 @@
   }
   function prepare(row,exercises,ids,{actor='Regra de continuidade',now}={}){
     if(state(row).proposal?.status==='approved')throw new Error('Já existe um treino de continuidade aprovado. Continua a partir desse treino.');
-    if(row.review?.status!=='done')throw new Error('Guarda primeiro a avaliação pós-treino.');
-    const focus=txt(row.review.proxima_acao)||txt(row.review.continua);if(!focus)throw new Error('Indica o que continua por corrigir ou a próxima ação. Não vou inventar um problema.');
+    const review=effectiveReview(row);if(review.status!=='done')throw new Error('Guarda primeiro a avaliação pós-treino.');
+    const focus=txt(review.proxima_acao)||txt(review.continua);if(!focus)throw new Error('Indica o que continua por corrigir ou a próxima ação. Não vou inventar um problema.');
     const pool=available(exercises);
     const previous=(row.blocos||[]).filter(b=>pool.some(x=>ref(x)===String(b.exercise_ref)||String(x.id)===String(b.exercise_ref)));
     const selected=blocks(previous,exercises);
@@ -107,10 +110,10 @@
     if(p.status==='dismissed')return {stage:'dismissed',label:'Proposta retirada'};
     if(p.status!=='approved')return {stage:'proposed',label:p.source_key===sourceKey(source)?'Proposta por aprovar':'Proposta desatualizada'};
     if(!target)return {stage:'created',label:'Treino aprovado; não disponível neste dispositivo'};
-    if(target.review?.status==='done')return {stage:'evaluated',label:'Avaliado',outcome:OUTCOMES[target.review.focus_outcome]||OUTCOMES.pending};
+    const review=effectiveReview(target);if(review.status==='done')return {stage:'evaluated',label:'Avaliado',outcome:OUTCOMES[review.focus_outcome]||OUTCOMES.pending};
     if(target.session?.status==='completed')return {stage:'trained',label:'Realizado · falta avaliar'};
     return {stage:'created',label:'Treino criado'};
   }
-  const api={schema:SCHEMA,fields:FIELDS,outcomes:OUTCOMES,state,reviewKey,sourceKey,sourceData,stableId,identities,evidence,saveReview,clearReview,memory,prepare,check,update,dismiss,approve,progress,blocks,available};
+  const api={schema:SCHEMA,fields:FIELDS,outcomes:OUTCOMES,state,effectiveReview,reviewKey,sourceKey,sourceData,stableId,identities,evidence,saveReview,clearReview,memory,prepare,check,update,dismiss,approve,progress,blocks,available};
   root.VisionTrainingContinuity=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(globalThis);

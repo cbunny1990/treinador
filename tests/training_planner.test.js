@@ -49,6 +49,15 @@ test("duração do treino soma blocos", () => {
   assert.deepEqual(training.blocos.map((x) => x.exercise_ref), ["b", "a"]);
 });
 
+test("normalização usa a avaliação da sessão quando a do plano está vazia, preservando precedência explícita", () => {
+  const sessionReview = { status: "done", continua: "Apoio após passe" };
+  const legacy = TrainingPlanner.normalizeTraining({ review: {}, session: { status: "completed", review: sessionReview } });
+  assert.equal(legacy.review.status, "done");
+  assert.equal(legacy.review.continua, "Apoio após passe");
+  const planPending = TrainingPlanner.normalizeTraining({ review: { status: "pending" }, session: { status: "completed", review: sessionReview } });
+  assert.equal(planPending.review.status, "pending");
+});
+
 test("snapshot do exercício congela conteúdo e só guarda referência segura da imagem", () => {
   const exercise = {
     sync_id: "exercise-uuid",

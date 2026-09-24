@@ -1,5 +1,7 @@
 # Continuidade de treino — fase 2
 
+Compatibilidade de avaliações: em registos antigos, a avaliação final pode estar em `session.review`. Quando `review` no nível do plano está ausente ou vazio, a aplicação usa essa avaliação de sessão; um estado explícito no plano, incluindo `pending`, mantém precedência. A normalização e a migração dos índices operacionais aplicam esta regra sem apagar nem mover o conteúdo original.
+
 ## Percurso humano
 Abrir a ficha do treino pelo Planeador ou pelo fim da Consulta do treino. No modo de treino em campo mantém-se o acesso à avaliação final.
 

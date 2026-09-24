@@ -15,6 +15,11 @@ test('team report preserves measured, estimated and unknown possession per match
  const possession=report.slice(report.indexOf('Posse de bola por jogo'),report.indexOf('Utilização registada'));
  expect(possession).toContain('Posse de bola por jogo · sem média entre origens diferentes');expect(possession).toContain('Posse medida · Medida · 55% · valor introduzido pelo treinador como medido');expect(possession).toContain('Posse estimada · Estimada · 42% · estimativa introduzida pelo treinador');expect(possession).toContain('Posse por conhecer · Desconhecida · sem valor registado');expect(possession).not.toContain('média 48.5');
 });
+test('player report recognizes a completed review stored on the session',async({page})=>{
+ await page.goto('/#/calendario');await page.waitForFunction(()=>typeof ReportExporter!=='undefined');
+ const report=await page.evaluate(async()=>{const playerRef=crypto.randomUUID();const player=await DB.criar('jogadores',{team_id:DEFAULT_TEAM_ID,sync_id:playerRef,nome:'Atleta avaliação sessão'});await DB.criar('treinos',{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:'2026-09-22',session:{attendance:[{player_ref:playerRef,status:'present'}],review:{status:'done',melhorou:'Apoio registado'}},review:{}});return ReportExporter.render('player',player);});
+ expect(report).toContain('avaliação registada');expect(report).not.toContain('avaliação por preencher');
+});
 test('post-match report preserves event player, side, zone, reason and note',async({page})=>{
  await page.goto('/#/calendario');await page.waitForFunction(()=>typeof ReportExporter!=='undefined');
  const report=await page.evaluate(async()=>{const ref=crypto.randomUUID();await DB.criar('jogadores',{team_id:DEFAULT_TEAM_ID,sync_id:ref,nome:'Atleta Relatório',plantel_ativo:true});const id=await DB.criar('jogos',{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:'2026-09-27',adversario:'Relatório de lances',estado:'concluido',callup:{player_ids:[ref]},match_events:{schema:'vision-match-events@1',revision:1,possession:{kind:'estimated',value:54},events:[{id:crypto.randomUUID(),type:'loss',at_ms:78000,player_ref:ref,opponent_player_name:'Adversário 9',zone:'def_c',reason:'pass',note:'Passe interceptado'}]}});return ReportExporter.render('match-report',id);});
