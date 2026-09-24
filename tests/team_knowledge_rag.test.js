@@ -42,6 +42,10 @@ test('hybrid training context combines exact structured scope and separate cited
  await assert.rejects(rag.executeTeamKnowledgeTool(db,{...connector,scopes:[]},'get_training_planning_context',{target_date:'2026-09-24',question:'foco'},{provider}),/scope_read_required/);
  await assert.rejects(rag.executeTeamKnowledgeTool(db,connector,'get_training_planning_context',{target_date:'2026-99-24',question:'foco'},{provider}),/invalid_training_context_date/);
  await assert.rejects(rag.executeTeamKnowledgeTool(db,connector,'get_training_planning_context',{target_date:'2026-09-24T00:00:00Z',question:'foco'},{provider}),/invalid_training_context_date/);
+ const priorRpcs=calls.length,priorEmbeddings=provider.requests.length,priorStructuredQueries=queryPlans.length,sensitiveQuestion='O que trabalhar com a atleta que teve cãibras?';
+ const sensitive=await rag.executeTeamKnowledgeTool(db,connector,'get_training_planning_context',{target_date:'2026-09-24',question:sensitiveQuestion},{provider});
+ assert.equal(sensitive.evidence_status,'sensitive_query_not_sent');assert.equal(sensitive.semantic_evidence.length,0);assert.equal(sensitive.roster.unavailable_count,1,'structured availability context remains available');
+ assert.equal(calls.length,priorRpcs,'sensitive query skips indexing and vector RPCs');assert.equal(provider.requests.length,priorEmbeddings,'sensitive question never reaches embeddings');assert.ok(queryPlans.length>priorStructuredQueries,'structured training/player reads still run');assert.doesNotMatch(JSON.stringify(sensitive),/cãibras|cibras/i,'the query is not echoed in the response');
 });
 
 test('recent-match hybrid context selects five dated completed matches and combines event counts with cited RAG evidence',async()=>{
@@ -223,6 +227,13 @@ test('RAG validates exact team/scope/filters and searches only with the authoriz
  await assert.rejects(rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query:'texto',match_refs:Array(11).fill(SOURCE)},{provider}),/invalid_knowledge_match_refs/);
  await assert.rejects(rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query:'texto',per_match_limit:2},{provider}),/invalid_knowledge_per_match_limit/);
  await assert.rejects(rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query:'ok',from:'2026-09-30',to:'2026-09-01'},{provider}),/invalid_knowledge_date_range/);
+});
+
+test('health-related search query stays out of embeddings and returns no echoed text',async()=>{
+ const db=fakeAdmin([]),provider=fakeProvider(),query='A atleta tem tonturas e tosse após o treino?';
+ const result=await rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query},{provider});
+ assert.equal(result.retrieval_status,'sensitive_query_not_sent');assert.equal(result.answer_mode,'structured_data_only');assert.equal(result.evidence_status,'sensitive_query_not_sent');assert.deepEqual(result.results,[]);
+ assert.deepEqual(db.calls,[]);assert.deepEqual(db.fromCalls,[]);assert.deepEqual(provider.requests,[]);assert.doesNotMatch(JSON.stringify(result),/tonturas|tosse/i);
 });
 
 test('full reindex requires explicit write approval and remains scoped to connector team',async()=>{
