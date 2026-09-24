@@ -21,6 +21,10 @@ var SEARCH_RESULT_PAGE_SIZE = 100;
 var SEARCH_RESULT_RETAIN_LIMIT = 500;
 window.addEventListener("wheel",function(){userScrollIntentSequence++;},{passive:true});
 window.addEventListener("touchmove",function(){userScrollIntentSequence++;},{passive:true});
+window.addEventListener("pointerdown",function(event){
+  var gutter=Math.max(12,window.innerWidth-document.documentElement.clientWidth);
+  if(event.clientX<=gutter||event.clientX>=window.innerWidth-gutter||event.clientY<=gutter||event.clientY>=window.innerHeight-gutter)userScrollIntentSequence++;
+},{passive:true});
 window.addEventListener("keydown",function(event){
   if(["ArrowUp","ArrowDown","PageUp","PageDown","Home","End"," "].includes(event.key))userScrollIntentSequence++;
 });
@@ -55,7 +59,7 @@ function setView(title,html,eyebrow){
   renderedViewRoute=currentRoute;
   if(routeChanged) window.scrollTo(0,0);
   else requestAnimationFrame(function(){
-    if(currentRender===viewRenderSequence&&intentAtRender===userScrollIntentSequence&&currentRoute===(location.hash||"#/")&&window.scrollX===scrollX&&window.scrollY===scrollY)window.scrollTo(scrollX,scrollY);
+    if(currentRender===viewRenderSequence&&intentAtRender===userScrollIntentSequence&&currentRoute===(location.hash||"#/"))window.scrollTo(scrollX,scrollY);
   });
   refreshRemoteIndicator();
 }

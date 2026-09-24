@@ -75,7 +75,7 @@ test("aviso do PWA é anunciado e fica acessível acima da navegação móvel", 
   const updateButton = page.getByRole("button", { name: "Atualizar app" });
   await expect(updateButton).toBeDisabled();
   await expect(nameField).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v155"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v156"))).toBeNull();
   const position = await notice.evaluate(element => {
     const rect = element.getBoundingClientRect();
     return { fixed: getComputedStyle(element).position, bottom: rect.bottom, navTop: document.querySelector(".bottom-nav").getBoundingClientRect().top };
