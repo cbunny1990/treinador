@@ -278,6 +278,17 @@ async function scopedRows(admin,teamId,kind,configure=query=>query){
   if(error)throw error;
   return arr(data);
 }
+async function scopedRowsUntil(admin,teamId,kind,configure,accept,targetCount,pageSize=50){
+  const rows=[];let accepted=0;
+  for(let offset=0;;offset+=pageSize){
+    const query=configure(admin.from('workspace_records').select('id,kind,payload,updated_at').eq('team_id',teamId).eq('kind',kind).is('deleted_at',null))
+      .range(offset,offset+pageSize-1);
+    const {data,error}=await query;if(error)throw error;
+    const page=arr(data);rows.push(...page);accepted+=page.filter(accept).length;
+    if(accepted>=targetCount||page.length<pageSize)break;
+  }
+  return rows;
+}
 function datedDesc(a,b){return String(recordDate(b)||'').localeCompare(String(recordDate(a)||''))||String(a.id).localeCompare(String(b.id));}
 async function getTrainingPlanningContext(admin,connector,args,{provider={}}={}){
   if(!connector?.scopes?.includes('read'))throw new Error('connector_scope_read_required');
@@ -288,8 +299,8 @@ async function getTrainingPlanningContext(admin,connector,args,{provider={}}={})
     admin.from('teams').select('metadata').eq('id',teamId).maybeSingle(),
     scopedRows(admin,teamId,'player'),
     scopedRows(admin,teamId,'training',query=>query.eq('payload->>data',targetDate)),
-    scopedRows(admin,teamId,'training',query=>query.lt('payload->>data',targetDate).order('payload->>data',{ascending:false}).limit(50)),
-    scopedRows(admin,teamId,'match',query=>query.eq('payload->>estado','concluido').lt('payload->>data',targetDate).order('payload->>data',{ascending:false}).limit(50)),
+    scopedRowsUntil(admin,teamId,'training',query=>query.lt('payload->>data',targetDate).order('payload->>data',{ascending:false}).order('id',{ascending:true}),row=>{const date=recordDate(row);return !!date&&date<targetDate;},3),
+    scopedRowsUntil(admin,teamId,'match',query=>query.eq('payload->>estado','concluido').lt('payload->>data',targetDate).order('payload->>data',{ascending:false}).order('id',{ascending:true}),row=>{const date=recordDate(row);return !!date&&date<targetDate&&row.payload?.estado==='concluido';},5),
     scopedRows(admin,teamId,'game_model',query=>query.order('updated_at',{ascending:false}).limit(1))
   ]);
   if(teamResult.error)throw teamResult.error;
@@ -333,7 +344,7 @@ async function getRecentMatchContext(admin,connector,args,{provider={}}={}){
   if(!Number.isInteger(requestedCount)||requestedCount<1||requestedCount>5)throw new Error('invalid_recent_match_count');
   const today=new Date().toISOString().slice(0,10);
   const tomorrow=new Date(Date.parse(`${today}T00:00:00Z`)+86400000).toISOString().slice(0,10);
-  const rows=await scopedRows(admin,teamId,'match',query=>query.eq('payload->>estado','concluido').lt('payload->>data',tomorrow).order('payload->>data',{ascending:false}).limit(100));
+  const rows=await scopedRowsUntil(admin,teamId,'match',query=>query.eq('payload->>estado','concluido').lt('payload->>data',tomorrow).order('payload->>data',{ascending:false}).order('id',{ascending:true}),row=>{const date=recordDate(row);return !!date&&date<=today&&row.payload?.estado==='concluido';},requestedCount,50);
   const matches=rows.filter(row=>{const date=recordDate(row);return date&&date<=today&&row.payload?.estado==='concluido';}).sort(datedDesc).slice(0,requestedCount);
   const typeLabels={goal_for:'goals_for',goal_against:'goals_against',shot_on:'shots_on_target',shot_off:'shots_off_target',corner_for:'corners_for',corner_against:'corners_against',loss:'losses',recovery:'recoveries',through_ball:'through_balls',striker_foot:'striker_foot_balls'};
   const matchFacts=matches.map(row=>{
