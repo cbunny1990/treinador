@@ -217,6 +217,8 @@ Cada gravação enviada ou recebida guarda localmente o último `payload` remoto
 
 Quando a base comum existe e apenas um lado alterou o conteúdo, a comparação identifica a versão alterada e permite ao treinador confirmá-la explicitamente. A revisão agrupada inclui estes casos na prévia com a decisão (`keep_local` ou `keep_remote`) visível; os registos sobrepostos, sem base comum ou media continuam para escolha individual. A aplicação revalida as duas revisões antes de cada escrita e sincroniza o lote uma vez após as decisões confirmadas.
 
+Regressão de duas bases ampliada (24/09/2026): o lote verifica ambos os casos de conteúdo unilateral. Para `keep_remote`, o conteúdo remoto alterado aparece no dispositivo depois da decisão; para `keep_local`, uma edição local é enviada quando o remoto avançou de versão mas voltou ao conteúdo comum. No mesmo lote, duas combinações independentes são sincronizadas, um conflito sobreposto continua pendente, há uma única passagem final de sync e permanecem cinco registos sem duplicação. A prévia é lida antes de confirmar e não altera o backend.
+
 ### Carregamento inicial do Workspace
 
 O estado de sessão remota, o snapshot local operacional e os documentos arquivados para a época são lidos em paralelo. A página não aguarda a ronda de sincronização para apresentar o snapshot local; a sync continua em segundo plano. O E2E mantém as três leituras suspensas e confirma que começam antes de qualquer uma terminar, protegendo contra regressão para esperas sequenciais.
