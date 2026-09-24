@@ -44,6 +44,19 @@ Quando a chave estiver configurada e o MCP executar pesquisa/indexação, os tex
 
 ## Verificação e publicação
 
+### Sequência preparada para revisão do treinador
+
+Esta sequência não foi executada no projeto partilhado. Antes de iniciar, voltar a ler migrations, versões e autenticação remotas; a contagem descrita abaixo é apenas o snapshot de 24/09/2026.
+
+1. Fazer `supabase db push --dry-run --include-all --skip-vault` e confirmar que a lista é exatamente as oito migrations documentadas, sem alterações a Vault ou outras migrations. Se divergir, parar e rever a ordem/histórico; não usar reset nem alinhar à força.
+2. Fazer a atualização coordenada do `head-coach-gateway` a partir do source revisto desta branch, mantendo `verify_jwt = true`. Confirmar primeiro na stack isolada que `put_record` só permite `game_model`, exige as confirmações/revisões previstas e recusa os outros tipos antes da RPC. Não testar escritas criando dados na equipa real.
+3. Só após rever o dry-run e obter autorização explícita para a alteração remota, aplicar as oito migrations com `--include-all --skip-vault`. Confirmar as 26 versões aplicadas, extensão `vector` instalada em `extensions`, lint de `public,private`, RLS sem grants de cliente nas tabelas RAG e privilégios das RPCs limitados a `service_role`.
+4. Publicar `vision-coach-mcp` desta branch com todos os módulos relativos e manter `verify_jwt = false`, pois usa autenticação própria por token de conector. Confirmar versão, lista de ferramentas, scopes, autenticação, operações sem escrita e respostas de dados insuficientes. Não anunciar RAG ativo se o provider continuar desligado.
+5. Avaliar embeddings reais primeiro numa stack Supabase descartável independente, com dados sintéticos e provider configurado apenas nesse ambiente. Rever conteúdo/perguntas de teste e medir recuperação, citações, isolamento entre equipas e exclusão de texto de saúde.
+6. Só depois de rever os resultados, aprovar à parte a configuração de `OPENAI_API_KEY` no secret manager do projeto. O primeiro pedido de indexação processará a fila criada para os registos ativos e enviará ao provider os textos allowlisted descritos na secção de privacidade; a chave nunca deve ser pedida nem exposta ao treinador. Depois, fazer uma consulta read-only na equipa real e comparar cada excerto com a origem persistida. Não converter hipóteses em factos nem aprovar/criar treinos automaticamente.
+
+Cada ação remota dos passos 2–5 aguarda revisão/autorização explícita; os passos de dry-run, ensaio isolado e inspeções read-only não publicam nem alteram os dados do treinador. A publicação estática da PWA é uma aprovação separada.
+
 Estado remoto atualizado (24/09/2026): a migration `20260924144849_enable_private_internal_table_rls` já foi aplicada com autorização explícita. As duas tabelas internas têm RLS ativo e grants continuam limitados ao backend; a extensão `vector`, tabelas/chunks RAG, MCP RAG e secret `OPENAI_API_KEY` ainda não foram ativados no projeto partilhado. O teste da stack Supabase que já estava em execução usou um histórico antigo e falhou ao não encontrar a RPC de fila RAG; essa base não foi reiniciada nem alterada para contornar a divergência.
 
 Ordem de ativação validada apenas localmente: com `20260924144849` já aplicado e oito migrations mais antigas ausentes, `supabase db push --local --include-all` aplicou as pendentes e passou lint, integração, sincronização e Edge HTTP. Na eventual preparação remota, `--include-all --dry-run` permite rever a lista antes de qualquer escrita; RAG continua sem publicação no projeto partilhado.
