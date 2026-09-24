@@ -29,14 +29,23 @@ async function seedV3(page) {
     await new Promise((resolve, reject) => {
       const req = indexedDB.open("treinador", 3);
       req.onupgradeneeded = () => {
-        req.result.createObjectStore("jogadores", { keyPath: "id", autoIncrement: true });
+        const db = req.result;
+        const tx = req.transaction;
+        db.createObjectStore("jogadores", { keyPath: "id", autoIncrement: true });
+        tx.objectStore("jogadores").add({ nome: "Jogador legado", escalao: "sub-8" });
+        for (const store of ["treinos", "jogos", "memory_items", "workspace_documents", "activity_items"]) {
+          db.createObjectStore(store, { keyPath: "id", autoIncrement: true });
+        }
+        tx.objectStore("treinos").add({ team_id: "default", data: "2026-09-18", escalao: "sub-8" });
+        tx.objectStore("jogos").add({ team_id: "default", data: "2026-09-19", adversario: "Jogo legado" });
+        tx.objectStore("memory_items").add({ team_id: "default", status: "active", occurred_at: "2026-09-20T12:00:00.000Z", title: "Memória legada" });
+        tx.objectStore("workspace_documents").add({ team_id: "default", status: "ready", updated_at: "2026-09-21T12:00:00.000Z", title: "Documento legado" });
+        tx.objectStore("activity_items").add({ team_id: "default", created_at: "2026-09-22T12:00:00.000Z", summary: "Atividade legada" });
       };
       req.onsuccess = () => {
         const db = req.result;
-        const tx = db.transaction("jogadores", "readwrite");
-        tx.objectStore("jogadores").add({ nome: "Jogador legado", escalao: "sub-8" });
-        tx.oncomplete = () => { db.close(); resolve(); };
-        tx.onerror = () => reject(tx.error);
+        db.close();
+        resolve();
       };
       req.onerror = () => reject(req.error);
     });
@@ -51,9 +60,15 @@ test("migra dados antigos para o workspace e continua offline", async ({ page, c
   const migrated = await page.evaluate(async () => {
     const db = await abrirDB();
     const players = await DB.listar("jogadores");
+    const timelineRows = {};
+    for (const [store, status] of [["treinos", null], ["jogos", null], ["memory_items", "active"], ["workspace_documents", "ready"], ["activity_items", null]]) {
+      timelineRows[store] = [];
+      await DB.percorrerEquipaMaisRecentes(store, "default", 10, (row) => timelineRows[store].push(row.title || row.summary || row.adversario || row.data), status);
+    }
     return {
       version: db.version,
       teamId: players[0].team_id,
+      timelineRows,
       stores: Array.from(db.objectStoreNames),
       dateIndexes: ["jogos", "treinos"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_data")),
       operationsIndexes: db.transaction("jogos").objectStore("jogos").indexNames.contains("team_proposal_status")
@@ -68,6 +83,13 @@ test("migra dados antigos para o workspace e continua offline", async ({ page, c
   expect(migrated.dateIndexes).toBeTruthy();
   expect(migrated.operationsIndexes).toBeTruthy();
   expect(migrated.timelineIndexes).toBeTruthy();
+  expect(migrated.timelineRows).toEqual({
+    treinos: ["2026-09-18"],
+    jogos: ["Jogo legado"],
+    memory_items: ["Memória legada"],
+    workspace_documents: ["Documento legado"],
+    activity_items: ["Atividade legada"],
+  });
   expect(migrated.stores).toContain("workspace_documents");
   expect(migrated.stores).toContain("activity_items");
   expect(migrated.stores).toContain("sync_tombstones");
