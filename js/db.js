@@ -1,6 +1,6 @@
 // Camada de dados offline (IndexedDB). Sem servidor: tudo vive no telemóvel.
 const DB_NOME = "treinador";
-const DB_VERSAO = 10;
+const DB_VERSAO = 11;
 const DEFAULT_TEAM_ID = "default";
 const STORES = [
   "jogadores", "exercicios", "treinos", "treino_itens", "presencas", "avaliacoes", "jogos",
@@ -106,6 +106,9 @@ function abrirDB() {
       for (const nome of ["jogadores", "treinos", "jogos"]) {
         const os = e.target.transaction.objectStore(nome);
         if (!os.indexNames.contains("team_id")) os.createIndex("team_id", "team_id", { unique: false });
+        if ((nome === "treinos" || nome === "jogos") && !os.indexNames.contains("team_data")) {
+          os.createIndex("team_data", ["team_id", "data"], { unique: false });
+        }
         os.openCursor().onsuccess = (ev) => {
           const cursor = ev.target.result;
           if (!cursor) return;
@@ -313,6 +316,37 @@ const DB = {
         }
       };
       request.onerror = () => reject(request.error || new Error("Não foi possível percorrer o índice local."));
+      os.transaction.onabort = () => reject(os.transaction.error || new Error("A leitura local foi interrompida."));
+    });
+  },
+  async percorrerIntervaloEquipa(store, teamId, from, until, visitar) {
+    if (store !== "jogos" && store !== "treinos") throw new TypeError("O intervalo por equipa só está disponível para jogos e treinos.");
+    if (typeof visitar !== "function") throw new TypeError("É necessário indicar como processar cada registo.");
+    if (typeof teamId !== "string" || !teamId || typeof from !== "string" || typeof until !== "string" || from >= until) {
+      throw new TypeError("Indica uma equipa e um intervalo de datas válido.");
+    }
+    const os = await _tx(store, "readonly");
+    return new Promise((resolve, reject) => {
+      let count = 0;
+      // O limite superior inclui eventuais timestamps ISO no último dia; o callback
+      // do calendário aplica o limite exclusivo pela data civil.
+      const range = IDBKeyRange.bound([teamId, from], [teamId, until + "\uffff"]);
+      const request = os.index("team_data").openCursor(range);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) { resolve(count); return; }
+        try {
+          if (_visibleInSelectedRemoteWorkspace(cursor.value)) {
+            visitar(cursor.value);
+            count++;
+          }
+          cursor.continue();
+        } catch (error) {
+          reject(error);
+          try { os.transaction.abort(); } catch (_) {}
+        }
+      };
+      request.onerror = () => reject(request.error || new Error("Não foi possível percorrer o intervalo da equipa."));
       os.transaction.onabort = () => reject(os.transaction.error || new Error("A leitura local foi interrompida."));
     });
   },

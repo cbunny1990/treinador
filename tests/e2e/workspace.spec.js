@@ -55,11 +55,13 @@ test("migra dados antigos para o workspace e continua offline", async ({ page, c
       version: db.version,
       teamId: players[0].team_id,
       stores: Array.from(db.objectStoreNames),
+      dateIndexes: ["jogos", "treinos"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_data")),
     };
   });
 
-  expect(migrated.version).toBe(10);
+  expect(migrated.version).toBe(11);
   expect(migrated.teamId).toBe("default");
+  expect(migrated.dateIndexes).toBeTruthy();
   expect(migrated.stores).toContain("workspace_documents");
   expect(migrated.stores).toContain("activity_items");
   expect(migrated.stores).toContain("sync_tombstones");

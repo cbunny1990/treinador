@@ -467,8 +467,8 @@ function calendarEventRow(event){
 async function viewCalendar(){
   var from=today(),until=new Date(from+'T12:00:00Z');until.setUTCDate(until.getUTCDate()+42);var end=until.toISOString().slice(0,10),matches=[],trainings=[];
   var datasets=await Promise.all([HeadCoachMemory.ensureTeam(),
-    DB.percorrerIndice('jogos','team_id',DEFAULT_TEAM_ID,function(row){var date=String(row.data||'').slice(0,10);if(date>=from&&date<end)matches.push({id:row.id,sync_id:row.sync_id,external_key:row.external_key,data:row.data,hora:row.hora,adversario:row.adversario,local:row.local,hora_saida:row.hora_saida,estado:row.estado});}),
-    DB.percorrerIndice('treinos','team_id',DEFAULT_TEAM_ID,function(row){var date=String(row.data||'').slice(0,10);if(date>=from&&date<end)trainings.push({id:row.id,data:row.data,hora:row.hora,hora_fim:row.hora_fim,escalao:row.escalao});})
+    DB.percorrerIntervaloEquipa('jogos',DEFAULT_TEAM_ID,from,end,function(row){var date=String(row.data||'').slice(0,10);if(date>=from&&date<end)matches.push({id:row.id,sync_id:row.sync_id,external_key:row.external_key,data:row.data,hora:row.hora,adversario:row.adversario,local:row.local,hora_saida:row.hora_saida,estado:row.estado});}),
+    DB.percorrerIntervaloEquipa('treinos',DEFAULT_TEAM_ID,from,end,function(row){var date=String(row.data||'').slice(0,10);if(date>=from&&date<end)trainings.push({id:row.id,data:row.data,hora:row.hora,hora_fim:row.hora_fim,escalao:row.escalao});})
   ]);
   var s={team:datasets[0],matches:matches,trainings:trainings};
   var events=VisionCalendar.events(s,{from:from,weeks:6});
