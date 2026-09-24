@@ -4,6 +4,8 @@ const { test, expect } = require("@playwright/test");
 
 test("resumo operacional do Workspace mantém consultas limitadas com 15 mil registos", async ({ page }) => {
   await page.goto("/");
+  const cpu = await page.context().newCDPSession(page);
+  await cpu.send("Emulation.setCPUThrottlingRate", { rate: 4 });
   await page.waitForFunction(() => typeof WorkspaceStore !== "undefined" && typeof DB !== "undefined");
   const result = await page.evaluate(async () => {
     RemoteWorkspace.scheduleSync = () => {};
@@ -35,9 +37,10 @@ test("resumo operacional do Workspace mantém consultas limitadas com 15 mil reg
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error || new Error("Não foi possível semear o teste de desempenho."));
     });
+    const walk = DB.percorrerIndice.bind(DB);
     DB.percorrerIndice = (store, ...args) => {
       if (store === "jogos" || store === "treinos") throw new Error("O resumo não pode percorrer a coleção completa de " + store + ".");
-      throw new Error("O teste não espera percursos genéricos.");
+      return walk(store, ...args);
     };
     const counts = {};
     const first = DB.primeiroIntervaloEquipa.bind(DB);
@@ -54,20 +57,33 @@ test("resumo operacional do Workspace mantém consultas limitadas com 15 mil reg
     });
     const started = performance.now();
     const summary = await WorkspaceStore.summarizeOperationalRecords(DEFAULT_TEAM_ID, today);
+    const summaryMs = performance.now() - started;
+    const summaryCounts = { ...counts };
+    Object.keys(counts).forEach(key => delete counts[key]);
+    const snapshotStarted = performance.now();
+    const snapshot = await WorkspaceStore.buildSnapshot(DEFAULT_TEAM_ID, {
+      includeArchivedDocuments: true, countMediaOnly: true, includeTimeline: false, compactOperationalRecords: true,
+    });
     return {
-      elapsedMs: performance.now() - started,
+      summaryMs,
+      snapshotMs: performance.now() - snapshotStarted,
       nextMatch: summary.next_match?.adversario,
       nextTraining: summary.next_training?.objetivo,
+      snapshotNextMatch: snapshot.next_match?.adversario,
+      snapshotNextTraining: snapshot.next_training?.objetivo,
       pendingReviews: summary.pending_reviews_count,
       pendingTrainingProposals: summary.pending_training_proposals.length,
       staleMatchProposals: summary.stale_match_proposals.length,
-      counts,
+      counts: summaryCounts,
+      snapshotCounts: counts,
     };
   });
 
   expect(result).toMatchObject({
     nextMatch: "Próximo jogo grande histórico",
     nextTraining: "Próximo treino grande histórico",
+    snapshotNextMatch: "Próximo jogo grande histórico",
+    snapshotNextTraining: "Próximo treino grande histórico",
     pendingReviews: 1,
     pendingTrainingProposals: 1,
     staleMatchProposals: 1,
@@ -76,5 +92,6 @@ test("resumo operacional do Workspace mantém consultas limitadas com 15 mil reg
       treinos_team_completed_review: 1, treinos_team_proposal_status: 1,
     },
   });
-  console.log(`Workspace operational summary, 15,006 synthetic rows: ${result.elapsedMs.toFixed(2)} ms (browser-local measurement)`);
+  expect(result.snapshotCounts).toEqual(result.counts);
+  console.log(`Workspace, 15,006 synthetic rows, CPU throttle 4×: summary ${result.summaryMs.toFixed(2)} ms; full compact snapshot ${result.snapshotMs.toFixed(2)} ms (browser-local measurements)`);
 });
