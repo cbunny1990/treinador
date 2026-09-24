@@ -112,53 +112,35 @@ function workspaceTimeline(data) {
   });
   return rows.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
 }
-function workspaceTimelineRecentPush(rows, row, limit) {
-  const date = String(row.date || "");
-  let low = 0, high = rows.length;
-  while (low < high) {
-    const middle = (low + high) >> 1;
-    if (String(rows[middle].date || "") >= date) low = middle + 1;
-    else high = middle;
-  }
-  if (low >= limit) return;
-  rows.splice(low, 0, row);
-  if (rows.length > limit) rows.pop();
-}
 async function workspaceRecentTimeline(teamId, limit = 100) {
-  const activity = [], documents = [], memory = [], matches = [], trainings = [];
+  const rows = [];
   const maxRows = Math.max(1, Math.min(500, Number(limit) || 100));
   await Promise.all([
-    DB.percorrerIndice("activity_items", "team_id", teamId, (item) => workspaceTimelineRecentPush(activity, {
-      type: "activity", date: item.created_at, title: item.summary || item.action,
+    DB.percorrerEquipaMaisRecentes("activity_items", teamId, 50, (item) => rows.push({
+      type: "activity", date: item.operational_timeline_date, title: item.summary || item.action,
       actor: item.actor, actor_label: item.actor_label,
       ref: { metadata: item.metadata && typeof item.metadata === "object" ? { _vision_coach_unresolved_origin: item.metadata._vision_coach_unresolved_origin } : {} },
-    }, 50)),
-    DB.percorrerIndice("workspace_documents", "team_id", teamId, (item) => {
-      if (item.status === "archived") return;
-      workspaceTimelineRecentPush(documents, {
-        type: "document", date: item.updated_at || item.created_at, title: item.title,
+    })),
+    ...["draft", "ready", "approved"].map((status) => DB.percorrerEquipaMaisRecentes("workspace_documents", teamId, maxRows, (item) => rows.push({
+        type: "document", date: item.operational_timeline_date, title: item.title,
         actor: item.updated_by || item.created_by, actor_label: item.updated_by_label || item.created_by_label,
         ref: { id: item.id, type: item.type },
-      }, maxRows);
-    }),
-    DB.percorrerIndice("memory_items", "team_id", teamId, (item) => {
-      if (item.status !== "active") return;
-      workspaceTimelineRecentPush(memory, {
-        type: "memory", date: item.occurred_at || item.created_at, title: item.title,
+      }), status)),
+    DB.percorrerEquipaMaisRecentes("memory_items", teamId, maxRows, (item) => rows.push({
+        type: "memory", date: item.operational_timeline_date, title: item.title,
         actor: item.metadata?.actor || "human", actor_label: item.metadata?.actor_label || item.source?.label || "Treinador",
         ref: { id: item.id },
-      }, maxRows);
-    }),
-    DB.percorrerIndice("jogos", "team_id", teamId, (item) => workspaceTimelineRecentPush(matches, {
-      type: "match", date: item.data, title: "Jogo · " + (item.adversario || "Adversário"),
+      }), "active"),
+    DB.percorrerEquipaMaisRecentes("jogos", teamId, maxRows, (item) => rows.push({
+      type: "match", date: item.operational_timeline_date, title: "Jogo · " + (item.adversario || "Adversário"),
       actor: item.sync_actor_type || "human", actor_label: item.sync_actor_label || "Equipa", ref: { id: item.id },
-    }, maxRows)),
-    DB.percorrerIndice("treinos", "team_id", teamId, (item) => workspaceTimelineRecentPush(trainings, {
-      type: "training", date: item.data, title: "Treino · " + (item.escalao || ""),
+    })),
+    DB.percorrerEquipaMaisRecentes("treinos", teamId, maxRows, (item) => rows.push({
+      type: "training", date: item.operational_timeline_date, title: "Treino · " + (item.escalao || ""),
       actor: item.sync_actor_type || "human", actor_label: item.sync_actor_label || "Equipa", ref: { id: item.id },
-    }, maxRows)),
+    })),
   ]);
-  return activity.concat(documents, memory, matches, trainings)
+  return rows
     .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
     .slice(0, maxRows);
 }

@@ -58,9 +58,9 @@ test("payload remoto remove chaves locais e data_url", () => {
     sync_actor_label: "Head Coach",
     data_url: "data:image/png;base64,secret",
     _sync_base: { adversario: "Rivais" },
-    operational_completed: true,
     operational_needs_review: "pending",
     operational_proposal_status: "draft",
+    operational_timeline_date: "2026-09-24T12:00:00.000Z",
     nome: "Jogador",
   });
   assert.deepEqual(payload, { nome: "Jogador" });

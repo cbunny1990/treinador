@@ -58,13 +58,16 @@ test("migra dados antigos para o workspace e continua offline", async ({ page, c
       dateIndexes: ["jogos", "treinos"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_data")),
       operationsIndexes: db.transaction("jogos").objectStore("jogos").indexNames.contains("team_proposal_status")
         && ["team_completed_review", "team_proposal_status"].every((index) => db.transaction("treinos").objectStore("treinos").indexNames.contains(index)),
+      timelineIndexes: ["activity_items", "jogos", "treinos"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_timeline"))
+        && ["memory_items", "workspace_documents"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_status_timeline")),
     };
   });
 
-  expect(migrated.version).toBe(12);
+  expect(migrated.version).toBe(13);
   expect(migrated.teamId).toBe("default");
   expect(migrated.dateIndexes).toBeTruthy();
   expect(migrated.operationsIndexes).toBeTruthy();
+  expect(migrated.timelineIndexes).toBeTruthy();
   expect(migrated.stores).toContain("workspace_documents");
   expect(migrated.stores).toContain("activity_items");
   expect(migrated.stores).toContain("sync_tombstones");
@@ -1496,7 +1499,7 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
   await expect(page.getByText(/Atualização disponível\. Termina ou guarda o trabalho em curso/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeDisabled();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v153"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v154"))).toBeNull();
 });
 
 test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
@@ -1509,7 +1512,7 @@ test("service worker update after an older cached reload does not stay suppresse
   }).catch(() => {});
   await reloaded;
   await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v153"))).toBe("1");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v154"))).toBe("1");
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {

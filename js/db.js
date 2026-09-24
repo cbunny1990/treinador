@@ -1,6 +1,6 @@
 // Camada de dados offline (IndexedDB). Sem servidor: tudo vive no telemóvel.
 const DB_NOME = "treinador";
-const DB_VERSAO = 12;
+const DB_VERSAO = 13;
 const DEFAULT_TEAM_ID = "default";
 const STORES = [
   "jogadores", "exercicios", "treinos", "treino_itens", "presencas", "avaliacoes", "jogos",
@@ -12,12 +12,19 @@ const SYNCABLE_STORES = new Set(["teams", "jogadores", "exercicios", "jogos", "t
 
 function _operationalIndexFields(store, row) {
   const next = { ...row };
-  if (store === "jogos") {
+  if (store === "activity_items") {
+    next.operational_timeline_date = String(row?.created_at || "");
+  } else if (store === "workspace_documents") {
+    next.operational_timeline_date = String(row?.updated_at || row?.created_at || "");
+  } else if (store === "memory_items") {
+    next.operational_timeline_date = String(row?.occurred_at || row?.created_at || "");
+  } else if (store === "jogos") {
+    next.operational_timeline_date = String(row?.data || "");
     next.operational_proposal_status = row?.post_game?.analysis?.agent_proposal?.status || null;
   } else if (store === "treinos") {
+    next.operational_timeline_date = String(row?.data || "");
     const completed = row?.status === "completed" || row?.session?.status === "completed";
     const review = row?.review || row?.session?.review;
-    next.operational_completed = completed;
     next.operational_needs_review = completed && review?.status !== "done" ? "pending" : "not_pending";
     next.operational_proposal_status = row?.continuity?.proposal?.status || null;
   }
@@ -117,7 +124,7 @@ function abrirDB() {
           created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
         });
       }
-      for (const nome of ["jogadores", "treinos", "jogos"]) {
+      for (const nome of ["jogadores", "treinos", "jogos", "memory_items", "workspace_documents", "activity_items"]) {
         const os = e.target.transaction.objectStore(nome);
         if (!os.indexNames.contains("team_id")) os.createIndex("team_id", "team_id", { unique: false });
         if ((nome === "treinos" || nome === "jogos") && !os.indexNames.contains("team_data")) {
@@ -128,6 +135,12 @@ function abrirDB() {
         }
         if ((nome === "treinos" || nome === "jogos") && !os.indexNames.contains("team_proposal_status")) {
           os.createIndex("team_proposal_status", ["team_id", "operational_proposal_status"], { unique: false });
+        }
+        if (["activity_items", "jogos", "treinos"].includes(nome) && !os.indexNames.contains("team_timeline")) {
+          os.createIndex("team_timeline", ["team_id", "operational_timeline_date"], { unique: false });
+        }
+        if (["memory_items", "workspace_documents"].includes(nome) && !os.indexNames.contains("team_status_timeline")) {
+          os.createIndex("team_status_timeline", ["team_id", "status", "operational_timeline_date"], { unique: false });
         }
         os.openCursor().onsuccess = (ev) => {
           const cursor = ev.target.result;
@@ -417,6 +430,39 @@ const DB = {
       };
       request.onerror = () => reject(request.error || new Error("Não foi possível percorrer o índice da equipa."));
       os.transaction.onabort = () => reject(os.transaction.error || new Error("A leitura local foi interrompida."));
+    });
+  },
+  async percorrerEquipaMaisRecentes(store, teamId, limit, visitar, status = null) {
+    const allStatusStores = new Set(["memory_items", "workspace_documents"]);
+    const timelineStores = new Set(["activity_items", "jogos", "treinos"]);
+    if (!allStatusStores.has(store) && !timelineStores.has(store)) throw new TypeError("Esta coleção não tem uma consulta de Timeline indexada.");
+    if (typeof teamId !== "string" || !teamId || typeof visitar !== "function") throw new TypeError("Indica uma equipa e uma função de visita válidas.");
+    if (allStatusStores.has(store) && (typeof status !== "string" || !status)) throw new TypeError("Indica o estado da Timeline a consultar.");
+    const maximum = Math.max(1, Math.min(500, Math.floor(Number(limit) || 100)));
+    const os = await _tx(store, "readonly");
+    return new Promise((resolve, reject) => {
+      const indexName = allStatusStores.has(store) ? "team_status_timeline" : "team_timeline";
+      const range = allStatusStores.has(store)
+        ? IDBKeyRange.bound([teamId, status, ""], [teamId, status, "\uffff"])
+        : IDBKeyRange.bound([teamId, ""], [teamId, "\uffff"]);
+      const request = os.index(indexName).openCursor(range, "prev");
+      let count = 0;
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) { resolve(count); return; }
+        try {
+          if (_visibleInSelectedRemoteWorkspace(cursor.value)) {
+            visitar(cursor.value);
+            if (++count >= maximum) { resolve(count); return; }
+          }
+          cursor.continue();
+        } catch (error) {
+          reject(error);
+          try { os.transaction.abort(); } catch (_) {}
+        }
+      };
+      request.onerror = () => reject(request.error || new Error("Não foi possível ler a Timeline recente."));
+      os.transaction.onabort = () => reject(os.transaction.error || new Error("A leitura local da Timeline foi interrompida."));
     });
   },
   async contarPorIndice(store, indice, valor) {

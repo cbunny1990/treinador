@@ -9,7 +9,7 @@ test("Timeline mantém os 100 itens recentes sem carregar históricos completos"
     RemoteWorkspace.scheduleSync = () => {};
     const payload = Array.from({ length: 80 }, (_, i) => ({ note: "payload de histórico não apresentado " + i }));
     let latestMatchId;
-    const counts = { activity_items: 0, workspace_documents: 0, memory_items: 0, jogos: 0, treinos: 0 };
+    const counts = {};
     for (let i = 0; i < 120; i++) {
       const date = new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10);
       const created = date + "T12:00:00.000Z";
@@ -25,11 +25,17 @@ test("Timeline mantém os 100 itens recentes sem carregar históricos completos"
     window.timelineCursorCounts = counts;
     const cursor = DB.percorrerIndice.bind(DB);
     DB.percorrerIndice = function (store, ...args) {
-      return cursor(store, ...args).then((count) => { if (store in window.timelineCursorCounts) window.timelineCursorCounts[store] = count; return count; });
+      if (["activity_items", "workspace_documents", "memory_items", "jogos", "treinos"].includes(store)) throw new Error("A Timeline percorreu o histórico completo: " + store);
+      return cursor(store, ...args);
+    };
+    const recent = DB.percorrerEquipaMaisRecentes.bind(DB);
+    DB.percorrerEquipaMaisRecentes = (store, team, limit, visit, status) => {
+      const key = store + (status ? ":" + status : "");
+      return recent(store, team, limit, visit, status).then((count) => { window.timelineCursorCounts[key] = count; return count; });
     };
     const read = DB.porIndice.bind(DB);
     DB.porIndice = function (store, ...args) {
-      if (store in window.timelineCursorCounts) throw new Error("A Timeline tentou materializar o histórico: " + store);
+      if (["activity_items", "workspace_documents", "memory_items", "jogos", "treinos"].includes(store)) throw new Error("A Timeline tentou materializar o histórico: " + store);
       return read(store, ...args);
     };
     WorkspaceStore.buildSnapshot = async () => { throw new Error("A Timeline não deve construir o snapshot global."); };
@@ -46,9 +52,13 @@ test("Timeline mantém os 100 itens recentes sem carregar históricos completos"
   await expect(page.getByText("payload de histórico não apresentado", { exact: false })).toHaveCount(0);
   await expect(page.locator('.timeline-item a[href="#/equipa/jogo/' + fixture.latestMatchId + '"]')).toBeVisible();
   const counts = await page.evaluate(() => window.timelineCursorCounts);
-  expect(counts.activity_items).toBeGreaterThanOrEqual(120);
-  expect(counts.workspace_documents).toBeGreaterThanOrEqual(121);
-  expect(counts.memory_items).toBeGreaterThanOrEqual(121);
-  expect(counts.jogos).toBeGreaterThanOrEqual(120);
-  expect(counts.treinos).toBeGreaterThanOrEqual(120);
+  expect(counts).toEqual({
+    activity_items: 50,
+    "workspace_documents:draft": 0,
+    "workspace_documents:ready": 100,
+    "workspace_documents:approved": 0,
+    "memory_items:active": 100,
+    jogos: 100,
+    treinos: 100,
+  });
 });
