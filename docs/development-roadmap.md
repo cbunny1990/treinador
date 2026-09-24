@@ -1,6 +1,6 @@
 # Próximas fases Vision Coach — 25/09/2026
 
-Confirmação read-only do GitHub Pages (25/09/2026): o endereço publicado respondeu HTTP 200 e `sw.js` serve `vision-coach-v161`; `index.html` regista `serviceWorkerVersion = 156`. Isto identifica os ficheiros disponíveis no servidor, não o cache já ativo em cada dispositivo. O branch de desenvolvimento continua 10 commits à frente e nenhuma alteração foi publicada.
+Confirmação read-only do GitHub Pages (25/09/2026): o endereço publicado respondeu HTTP 200 e `sw.js` serve `vision-coach-v161`; `index.html` regista `serviceWorkerVersion = 156`. Isto identifica os ficheiros disponíveis no servidor, não o cache já ativo em cada dispositivo. O branch de desenvolvimento continua 11 commits à frente e nenhuma alteração foi publicada.
 
 Regressão Safari/WebKit para o Workspace (25/09/2026): criei `npm run test:e2e:webkit-scroll`, que executa em WebKit móvel simulado os fluxos existentes de sincronização em segundo plano e scroll do treinador durante renderização concorrente. Os dois testes passaram (2/2); `npm run check` e `git diff --check` também passaram. Isto testa o motor do Safari, mas não substitui o ensaio num iPhone físico. Só muda a configuração/cobertura de testes, sem alteração de dados, imagens, migrations ou publicação.
 

@@ -34,7 +34,7 @@ Chat embutido, OpenRouter, gerador de treino IA, biblioteca antiga de exercício
 
 ## Dados ativos
 
-IndexedDB v14 mantém os objetos principais e a fila/tombstones necessários para sincronização remota:
+IndexedDB v15 mantém os objetos principais e a fila/tombstones necessários para sincronização remota:
 
 - `teams`
 - `jogadores`
@@ -196,7 +196,7 @@ A reformulação remove o produto antigo da experiência sem apagar silenciosame
 
 A suíte deve validar, no mínimo:
 
-- migração de dados antigos até à versão IndexedDB v14;
+- migração de dados antigos até à versão IndexedDB v15;
 - funcionamento offline;
 - captura de observação pelo treinador;
 - documentos partilhados;
