@@ -2,6 +2,7 @@
 const MODEL = 'text-embedding-3-small';
 const DIMENSIONS = 1536;
 const TEAM_REDACTION_NAMES = new WeakMap();
+const TEAM_REDACTION_NAMES_BY_ADMIN = new WeakMap();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const KINDS = new Set(['player','match','training','memory','document','game_model','exercise']);
 const TOOL = {
@@ -228,6 +229,22 @@ async function loadTeamRedactionNames(admin,teamId){
   }
   return names;
 }
+function rememberTeamRedactionNames(admin,teamId,names){
+  if(!admin||typeof admin!=='object')return;
+  let teams=TEAM_REDACTION_NAMES_BY_ADMIN.get(admin);
+  if(!teams){teams=new Map();TEAM_REDACTION_NAMES_BY_ADMIN.set(admin,teams);}
+  teams.set(teamId,Promise.resolve(names));
+}
+async function getTeamRedactionNames(admin,teamId){
+  let teams=TEAM_REDACTION_NAMES_BY_ADMIN.get(admin);
+  if(!teams){teams=new Map();TEAM_REDACTION_NAMES_BY_ADMIN.set(admin,teams);}
+  if(!teams.has(teamId)){
+    const pending=loadTeamRedactionNames(admin,teamId);
+    teams.set(teamId,pending);
+    try{await pending;}catch(error){teams.delete(teamId);throw error;}
+  }
+  return teams.get(teamId);
+}
 
 async function sha256(value){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');}
 async function embed(inputs,{apiKey=globalThis.Deno?.env?.get?.('OPENAI_API_KEY'),fetchImpl=globalThis.fetch}={}){
@@ -278,6 +295,7 @@ export async function indexPendingTeamKnowledge(admin,teamId,{provider={},limit=
     await admin.rpc('release_team_knowledge_jobs',{p_team_id:teamId,p_claims:claimed.map(x=>({source_id:x.source_id,claim_token:x.claim_token})),p_error:String(error?.message||'indexing_metadata_failed').slice(0,240)});
     throw error;
   }
+  rememberTeamRedactionNames(admin,teamId,redactNames);
   let indexedSources=0,indexedChunks=0;
   for(const [jobIndex,job] of claimed.entries()){
     const source={id:job.source_id,team_id:teamId,kind:job.source_kind,payload:job.payload,updated_at:job.source_updated_at};
@@ -432,7 +450,9 @@ export async function executeTeamKnowledgeTool(admin,connector,name,args,{provid
   if(kinds?.some(kind=>!KINDS.has(kind)))throw new Error('invalid_knowledge_source_kind');
   const indexed=await indexPendingTeamKnowledge(admin,teamId,{provider,limit:32});
   if(!indexed.provider_configured)return {schema:'vision-team-rag@1',retrieval_status:'provider_not_configured',answer_mode:'not_generated',results:[],indexing:{pending:true,indexed_sources:0,indexed_chunks:0},message:'A pesquisa semântica está inativa: falta configurar OPENAI_API_KEY no runtime privado da Edge Function. Não foi enviada informação da equipa a nenhum provider.'};
-  const redactNames=TEAM_REDACTION_NAMES.get(indexed)||await loadTeamRedactionNames(admin,teamId);
+  const indexedNames=TEAM_REDACTION_NAMES.get(indexed);
+  const redactNames=Array.isArray(indexedNames)?indexedNames:await getTeamRedactionNames(admin,teamId);
+  rememberTeamRedactionNames(admin,teamId,redactNames);
   const safeQuery=redactNamesFromText(query,redactionTerms(redactNames));
   const [queryVector]=await embed([safeQuery],provider);
   const {data,error}=await admin.rpc('search_team_knowledge_chunks',{

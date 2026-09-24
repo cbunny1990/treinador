@@ -253,6 +253,14 @@ test('RAG fails closed when it cannot load roster names for query redaction',asy
  assert.deepEqual(calls.map(call=>call.name),['claim_team_knowledge_jobs']);
 });
 
+test('hybrid search reuses scoped roster names within one MCP request',async()=>{
+ const db=fakeAdmin([]),provider=fakeProvider();
+ await rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query:'O que mudou no jogo?'},{provider});
+ await rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query:'O que melhorar no treino?'},{provider});
+ assert.equal(db.fromCalls.filter(call=>call.table==='workspace_records').length,1,'two retrievals in one hybrid operation should read names once');
+ assert.equal(provider.requests.length,2,'each query still receives its own embedding');
+});
+
 test('full reindex requires explicit write approval and remains scoped to connector team',async()=>{
  const db=fakeAdmin(),readOnly={...connector,scopes:['read']},write={...connector,scopes:['read','write']};
  await assert.rejects(rag.executeTeamKnowledgeTool(db,readOnly,'reindex_team_knowledge',{confirmed:true}),/scope_write_required/);
