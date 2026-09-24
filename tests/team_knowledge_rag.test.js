@@ -101,6 +101,28 @@ test('RAG indexes only player development notes, redacts the athlete name and ex
  const withName=match();withName.payload.match_events.events[0].note='Passe intercetado por Maria Silva';const redacted=rag.teamKnowledgeTestAPI.chunkRecord(withName,{redactNames:['Maria Silva']});assert.doesNotMatch(redacted.find(x=>x.source_path==='match_events.events[0]').content,/Maria Silva/);
 });
 
+test('health privacy filter excludes common cardiovascular, glucose and mental-health wording without blocking tactical high press',()=>{
+ const sensitive=[
+  'O atleta tem hipertensão e deve evitar esforço intenso.',
+  'A tensão arterial foi elevada no controlo médico.',
+  'Registar pressão arterial antes do treino.',
+  'A glicemia baixou e houve hipoglicemia após o exercício.',
+  'A ansiedade está a afetar o bem-estar do atleta.',
+  'Acompanhamento de saúde mental e depressão.',
+  'O atleta tem TDAH e segue orientação clínica.',
+  'Diagnóstico de bipolaridade em acompanhamento.',
+  'The player has hypertension and should avoid intense exercise.',
+  'Blood pressure was high at the medical check.',
+  'The player reports anxiety and panic attacks.',
+ ];
+ for(const [index,note] of sensitive.entries()){
+  const source=match();source.payload.match_events.events[0].note=note;
+  assert.equal(rag.teamKnowledgeTestAPI.chunkRecord(source).some(item=>item.source_path==='match_events.events[0]'),false,`não indexar: ${note}`);
+ }
+ const tactical=match();tactical.payload.post_game.analysis.fields.summary='A equipa aplicou pressão alta na construção e recuperou a bola.';
+ assert.ok(rag.teamKnowledgeTestAPI.chunkRecord(tactical).some(item=>item.source_path==='post_game.analysis.fields.summary'));
+});
+
 test('exercise definitions and game-model principles are not labelled as match observations',()=>{
  const exercise={id:SOURCE,team_id:TEAM,kind:'exercise',updated_at:'v1',payload:{nome:'Apoio após passe',objetivo:'Criar linha de apoio ao portador.'}};
  const model={id:SOURCE,team_id:TEAM,kind:'game_model',updated_at:'v1',payload:{title:'Modelo',principles:['Manter linhas de passe próximas.']}};
@@ -182,12 +204,15 @@ test('full reindex requires explicit write approval and remains scoped to connec
 });
 
 test('indexer replaces source chunks idempotently and only indexes allowlisted player goals',async()=>{
- const rows=[match(),{id:PLAYER,team_id:TEAM,kind:'player',updated_at:'v1',payload:{nome:'Maria Silva',observacao:'texto individual',development_goals:{items:[{title:'Melhorar primeiro toque',notes:'Maria Silva deve treinar orientação antes da receção.'}]}}}],db=fakeAdmin(rows),provider=fakeProvider();
+ const source=match();source.payload.post_game.analysis.fields.observations='The player has hypertension and should avoid intense exercise.';
+ const rows=[source,{id:PLAYER,team_id:TEAM,kind:'player',updated_at:'v1',payload:{nome:'Maria Silva',observacao:'texto individual',development_goals:{items:[{title:'Melhorar primeiro toque',notes:'Maria Silva deve treinar orientação antes da receção.'},{title:'Acompanhamento',notes:'O atleta tem hipertensão e deve evitar esforço intenso.'}]}}}],db=fakeAdmin(rows),provider=fakeProvider();
  const result=await rag.indexPendingTeamKnowledge(db,TEAM,{provider,limit:16});
  assert.equal(result.indexed_sources,2);assert.ok(result.indexed_chunks>0);assert.equal(db.calls.filter(x=>x.name==='replace_team_knowledge_source').length,2);
  assert.equal(db.calls[0].args.p_team_id,TEAM);assert.equal(db.calls[0].args.p_limit,16);
  assert.equal(db.calls.find(x=>x.name==='replace_team_knowledge_source').args.p_source_id,SOURCE);assert.equal(db.calls.find(x=>x.name==='replace_team_knowledge_source').args.p_claim_token,'90000000-0000-4000-8000-000000000009');
  const indexedPlayer=db.calls.filter(x=>x.name==='replace_team_knowledge_source').find(x=>x.args.p_source_id===PLAYER);assert.match(indexedPlayer.args.p_chunks[0].content,/atleta/);assert.doesNotMatch(indexedPlayer.args.p_chunks[0].content,/Maria Silva|texto individual/);assert.equal(indexedPlayer.args.p_chunks[0].metadata.age_group,'Sub-8');
+ assert.doesNotMatch(provider.requests.flatMap(request=>request.input).join('\n'),/hypertension|hipertens/i,'conteúdo de saúde não pode chegar ao provider');
+ assert.match(provider.requests.flatMap(request=>request.input).join('\n'),/pressão alta/i,'observação tática não deve ser confundida com pressão arterial');
  assert.equal(db.fromCalls[0].table,'teams');assert.equal(db.fromCalls[1].table,'workspace_records');assert.ok(db.fromCalls[1].filters[0]({team_id:TEAM}));assert.equal(db.fromCalls[1].filters[0]({team_id:'40000000-0000-4000-8000-000000000004'}),false);
 });
 

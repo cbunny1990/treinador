@@ -66,7 +66,10 @@ test("RAG real no Supabase mantém indexação, consultas e referências isolada
         updated_at: "2026-09-24T10:00:00.000Z",
         payload: {
           data: "2026-09-20", estado: "concluido", adversario: `Adversário ${team.label}`,
-          post_game: { analysis: { fields: { problems: `Equipa ${team.label}: pressão alta na construção e perda de bola no corredor central.` } } },
+          post_game: { analysis: { fields: {
+            problems: `Equipa ${team.label}: pressão alta na construção e perda de bola no corredor central.`,
+            observations: team.label === "A" ? "The player has hypertension and should avoid intense exercise." : "",
+          } } },
           match_events: team.label === "A" ? {
             events: Array.from({ length: 72 }, (_, index) => ({
               id: uuid(), type: "loss", at_ms: index * 30_000,
@@ -150,6 +153,8 @@ test("RAG real no Supabase mantém indexação, consultas e referências isolada
       "Problemas identificados: Equipa B: pressão alta na construção e perda de bola no corredor central.",
       "Problemas identificados: Equipa A: pressão alta na construção e perda de bola no corredor central voltou a surgir.",
     ].sort());
+    assert.doesNotMatch(providerInputs.join("\n"), /hypertension|blood pressure|hipertens/i, "notas de saúde não chegam ao provider de embeddings");
+    assert.match(providerInputs.join("\n"), /pressão alta/i, "observação tática continua a ser indexada");
 
     const unrelatedMetadataUpdate = await admin.from("teams").update({ metadata: { escalao: "Sub-8", badge_revision: 2 } }).eq("id", teamRows[0].id);
     assert.ifError(unrelatedMetadataUpdate.error);
