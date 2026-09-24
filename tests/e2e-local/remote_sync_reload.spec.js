@@ -137,6 +137,79 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
     }, gameSyncId);
     expect(desktopUpdate).toEqual({ conflicts: [], adversario: "Editado offline no telemóvel", dirty: false });
 
+    await page.waitForFunction(() => typeof VisionMatchAnalysis !== "undefined" && typeof VisionMatchEvidence !== "undefined");
+    const evidenceSyncId = crypto.randomUUID();
+    const momentToKeep = crypto.randomUUID();
+    const momentToDelete = crypto.randomUUID();
+    await page.evaluate(async ({ syncId, keepId, deleteId }) => {
+      const id = await DB.criar("jogos", {
+        team_id: DEFAULT_TEAM_ID, sync_id: syncId, data: "2026-09-24",
+        adversario: "Análise e evidências offline", estado: "concluido",
+      });
+      await DB.modificar("jogos", id, (row) => VisionMatchAnalysis.save(row, {
+        fields: { summary: "Resumo inicial no PC" },
+      }, { expected_revision: 0, actor: "Treinador" }));
+      await DB.modificar("jogos", id, (row) => VisionMatchEvidence.apply(row, {
+        type: "add", expected_revision: 0,
+        item: { id: keepId, url: "https://example.test/jogo.mp4", seconds: 90, category: "goal", description: "Momento a manter", relation_type: "none" },
+      }));
+      await DB.modificar("jogos", id, (row) => VisionMatchEvidence.apply(row, {
+        type: "add", expected_revision: 1,
+        item: { id: deleteId, url: "https://example.test/jogo.mp4", seconds: 150, category: "chance", description: "Momento a remover", relation_type: "none" },
+      }));
+      const result = await RemoteWorkspace.syncNow();
+      if (result.conflicts.length) throw new Error(JSON.stringify(result.conflicts));
+    }, { syncId: evidenceSyncId, keepId: momentToKeep, deleteId: momentToDelete });
+    await phone.evaluate(async (syncId) => {
+      const result = await RemoteWorkspace.syncNow();
+      if (result.conflicts.length) throw new Error(JSON.stringify(result.conflicts));
+      const row = (await DB.listar("jogos")).find((item) => item.sync_id === syncId);
+      if (!row || VisionMatchAnalysis.fromMatch(row).fields.summary !== "Resumo inicial no PC" || VisionMatchEvidence.state(row).moments.length !== 2) {
+        throw new Error("A análise inicial e os dois momentos não chegaram ao telemóvel.");
+      }
+    }, evidenceSyncId);
+
+    await mobileContext.setOffline(true);
+    await phone.evaluate(async ({ syncId, keepId, deleteId }) => {
+      const row = (await DB.listar("jogos")).find((item) => item.sync_id === syncId);
+      if (!row) throw new Error("Jogo com análise não encontrado no telemóvel.");
+      let changed = VisionMatchEvidence.apply(row, {
+        type: "edit", id: keepId, expected_revision: 2,
+        item: { seconds: 95, description: "Momento revisto offline" },
+      });
+      changed = VisionMatchEvidence.apply(changed, {
+        type: "delete", id: deleteId, expected_revision: 3, confirmed: true,
+      });
+      changed = VisionMatchAnalysis.save(changed, {
+        fields: { ...VisionMatchAnalysis.fromMatch(changed).fields, summary: "Resumo revisto offline no telemóvel" },
+      }, { expected_revision: 1, actor: "Treinador" });
+      await DB.modificar("jogos", row.id, () => ({ ...changed, sync_dirty: true }));
+    }, { syncId: evidenceSyncId, keepId: momentToKeep, deleteId: momentToDelete });
+    const beforeEvidenceReconnect = await admin.from("workspace_records").select("payload").eq("id", evidenceSyncId).single();
+    expect(beforeEvidenceReconnect.error).toBeNull();
+    expect(beforeEvidenceReconnect.data.payload.post_game.analysis.fields.summary).toBe("Resumo inicial no PC");
+    expect(beforeEvidenceReconnect.data.payload.match_evidence.moments).toHaveLength(2);
+
+    await mobileContext.setOffline(false);
+    const evidencePhonePush = await phone.evaluate(async () => RemoteWorkspace.syncNow());
+    expect(evidencePhonePush.conflicts).toEqual([]);
+    const evidenceDesktopPull = await page.evaluate(async (syncId) => {
+      const result = await RemoteWorkspace.syncNow();
+      const row = (await DB.listar("jogos")).find((item) => item.sync_id === syncId);
+      return { conflicts: result.conflicts, summary: VisionMatchAnalysis.fromMatch(row).fields.summary, moments: VisionMatchEvidence.state(row).moments };
+    }, evidenceSyncId);
+    expect(evidenceDesktopPull.conflicts).toEqual([]);
+    expect(evidenceDesktopPull.summary).toBe("Resumo revisto offline no telemóvel");
+    expect(evidenceDesktopPull.moments).toHaveLength(1);
+    expect(evidenceDesktopPull.moments[0]).toMatchObject({ id: momentToKeep, seconds: 95, description: "Momento revisto offline" });
+    await phone.evaluate(() => RemoteWorkspace.syncNow());
+    await page.evaluate(() => RemoteWorkspace.syncNow());
+    const evidenceAfterReplay = await admin.from("workspace_records").select("id,payload").eq("id", evidenceSyncId);
+    expect(evidenceAfterReplay.error).toBeNull();
+    expect(evidenceAfterReplay.data).toHaveLength(1);
+    expect(evidenceAfterReplay.data[0].payload.match_evidence.moments).toHaveLength(1);
+    expect(evidenceAfterReplay.data[0].payload.match_evidence.moments[0].id).toBe(momentToKeep);
+
     await context.setOffline(true);
     await page.evaluate(async (syncId) => {
       const row = (await DB.listar("jogos")).find((item) => item.sync_id === syncId);
