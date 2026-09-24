@@ -56,12 +56,15 @@ test("migra dados antigos para o workspace e continua offline", async ({ page, c
       teamId: players[0].team_id,
       stores: Array.from(db.objectStoreNames),
       dateIndexes: ["jogos", "treinos"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_data")),
+      operationsIndexes: db.transaction("jogos").objectStore("jogos").indexNames.contains("team_proposal_status")
+        && ["team_completed_review", "team_proposal_status"].every((index) => db.transaction("treinos").objectStore("treinos").indexNames.contains(index)),
     };
   });
 
-  expect(migrated.version).toBe(11);
+  expect(migrated.version).toBe(12);
   expect(migrated.teamId).toBe("default");
   expect(migrated.dateIndexes).toBeTruthy();
+  expect(migrated.operationsIndexes).toBeTruthy();
   expect(migrated.stores).toContain("workspace_documents");
   expect(migrated.stores).toContain("activity_items");
   expect(migrated.stores).toContain("sync_tombstones");
@@ -175,6 +178,7 @@ test("snapshot do Workspace conta media sem carregar payloads e omite timeline n
 
 test("snapshot compacto do Workspace percorre o histórico sem materializar jogos e treinos", async ({ page }) => {
   await page.goto("/");
+  await page.waitForFunction(() => typeof WorkspaceStore !== "undefined" && typeof DB !== "undefined");
   await page.evaluate(async () => {
     RemoteWorkspace.scheduleSync = () => {};
     const start = Date.now();
@@ -202,13 +206,23 @@ test("snapshot compacto do Workspace percorre o histórico sem materializar jogo
       if (store === "jogos" || store === "treinos") throw new Error(`Snapshot compacto materializou ${store}.`);
       return fullRead(store, ...args);
     };
-    const scan = DB.percorrerIndice.bind(DB);
     window.__compactScanCounts = {};
-    DB.percorrerIndice = async (store, ...args) => {
-      const count = await scan(store, ...args);
-      window.__compactScanCounts[store] = count;
-      return count;
+    DB.percorrerIndice = (store, ...args) => {
+      if (store === "jogos" || store === "treinos") throw new Error(`Snapshot compacto percorreu o histórico completo de ${store}.`);
+      return DB.percorrerIndice.bind(DB)(store, ...args);
     };
+    const first = DB.primeiroIntervaloEquipa.bind(DB);
+    DB.primeiroIntervaloEquipa = (store, teamId, from, predicate) => first(store, teamId, from, row => {
+      const key = "next_" + store;
+      window.__compactScanCounts[key] = (window.__compactScanCounts[key] || 0) + 1;
+      return predicate(row);
+    });
+    const byValue = DB.percorrerValorEquipa.bind(DB);
+    DB.percorrerValorEquipa = (store, index, teamId, value, visit) => byValue(store, index, teamId, value, row => {
+      const key = store + "_" + index;
+      window.__compactScanCounts[key] = (window.__compactScanCounts[key] || 0) + 1;
+      visit(row);
+    });
     window.__compactSnapshot = await WorkspaceStore.buildSnapshot(DEFAULT_TEAM_ID, {
       includeArchivedDocuments: true, countMediaOnly: true, includeTimeline: false, compactOperationalRecords: true,
     });
@@ -227,7 +241,10 @@ test("snapshot compacto do Workspace percorre o histórico sem materializar jogo
   expect(snapshot).toEqual({
     hasFullHistory: false, nextMatch: "Próximo adversário", nextTraining: "Próximo treino",
     reviewCount: 26, reviewSamples: 4, trainingProposals: 7, matchProposals: 9, staleMatchProposals: 10,
-    scanned: { jogos: 40, treinos: 40 },
+    scanned: {
+      next_jogos: 1, next_treinos: 1, jogos_team_proposal_status: 19,
+      treinos_team_completed_review: 26, treinos_team_proposal_status: 7,
+    },
   });
 });
 

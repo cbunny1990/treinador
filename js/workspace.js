@@ -251,13 +251,12 @@ const WorkspaceStore = {
     let nextMatch = null;
     let nextTraining = null;
     await Promise.all([
-      DB.percorrerIndice("jogos", "team_id", teamId, (match) => {
-        const date = wsDate(match.data);
-        if (date >= today && !["cancelado", "concluido"].includes(String(match.estado || "").toLowerCase())
-          && (!nextMatch || date < wsDate(nextMatch.data))) nextMatch = match;
+      (async () => { nextMatch = await DB.primeiroIntervaloEquipa("jogos", teamId, today, (match) =>
+        !["cancelado", "concluido"].includes(String(match.estado || "").toLowerCase())); })(),
+      (async () => { nextTraining = await DB.primeiroIntervaloEquipa("treinos", teamId, today, (training) =>
+        training.status !== "completed" && training.session?.status !== "completed"); })(),
+      DB.percorrerValorEquipa("jogos", "team_proposal_status", teamId, "proposed", (match) => {
         const analysis = VisionMatchAnalysis.fromMatch(match);
-        const proposal = analysis.agent_proposal;
-        if (proposal?.status !== "proposed") return;
         const key = match.sync_id ? "uuid:" + String(match.sync_id) : "local:" + String(match.id);
         const stamp = String(match.updated_at || match.sync_local_updated_at || "");
         const previous = matchProposals.get(key);
@@ -267,18 +266,14 @@ const WorkspaceStore = {
           freshness: VisionMatchAnalysis.proposalFreshness(match),
         });
       }),
-      DB.percorrerIndice("treinos", "team_id", teamId, (training) => {
-        const date = wsDate(training.data);
-        if (date >= today && training.status !== "completed" && training.session?.status !== "completed"
-          && (!nextTraining || date < wsDate(nextTraining.data))) nextTraining = training;
-        const review = training.review || training.session?.review;
-        if ((training.status === "completed" || training.session?.status === "completed") && review?.status !== "done") {
-          pendingReviewCount++;
-          if (pendingReviews.length < 4) pendingReviews.push({
-            id: training.id, data: training.data, objetivo: training.objetivo,
-          });
-        }
-        if (training.continuity?.proposal?.status === "draft") pendingTrainingProposals.push({
+      DB.percorrerValorEquipa("treinos", "team_completed_review", teamId, "pending", (training) => {
+        pendingReviewCount++;
+        if (pendingReviews.length < 4) pendingReviews.push({
+          id: training.id, data: training.data, objetivo: training.objetivo,
+        });
+      }),
+      DB.percorrerValorEquipa("treinos", "team_proposal_status", teamId, "draft", (training) => {
+        pendingTrainingProposals.push({
           kind: "training", id: training.id, date: training.data,
           title: training.continuity.proposal.objective || training.objetivo || "Proposta de treino",
         });
