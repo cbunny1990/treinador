@@ -20,21 +20,21 @@ A conversa pode acontecer fora da app, por exemplo no ChatGPT. A app continua a 
 
 ## Navegação humana
 
-A aplicação principal tem cinco áreas:
+A navegação principal tem seis áreas:
 
 - **Workspace** — estado atual da equipa, próximos eventos, prioridades, planos recentes e atividade.
 - **Equipa** — perfil, jogadores e jogos.
 - **Planos** — planos de treino, análises de jogo, notas e briefings.
 - **Media** — biblioteca visual partilhada.
 - **Timeline** — histórico de dados, documentos e ações de humano/agente.
-- **Pesquisa e histórico** — pesquisa transversal com filtros de data/época e atalhos para a origem dos registos.
-- **Semana e evolução** — organização semanal e objetivos explícitos da equipa, sem inferir melhoria.
+
+Pesquisa e histórico (`#/pesquisa`), Semana e evolução (`#/evolucao`) e Épocas (`#/epocas`) são páginas secundárias, acessíveis a partir do Workspace e dos registos relacionados; não são separadores da navegação principal.
 
 Chat embutido, OpenRouter, gerador de treino IA, biblioteca antiga de exercícios e dashboard Head Coach antigo foram removidos do produto ativo.
 
 ## Dados ativos
 
-IndexedDB v9 mantém os objetos principais e a fila/tombstones necessários para sincronização remota:
+IndexedDB v14 mantém os objetos principais e a fila/tombstones necessários para sincronização remota:
 
 - `teams`
 - `jogadores`
@@ -196,7 +196,7 @@ A reformulação remove o produto antigo da experiência sem apagar silenciosame
 
 A suíte deve validar, no mínimo:
 
-- migração de dados antigos para IndexedDB v9;
+- migração de dados antigos até à versão IndexedDB v14;
 - funcionamento offline;
 - captura de observação pelo treinador;
 - documentos partilhados;
