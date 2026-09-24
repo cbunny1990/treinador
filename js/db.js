@@ -1,6 +1,6 @@
 // Camada de dados offline (IndexedDB). Sem servidor: tudo vive no telemóvel.
 const DB_NOME = "treinador";
-const DB_VERSAO = 10;
+const DB_VERSAO = 14;
 const DEFAULT_TEAM_ID = "default";
 const STORES = [
   "jogadores", "exercicios", "treinos", "treino_itens", "presencas", "avaliacoes", "jogos",
@@ -9,6 +9,28 @@ const STORES = [
   "workspace_documents", "activity_items", "sync_tombstones",
 ];
 const SYNCABLE_STORES = new Set(["teams", "jogadores", "exercicios", "jogos", "treinos", "game_models", "memory_items", "workspace_documents", "activity_items", "media_items"]);
+
+function _operationalIndexFields(store, row) {
+  const next = { ...row };
+  if (store === "activity_items") {
+    next.operational_timeline_date = String(row?.created_at || "");
+  } else if (store === "workspace_documents") {
+    next.operational_timeline_date = String(row?.updated_at || row?.created_at || "");
+    next.operational_timeline_status = row?.status === "archived" ? "archived" : "visible";
+  } else if (store === "memory_items") {
+    next.operational_timeline_date = String(row?.occurred_at || row?.created_at || "");
+  } else if (store === "jogos") {
+    next.operational_timeline_date = String(row?.data || "");
+    next.operational_proposal_status = row?.post_game?.analysis?.agent_proposal?.status || null;
+  } else if (store === "treinos") {
+    next.operational_timeline_date = String(row?.data || "");
+    const completed = row?.status === "completed" || row?.session?.status === "completed";
+    const review = row?.review || row?.session?.review;
+    next.operational_needs_review = completed && review?.status !== "done" ? "pending" : "not_pending";
+    next.operational_proposal_status = row?.continuity?.proposal?.status || null;
+  }
+  return next;
+}
 
 let _db = null;
 
@@ -103,14 +125,35 @@ function abrirDB() {
           created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
         });
       }
-      for (const nome of ["jogadores", "treinos", "jogos"]) {
+      for (const nome of ["jogadores", "treinos", "jogos", "memory_items", "workspace_documents", "activity_items"]) {
         const os = e.target.transaction.objectStore(nome);
         if (!os.indexNames.contains("team_id")) os.createIndex("team_id", "team_id", { unique: false });
+        if ((nome === "treinos" || nome === "jogos") && !os.indexNames.contains("team_data")) {
+          os.createIndex("team_data", ["team_id", "data"], { unique: false });
+        }
+        if (nome === "treinos") {
+          if (!os.indexNames.contains("team_completed_review")) os.createIndex("team_completed_review", ["team_id", "operational_needs_review"], { unique: false });
+        }
+        if ((nome === "treinos" || nome === "jogos") && !os.indexNames.contains("team_proposal_status")) {
+          os.createIndex("team_proposal_status", ["team_id", "operational_proposal_status"], { unique: false });
+        }
+        if (["activity_items", "jogos", "treinos"].includes(nome) && !os.indexNames.contains("team_timeline")) {
+          os.createIndex("team_timeline", ["team_id", "operational_timeline_date"], { unique: false });
+        }
+        if (["memory_items", "workspace_documents"].includes(nome) && !os.indexNames.contains("team_status_timeline")) {
+          os.createIndex("team_status_timeline", ["team_id", "status", "operational_timeline_date"], { unique: false });
+        }
+        if (nome === "workspace_documents" && !os.indexNames.contains("team_timeline_status")) {
+          os.createIndex("team_timeline_status", ["team_id", "operational_timeline_status", "operational_timeline_date"], { unique: false });
+        }
         os.openCursor().onsuccess = (ev) => {
           const cursor = ev.target.result;
           if (!cursor) return;
           const registo = cursor.value;
-          if (!registo.team_id) { registo.team_id = DEFAULT_TEAM_ID; cursor.update(registo); }
+          const original = JSON.stringify(registo);
+          if (!registo.team_id) registo.team_id = DEFAULT_TEAM_ID;
+          const indexed = _operationalIndexFields(nome, registo);
+          if (JSON.stringify(indexed) !== original) cursor.update(indexed);
           cursor.continue();
         };
       }
@@ -145,11 +188,12 @@ function _visibleInSelectedRemoteWorkspace(row) {
   return !selected || !row?.remote_team_id || row.remote_team_id === selected;
 }
 function _prepareSyncRecord(store, obj, options = {}) {
-  if (!SYNCABLE_STORES.has(store) || options.remote) return { ...obj };
-  if (store === "exercicios" && !obj.workspace_v2 && !obj.sync_id) return { ...obj };
+  const indexed = _operationalIndexFields(store, obj);
+  if (!SYNCABLE_STORES.has(store) || options.remote) return indexed;
+  if (store === "exercicios" && !obj.workspace_v2 && !obj.sync_id) return indexed;
   const now = new Date().toISOString();
   const next = {
-    ...obj,
+    ...indexed,
     sync_id: obj.sync_id || _syncUuid(),
     sync_dirty: true,
     sync_local_updated_at: now,
@@ -187,6 +231,32 @@ const DB = {
     const id = await _prom(os.add(_prepareSyncRecord(store, obj, options)));
     _notifyRemoteSync(store, options);
     return id;
+  },
+  async criarWorkspaceDocumentSeAusente(obj) {
+    if (!obj?.team_id || !obj?.type || !obj?.sync_id) throw new Error("Documento partilhado precisa de equipa, tipo e UUID estável.");
+    const db = await abrirDB();
+    let created = false;
+    const result = await new Promise((resolve, reject) => {
+      const tx = db.transaction("workspace_documents", "readwrite"), os = tx.objectStore("workspace_documents");
+      let id, failure = null;
+      const cursor = os.index("team_type").openCursor(IDBKeyRange.only([obj.team_id, obj.type]));
+      cursor.onsuccess = () => {
+        const row = cursor.result;
+        if (row) {
+          if (_visibleInSelectedRemoteWorkspace(row.value) && row.value.sync_id === obj.sync_id) { id = row.primaryKey; return; }
+          row.continue();
+          return;
+        }
+        try { created = true; const add = os.add(_prepareSyncRecord("workspace_documents", obj)); add.onsuccess = () => { id = add.result; }; add.onerror = () => { failure = add.error; }; }
+        catch (error) { failure = error; tx.abort(); }
+      };
+      cursor.onerror = () => { failure = cursor.error; };
+      tx.oncomplete = () => resolve({ id, created });
+      tx.onabort = () => reject(failure || tx.error || new Error("Não foi possível guardar o documento partilhado."));
+      tx.onerror = () => { failure = failure || tx.error; };
+    });
+    if (result.created) _notifyRemoteSync("workspace_documents");
+    return result;
   },
   async atualizar(store, obj, options = {}) {
     const os = await _tx(store, "readwrite");
@@ -290,6 +360,115 @@ const DB = {
       os.transaction.onabort = () => reject(os.transaction.error || new Error("A leitura local foi interrompida."));
     });
   },
+  async percorrerIntervaloEquipa(store, teamId, from, until, visitar) {
+    if (store !== "jogos" && store !== "treinos") throw new TypeError("O intervalo por equipa só está disponível para jogos e treinos.");
+    if (typeof visitar !== "function") throw new TypeError("É necessário indicar como processar cada registo.");
+    if (typeof teamId !== "string" || !teamId || typeof from !== "string" || typeof until !== "string" || from >= until) {
+      throw new TypeError("Indica uma equipa e um intervalo de datas válido.");
+    }
+    const os = await _tx(store, "readonly");
+    return new Promise((resolve, reject) => {
+      let count = 0;
+      // O limite superior inclui eventuais timestamps ISO no último dia; o callback
+      // do calendário aplica o limite exclusivo pela data civil.
+      const range = IDBKeyRange.bound([teamId, from], [teamId, until + "\uffff"]);
+      const request = os.index("team_data").openCursor(range);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) { resolve(count); return; }
+        try {
+          if (_visibleInSelectedRemoteWorkspace(cursor.value)) {
+            visitar(cursor.value);
+            count++;
+          }
+          cursor.continue();
+        } catch (error) {
+          reject(error);
+          try { os.transaction.abort(); } catch (_) {}
+        }
+      };
+      request.onerror = () => reject(request.error || new Error("Não foi possível percorrer o intervalo da equipa."));
+      os.transaction.onabort = () => reject(os.transaction.error || new Error("A leitura local foi interrompida."));
+    });
+  },
+  async primeiroIntervaloEquipa(store, teamId, from, predicate) {
+    if (store !== "jogos" && store !== "treinos") throw new TypeError("O intervalo por equipa só está disponível para jogos e treinos.");
+    if (typeof predicate !== "function") throw new TypeError("É necessário indicar como selecionar o registo.");
+    if (typeof teamId !== "string" || !teamId || typeof from !== "string") throw new TypeError("Indica uma equipa e uma data inicial válida.");
+    const os = await _tx(store, "readonly");
+    return new Promise((resolve, reject) => {
+      const range = IDBKeyRange.bound([teamId, from], [teamId, "\uffff"]);
+      const request = os.index("team_data").openCursor(range);
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) { resolve(null); return; }
+        try {
+          if (_visibleInSelectedRemoteWorkspace(cursor.value) && predicate(cursor.value)) { resolve(cursor.value); return; }
+          cursor.continue();
+        } catch (error) {
+          reject(error);
+          try { os.transaction.abort(); } catch (_) {}
+        }
+      };
+      request.onerror = () => reject(request.error || new Error("Não foi possível procurar o próximo registo."));
+      os.transaction.onabort = () => reject(os.transaction.error || new Error("A leitura local foi interrompida."));
+    });
+  },
+  async percorrerValorEquipa(store, index, teamId, value, visitar) {
+    if (typeof visitar !== "function") throw new TypeError("É necessário indicar como processar cada registo.");
+    if (typeof teamId !== "string" || !teamId || !["string", "boolean", "number"].includes(typeof value)) throw new TypeError("Indica uma equipa e um valor de índice válido.");
+    const os = await _tx(store, "readonly");
+    return new Promise((resolve, reject) => {
+      let count = 0;
+      const request = os.index(index).openCursor(IDBKeyRange.only([teamId, value]));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) { resolve(count); return; }
+        try {
+          if (store === "teams" || _visibleInSelectedRemoteWorkspace(cursor.value)) { visitar(cursor.value); count++; }
+          cursor.continue();
+        } catch (error) {
+          reject(error);
+          try { os.transaction.abort(); } catch (_) {}
+        }
+      };
+      request.onerror = () => reject(request.error || new Error("Não foi possível percorrer o índice da equipa."));
+      os.transaction.onabort = () => reject(os.transaction.error || new Error("A leitura local foi interrompida."));
+    });
+  },
+  async percorrerEquipaMaisRecentes(store, teamId, limit, visitar, status = null) {
+    const allStatusStores = new Set(["memory_items", "workspace_documents"]);
+    const timelineStores = new Set(["activity_items", "jogos", "treinos"]);
+    if (!allStatusStores.has(store) && !timelineStores.has(store)) throw new TypeError("Esta coleção não tem uma consulta de Timeline indexada.");
+    if (typeof teamId !== "string" || !teamId || typeof visitar !== "function") throw new TypeError("Indica uma equipa e uma função de visita válidas.");
+    if (allStatusStores.has(store) && (typeof status !== "string" || !status)) throw new TypeError("Indica o estado da Timeline a consultar.");
+    const maximum = Math.max(1, Math.min(500, Math.floor(Number(limit) || 100)));
+    const os = await _tx(store, "readonly");
+    return new Promise((resolve, reject) => {
+      const indexName = store === "workspace_documents" ? "team_timeline_status" : allStatusStores.has(store) ? "team_status_timeline" : "team_timeline";
+      const range = allStatusStores.has(store)
+        ? IDBKeyRange.bound([teamId, status, ""], [teamId, status, "\uffff"])
+        : IDBKeyRange.bound([teamId, ""], [teamId, "\uffff"]);
+      const request = os.index(indexName).openCursor(range, "prev");
+      let count = 0;
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) { resolve(count); return; }
+        try {
+          if (_visibleInSelectedRemoteWorkspace(cursor.value)) {
+            visitar(cursor.value);
+            if (++count >= maximum) { resolve(count); return; }
+          }
+          cursor.continue();
+        } catch (error) {
+          reject(error);
+          try { os.transaction.abort(); } catch (_) {}
+        }
+      };
+      request.onerror = () => reject(request.error || new Error("Não foi possível ler a Timeline recente."));
+      os.transaction.onabort = () => reject(os.transaction.error || new Error("A leitura local da Timeline foi interrompida."));
+    });
+  },
   async contarPorIndice(store, indice, valor) {
     const os = await _tx(store, "readonly");
     return new Promise((resolve, reject) => {
@@ -320,8 +499,9 @@ const DB = {
       const os = tx.objectStore(s);
       if (substituir) os.clear();
       for (const registo of (payload.dados[s] || [])) {
-        const normalizado = (["jogadores", "treinos", "jogos"].includes(s) && !registo.team_id)
+        const base = (["jogadores", "treinos", "jogos"].includes(s) && !registo.team_id)
           ? { ...registo, team_id: DEFAULT_TEAM_ID } : registo;
+        const normalizado = _operationalIndexFields(s, base);
         os.put(normalizado);
       }
     }

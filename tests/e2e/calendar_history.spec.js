@@ -28,8 +28,8 @@ test("agenda percorre o histórico sem materializar registos fora das seis seman
     await DB.criar("jogos", { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: shift(from, -1), adversario: "Jogo histórico", during: { events: largePayload } });
     await DB.criar("jogos", { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: beyond, adversario: "Jogo distante", during: { events: largePayload } });
     window.calendarCursorCounts = { treinos: 0, jogos: 0 };
-    const cursor = DB.percorrerIndice.bind(DB);
-    DB.percorrerIndice = function (store, ...args) {
+    const cursor = DB.percorrerIntervaloEquipa.bind(DB);
+    DB.percorrerIntervaloEquipa = function (store, ...args) {
       return cursor(store, ...args).then((count) => {
         if (store in window.calendarCursorCounts) window.calendarCursorCounts[store] = count;
         return count;
@@ -52,7 +52,7 @@ test("agenda percorre o histórico sem materializar registos fora das seis seman
   await expect(page.locator('.calendar-day a[href^="#/consulta/"]')).toHaveCount(2);
   await expect(page.getByText("Histórico extenso", { exact: false })).toHaveCount(0);
   const counts = await page.evaluate(() => window.calendarCursorCounts);
-  expect(counts.jogos).toBeGreaterThanOrEqual(3);
-  expect(counts.treinos).toBeGreaterThanOrEqual(4);
+  expect(counts.jogos).toBe(1);
+  expect(counts.treinos).toBe(2);
   expect(fixture.beyond > fixture.from).toBeTruthy();
 });

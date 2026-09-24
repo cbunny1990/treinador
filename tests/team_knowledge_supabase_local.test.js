@@ -65,8 +65,11 @@ test("RAG real no Supabase mantém indexação, consultas e referências isolada
         id: sourceId, team_id: team.id, kind: "match", actor_type: "human",
         updated_at: "2026-09-24T10:00:00.000Z",
         payload: {
-          data: "2026-09-20", adversario: `Adversário ${team.label}`,
-          post_game: { analysis: { fields: { problems: `Equipa ${team.label}: pressão alta na construção e perda de bola no corredor central.` } } },
+          data: "2026-09-20", estado: "concluido", adversario: `Adversário ${team.label}`,
+          post_game: { analysis: { fields: {
+            problems: `Equipa ${team.label}: pressão alta na construção e perda de bola no corredor central.`,
+            observations: team.label === "A" ? "The player has hypertension and should avoid intense exercise." : "",
+          } } },
           match_events: team.label === "A" ? {
             events: Array.from({ length: 72 }, (_, index) => ({
               id: uuid(), type: "loss", at_ms: index * 30_000,
@@ -82,8 +85,8 @@ test("RAG real no Supabase mantém indexação, consultas e referências isolada
     const secondMatch = await admin.from("workspace_records").insert({
       id: secondMatchId, team_id: teamRows[0].id, kind: "match", actor_type: "human",
       updated_at: "2026-09-24T10:00:00.000Z",
-      payload: {
-        data: "2026-09-13", adversario: "Outro adversário A",
+        payload: {
+        data: "2026-09-13", estado: "concluido", adversario: "Outro adversário A",
         post_game: { analysis: { fields: { problems: "Equipa A: pressão alta na construção e perda de bola no corredor central voltou a surgir." } } },
       },
     });
@@ -150,6 +153,8 @@ test("RAG real no Supabase mantém indexação, consultas e referências isolada
       "Problemas identificados: Equipa B: pressão alta na construção e perda de bola no corredor central.",
       "Problemas identificados: Equipa A: pressão alta na construção e perda de bola no corredor central voltou a surgir.",
     ].sort());
+    assert.doesNotMatch(providerInputs.join("\n"), /hypertension|blood pressure|hipertens/i, "notas de saúde não chegam ao provider de embeddings");
+    assert.match(providerInputs.join("\n"), /pressão alta/i, "observação tática continua a ser indexada");
 
     const unrelatedMetadataUpdate = await admin.from("teams").update({ metadata: { escalao: "Sub-8", badge_revision: 2 } }).eq("id", teamRows[0].id);
     assert.ifError(unrelatedMetadataUpdate.error);
@@ -164,6 +169,19 @@ test("RAG real no Supabase mantém indexação, consultas e referências isolada
     }, { provider });
     assert.ok(refreshed.results.length > 0);
     assert.ok(refreshed.results.every((item) => item.metadata.age_group === "Sub-9"));
+
+    const malformedMatchIds = Array.from({ length: 55 }, () => uuid());
+    const malformedMatches = await admin.from("workspace_records").insert(malformedMatchIds.map((id, index) => ({
+      id, team_id: teamRows[0].id, kind: "match", actor_type: "human", updated_at: `2026-09-24T11:${String(index % 60).padStart(2, "0")}:00.000Z`,
+      payload: { data: "2026-09-2!", estado: "concluido", adversario: `Data legada inválida ${index + 1}` },
+    })));
+    assert.ifError(malformedMatches.error);
+    const recentContext = await executeTeamKnowledgeTool(admin, connectors[0], "get_recent_match_context", {
+      question: "O que aconteceu nos jogos recentes?", match_count: 5,
+    }, { provider });
+    assert.equal(recentContext.matches.length, 2, "só os dois jogos com data válida entram no histórico");
+    assert.deepEqual(new Set(recentContext.matches.map((item) => item.ref)), new Set([sources[0].sourceId, secondMatchId]));
+    assert.ok(recentContext.matches.every((item) => !malformedMatchIds.includes(item.ref)));
   } finally {
     for (const teamId of teams) {
       const removed = await admin.from("teams").delete().eq("id", teamId);

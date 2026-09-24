@@ -7,7 +7,7 @@ async function seed(page){
     const a=crypto.randomUUID(),b=crypto.randomUUID(),p=crypto.randomUUID();
     await DB.criar('exercicios',{team_id:DEFAULT_TEAM_ID,workspace_v2:true,sync_id:a,external_key:'exercise-ativacao-conduzir-passar-dar-opcao',nome:'Passe de teste',objetivo:'Dar apoio',series:1,duracao_serie_min:10,passos:['Passar e mudar de posição']});
     await DB.criar('exercicios',{team_id:DEFAULT_TEAM_ID,workspace_v2:true,sync_id:b,nome:'Jogo de teste',series:1,duracao_serie_min:15});
-    const player=await DB.criar('jogadores',{team_id:DEFAULT_TEAM_ID,sync_id:p,nome:'Atleta de teste',plantel_ativo:true,estado_disponibilidade:'disponivel'});
+    const player=await DB.criar('jogadores',{team_id:DEFAULT_TEAM_ID,sync_id:p,nome:'Atleta de teste',plantel_ativo:true,estado_disponibilidade:'disponivel',foto:'data:image/png;base64,NAO-COPIAR'});
     const id=await DB.criar('treinos',{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:'2026-09-24',hora:'19:15',status:'ready',objetivo:'Continuidade',notas:'Plano original',blocos:[{order:0,block_id:'first',exercise_ref:a,exercise_name:'Passe de teste',duration_min:10,notes:'Nota original'},{order:1,block_id:'second',exercise_ref:b,exercise_name:'Jogo de teste',duration_min:15}]});
     go('#/sessao/'+id);return {id,player,p,a,b};
   });
@@ -90,10 +90,18 @@ test('receiving another device session protects its timer and keeps unsubmitted 
 test('permanent player deletion removes record/tombstone but preserves recorded training attendance',async({page})=>{
   const f=await seed(page);await page.getByLabel('Presença de Atleta de teste').selectOption('present');
   await expect.poll(()=>page.evaluate(id=>DB.obter('treinos',id).then(t=>t.session?.attendance[0].status),f.id)).toBe('present');
+  await page.evaluate(async f=>{let player=await DB.obter('jogadores',f.player),training=await DB.obter('treinos',f.id);player=PlayerGoals.apply(player,{type:'save',expected_revision:0,goal:{title:'Apoio após passe',started_at:'2026-09-24',status:'active',evidence_refs:[{type:'training',id:training.sync_id}],exercise_refs:[f.a],notes:'Criar linha de passe.'}},{now:'2026-09-24T12:00:00Z'});player=PlayerGoals.apply(player,{type:'save',expected_revision:1,goal:{id:player.development_goals.items[0].id,title:'Apoio após passe',started_at:'2026-09-24',status:'continue',evidence_refs:[{type:'training',id:training.sync_id}],exercise_refs:[f.a],notes:'Manter observação.'}},{now:'2026-09-25T12:00:00Z'});await DB.atualizar('jogadores',player);},f);
   await page.evaluate(id=>go('#/equipa/jogador/'+id),f.player);
   page.on('dialog',d=>d.type()==='prompt'?d.accept('Atleta de teste'):d.accept());
   await page.getByRole('button',{name:'Retirar definitivamente',exact:true}).click();
   await expect.poll(()=>page.evaluate(id=>DB.obter('jogadores',id).then(p=>p??null),f.player)).toBe(null);
-  const result=await page.evaluate(async f=>({attendance:(await DB.obter('treinos',f.id)).session.attendance,tombstones:(await DB.listar('sync_tombstones')).filter(t=>t.store==='jogadores'&&t.sync_id===f.p)}),f);
-  expect(result.attendance[0].player_ref).toBe(f.p);expect(result.attendance[0].status).toBe('present');expect(result.tombstones).toHaveLength(1);
+  const result=await page.evaluate(async f=>{const attendance=(await DB.obter('treinos',f.id)).session.attendance,tombstones=(await DB.listar('sync_tombstones')).filter(t=>t.store==='jogadores'&&t.sync_id===f.p),archiveId=await PlayerArchive.stableId(DEFAULT_TEAM_ID,f.p),archives=(await DB.porIndice('workspace_documents','team_id',DEFAULT_TEAM_ID)).filter(d=>d.type==='player_archive'&&d.sync_id===archiveId);return{attendance,tombstones,archives};},f);
+  expect(result.attendance[0].player_ref).toBe(f.p);expect(result.attendance[0].status).toBe('present');expect(result.tombstones).toHaveLength(1);expect(result.archives).toHaveLength(1);
+  const archive=JSON.parse(result.archives[0].body);expect(archive.development_goals.items[0].history).toHaveLength(1);expect(archive.development_goals.items[0].notes).toBe('Manter observação.');expect(result.archives[0].body).not.toContain('data:image');
+  await page.getByRole('link',{name:'Histórico de atletas'}).click();await expect(page.getByRole('heading',{name:'Atletas removidos'})).toBeVisible();await expect(page.getByRole('heading',{name:/Apoio após passe/})).toBeVisible();
+  await page.evaluate(async f=>{const archiveId=await PlayerArchive.stableId(DEFAULT_TEAM_ID,f.p),rows=(await DB.porIndice('workspace_documents','team_id',DEFAULT_TEAM_ID)).filter(d=>d.type==='player_archive'&&d.sync_id===archiveId);if(rows.length!==1)throw new Error('O arquivo está duplicado ou indisponível.');},f);
+});
+test('concurrent athlete archives with one shared UUID create a single workspace document',async({page})=>{
+  await seed(page);const result=await page.evaluate(async()=>{const ref=crypto.randomUUID(),id=await PlayerArchive.stableId(DEFAULT_TEAM_ID,ref),doc={team_id:DEFAULT_TEAM_ID,type:'player_archive',title:'Arquivo idempotente',body:JSON.stringify({schema:PlayerArchive.schema,team_id:DEFAULT_TEAM_ID,player:{ref,name:'Atleta'},development_goals:{schema:PlayerGoals.schema,revision:0,items:[]},archived_at:new Date().toISOString()}),status:'archived',sync_id:id};const outcomes=await Promise.all([DB.criarWorkspaceDocumentSeAusente(doc),DB.criarWorkspaceDocumentSeAusente(doc)]),rows=(await DB.porIndice('workspace_documents','team_id',DEFAULT_TEAM_ID)).filter(row=>row.type==='player_archive'&&row.sync_id===id);await DB.apagar('workspace_documents',outcomes[0].id,{remote:true});return{outcomes,rows:rows.length};});
+  expect(result.outcomes.map(x=>x.created).sort()).toEqual([false,true]);expect(result.outcomes[0].id).toBe(result.outcomes[1].id);expect(result.rows).toBe(1);
 });

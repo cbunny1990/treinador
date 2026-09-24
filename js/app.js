@@ -16,8 +16,15 @@ var pendingIndependentConflictPreviews = null;
 var viewRenderSequence = 0;
 var userScrollIntentSequence = 0;
 var lastSyncConflictSignature = null;
+var activeSearchResults = null;
+var SEARCH_RESULT_PAGE_SIZE = 100;
+var SEARCH_RESULT_RETAIN_LIMIT = 500;
 window.addEventListener("wheel",function(){userScrollIntentSequence++;},{passive:true});
 window.addEventListener("touchmove",function(){userScrollIntentSequence++;},{passive:true});
+window.addEventListener("pointerdown",function(event){
+  var gutter=Math.max(12,window.innerWidth-document.documentElement.clientWidth);
+  if(event.clientX<=gutter||event.clientX>=window.innerWidth-gutter||event.clientY<=gutter||event.clientY>=window.innerHeight-gutter)userScrollIntentSequence++;
+},{passive:true});
 window.addEventListener("keydown",function(event){
   if(["ArrowUp","ArrowDown","PageUp","PageDown","Home","End"," "].includes(event.key))userScrollIntentSequence++;
 });
@@ -52,7 +59,7 @@ function setView(title,html,eyebrow){
   renderedViewRoute=currentRoute;
   if(routeChanged) window.scrollTo(0,0);
   else requestAnimationFrame(function(){
-    if(currentRender===viewRenderSequence&&intentAtRender===userScrollIntentSequence&&currentRoute===(location.hash||"#/")&&window.scrollX===scrollX&&window.scrollY===scrollY)window.scrollTo(scrollX,scrollY);
+    if(currentRender===viewRenderSequence&&intentAtRender===userScrollIntentSequence&&currentRoute===(location.hash||"#/"))window.scrollTo(scrollX,scrollY);
   });
   refreshRemoteIndicator();
 }
@@ -146,7 +153,7 @@ function linesText(value){return Array.isArray(value)?value.join(String.fromChar
 function matchStructure(match){return VisionCalendar.normalizeMatch(match||{});}
 function docTypeLabel(type){return WORKSPACE_DOC_LABELS[type]||"Documento";}
 function docTypeShort(type){
-  return {training_plan:"PT",match_analysis:"AJ",weekly_plan:"S",team_goal:"EE",season_index:"Ép",note:"N",brief:"B"}[type]||"D";
+  return {training_plan:"PT",match_analysis:"AJ",weekly_plan:"S",team_goal:"EE",season_index:"Ép",player_archive:"HA",note:"N",brief:"B"}[type]||"D";
 }
 
 async function routeOnce(){
@@ -160,6 +167,7 @@ async function routeOnce(){
     if(!root) return viewWorkspace({skipRemoteSync:skipRemoteSync});
     if(root==="equipa"){
       if(parts[1]==="editar") return viewTeamForm();
+      if(parts[1]==="arquivo-atletas") return viewArchivedPlayers();
       if(parts[1]==="jogador" && parts[2]==="novo") return viewPlayerForm();
       if(parts[1]==="jogador" && parts[2] && parts[3]==="editar") return viewPlayerForm(parts[2]);
       if(parts[1]==="jogador" && parts[2]) return viewPlayer(parts[2]);
@@ -463,8 +471,8 @@ function calendarEventRow(event){
 async function viewCalendar(){
   var from=today(),until=new Date(from+'T12:00:00Z');until.setUTCDate(until.getUTCDate()+42);var end=until.toISOString().slice(0,10),matches=[],trainings=[];
   var datasets=await Promise.all([HeadCoachMemory.ensureTeam(),
-    DB.percorrerIndice('jogos','team_id',DEFAULT_TEAM_ID,function(row){var date=String(row.data||'').slice(0,10);if(date>=from&&date<end)matches.push({id:row.id,sync_id:row.sync_id,external_key:row.external_key,data:row.data,hora:row.hora,adversario:row.adversario,local:row.local,hora_saida:row.hora_saida,estado:row.estado});}),
-    DB.percorrerIndice('treinos','team_id',DEFAULT_TEAM_ID,function(row){var date=String(row.data||'').slice(0,10);if(date>=from&&date<end)trainings.push({id:row.id,data:row.data,hora:row.hora,hora_fim:row.hora_fim,escalao:row.escalao});})
+    DB.percorrerIntervaloEquipa('jogos',DEFAULT_TEAM_ID,from,end,function(row){var date=String(row.data||'').slice(0,10);if(date>=from&&date<end)matches.push({id:row.id,sync_id:row.sync_id,external_key:row.external_key,data:row.data,hora:row.hora,adversario:row.adversario,local:row.local,hora_saida:row.hora_saida,estado:row.estado});}),
+    DB.percorrerIntervaloEquipa('treinos',DEFAULT_TEAM_ID,from,end,function(row){var date=String(row.data||'').slice(0,10);if(date>=from&&date<end)trainings.push({id:row.id,data:row.data,hora:row.hora,hora_fim:row.hora_fim,escalao:row.escalao});})
   ]);
   var s={team:datasets[0],matches:matches,trainings:trainings};
   var events=VisionCalendar.events(s,{from:from,weeks:6});
@@ -494,12 +502,18 @@ async function viewTeam(){
     return '<a class="card player-card" href="#/equipa/jogador/'+p.id+'">'+avatarHTML(p)+'<span class="grow"><span class="title">'+esc(p.nome)+'</span><span class="meta">Fora do plantel</span></span><span class="badge system">Retirado</span></a>';
   }).join(""):"";
   var html='<div class="profile-grid">';
-  html+='<section class="panel hero-main">'+teamCrestHTML(team,true)+'<div class="kicker">Perfil da equipa</div><h2 class="display" style="font-size:28px">'+esc(team.nome||"Equipa")+'</h2><p class="lead">'+esc([team.clube,team.escalao,team.epoca,team.competicao,team.formato].filter(Boolean).join(" · ")||"Completa os dados base da equipa.")+'</p><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/editar">Editar equipa</a><a class="btn" href="#/equipa/jogador/novo">Adicionar jogador</a></div></section>';
+  html+='<section class="panel hero-main">'+teamCrestHTML(team,true)+'<div class="kicker">Perfil da equipa</div><h2 class="display" style="font-size:28px">'+esc(team.nome||"Equipa")+'</h2><p class="lead">'+esc([team.clube,team.escalao,team.epoca,team.competicao,team.formato].filter(Boolean).join(" · ")||"Completa os dados base da equipa.")+'</p><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/editar">Editar equipa</a><a class="btn" href="#/equipa/jogador/novo">Adicionar jogador</a><a class="btn secondary" href="#/equipa/arquivo-atletas">Histórico de atletas</a></div></section>';
   html+='<section class="panel hero-side"><div class="metric-label">Modelo de trabalho</div><p class="lead">A equipa é a fonte factual do workspace. O agente deve ler estes dados, nunca inventá-los.</p><div class="notice" style="margin-top:14px">A IA autorizada pode consultar os mesmos dados e preparar propostas através do MCP. Gere os acessos em <a class="link" href="#/definicoes">Definições</a>. As decisões e ações de jogo continuam a exigir confirmação do treinador.</div></section></div>';
   html+='<section class="section"><div class="section-head"><div><h2>Plantel</h2><p>'+players.length+' jogador(es) · '+availableCount+' disponível(eis) · '+(players.length-availableCount)+' não disponível(eis)</p></div><a class="link" href="#/equipa/jogador/novo">Adicionar</a></div><div class="player-grid">'+playerCards+'</div></section>';
   if(retiredPlayers.length) html+='<section class="section"><div class="section-head"><div><h2>Fora do plantel</h2><p>'+retiredPlayers.length+' jogador(es) retirado(s)</p></div></div><div class="player-grid">'+retiredCards+'</div></section>';
 
   setView(team.nome||"Equipa",html,"Equipa");
+}
+async function viewArchivedPlayers(){
+  var docs=(await WorkspaceStore.listDocuments(DEFAULT_TEAM_ID,{includeArchived:true})).filter(function(doc){return doc.type==="player_archive";}).sort(function(a,b){return String(b.updated_at||b.created_at).localeCompare(String(a.updated_at||a.created_at));});
+  var cards=docs.map(function(doc){var archive=PlayerArchive.state(doc),goals=archive.development_goals.items;return '<article class="list-item"><div class="row"><div class="grow"><div class="title">'+esc(archive.player.name)+(archive.player.number!=null?' · #'+esc(archive.player.number):'')+'</div><div class="meta">'+esc(archive.player.age_group||archive.team_age_group||'Escalão não registado')+' · Arquivado '+fmtDate(archive.archived_at.slice(0,10))+' · '+goals.length+' objetivo(s)</div></div><span class="badge archived">Histórico</span></div>'+(goals.length?'<div class="team-week-detail">'+goals.map(function(goal){return '<section><h4>'+esc(goal.title)+' · '+esc(PlayerGoals.states[goal.status]||goal.status)+'</h4><p class="meta">Desde '+fmtDate(goal.started_at)+(goal.updated_at?' · Atualizado '+fmtDate(String(goal.updated_at).slice(0,10)):'')+'</p><p>'+esc(goal.notes||'Sem observações registadas.')+'</p>'+(goal.history?.length?'<details><summary>Histórico de alterações · '+goal.history.length+'</summary><ol>'+goal.history.map(function(version){return '<li>'+fmtDate(String(version.updated_at||'').slice(0,10))+' · '+esc(version.title||goal.title)+' · '+esc(PlayerGoals.states[version.status]||version.status)+(version.notes?' · '+esc(version.notes):'')+'</li>';}).join('')+'</ol></details>':'')+(goal.evidence_refs?.length?'<p class="meta">Evidências ligadas: '+goal.evidence_refs.map(function(ref){return esc(ref.type)+' · '+esc(ref.id);}).join(' · ')+'</p>':'')+(goal.exercise_refs?.length?'<p class="meta">Exercícios ligados: '+goal.exercise_refs.map(esc).join(' · ')+'</p>':'')+'</section>';}).join('')+'</div>':'<p class="meta">Não havia objetivos individuais registados quando o atleta foi removido.</p>')+'<p class="meta">Registo de leitura. As referências a jogos, treinos, observações e exercícios mantêm os UUIDs de origem. Nenhuma fotografia foi copiada para este arquivo.</p></article>';}).join("");
+  var html='<section class="panel hero-main"><div class="kicker">Equipa · Histórico</div><h2 class="display">Atletas removidos</h2><p class="lead">Arquivo sincronizado dos objetivos individuais e respetivas alterações. Os jogos, treinos e fotografias permanecem nos seus registos originais.</p><div class="toolbar"><a class="btn secondary" href="#/equipa">Voltar à equipa</a></div></section><section class="section"><div class="list">'+(cards||'<div class="empty">Ainda não há fichas de atletas removidos.</div>')+'</div></section>';
+  setView("Histórico de atletas",html,"Equipa");
 }
 
 async function viewTeamForm(){
@@ -690,7 +704,8 @@ async function viewDocuments(options){
 }
 async function viewDocumentForm(id){
   var doc=id?await WorkspaceStore.getDocument(id):null;
-  var typeOpts=WORKSPACE_DOC_TYPES.map(function(type){
+  if(doc?.type==="player_archive")return go("#/equipa/arquivo-atletas");
+  var typeOpts=WORKSPACE_EDITABLE_DOC_TYPES.map(function(type){
     return '<option value="'+type+'" '+((doc&&doc.type||"training_plan")===type?"selected":"")+'>'+esc(docTypeLabel(type))+'</option>';
   }).join("");
   var statusLabels={draft:"Rascunho",ready:"Pronto",approved:"Aprovado"};
@@ -722,6 +737,7 @@ function renderMediaCards(items){
 }
 async function viewDocument(id){
   var doc=await WorkspaceStore.getDocument(id);
+  if(doc?.type==="player_archive")return go("#/equipa/arquivo-atletas");
   if(!doc||doc.status==="archived") return go("#/planos");
   var media=await HeadCoachMedia.listForSubject("document",id);
   var html='<section class="panel hero-main">';
@@ -849,20 +865,20 @@ function remoteConflictQueueHTML(conflicts){
   if(investigate)summary.push(investigate+' '+(investigate===1?'registo aguarda':'registos aguardam')+' correção');
   if(retry)summary.push(retry===1?'1 falha temporária será repetida automaticamente':retry+' falhas temporárias serão repetidas automaticamente');
   var html='<div id="remote-conflicts"><div class="notice" style="margin-top:12px"><strong>'+conflicts.length+' ocorrências detetadas</strong><p>'+summary.join(' · ')+'. As versões locais e remotas continuam preservadas.</p></div>';
-  if(versionConflicts>1)html+='<section class="section"><button class="btn secondary" type="button" data-action="review-independent-conflict-batch">Analisar combinações seguras ('+versionConflicts+')</button><p class="hint">A análise não altera dados. Só permite combinar registos quando os dois dispositivos mudaram campos diferentes.</p><div class="conflict-review section" data-conflict-batch-preview hidden></div></section>';
+  if(versionConflicts>1)html+='<section class="section"><button class="btn secondary" type="button" data-action="review-independent-conflict-batch">Analisar resoluções seguras ('+versionConflicts+')</button><p class="hint">A prévia não altera dados. Mostra combinações de campos independentes e casos em que só uma versão mudou desde a base comum.</p><div class="conflict-review section" data-conflict-batch-preview hidden></div></section>';
   return html+'<div class="list section">'+conflicts.map(remoteConflictCardHTML).join('')+'</div></div>';
 }
 function remoteConflictBatchReviewHTML(result){
   var safe=result?.safe||[],blocked=result?.needs_review||[];
   var stores={jogadores:"Atleta",jogos:"Jogo",treinos:"Treino",exercicios:"Exercício",workspace_documents:"Documento",head_coach_memory:"Memória",teams:"Equipa",activity_items:"Atividade"};
-  var label=function(key){return ({nome:"Nome",title:"Título",titulo:"Título",objetivo:"Objetivo",descricao:"Descrição",note:"Nota",data:"Data",hora:"Hora",local:"Local",adversario:"Adversário",status:"Estado",observacoes:"Observações",summary:"Resumo"})[key]||String(key||"").replace(/_/g," ");};
-  var safeLabel=safe.length===1?'1 combinação segura':safe.length+' combinações seguras';
+  var label=function(key){return ({nome:"Nome",title:"Título",titulo:"Título",objetivo:"Objetivo",descricao:"Descrição",note:"Nota",data:"Data",hora:"Hora",local:"Local",adversario:"Adversário",status:"Estado",observacoes:"Observações",nota_tatica:"Nota tática",summary:"Resumo"})[key]||String(key||"").replace(/_/g," ");};
+  var safeLabel=safe.length===1?'1 resolução segura':safe.length+' resoluções seguras';
   var blockedLabel=blocked.length===1?'1 conflito para rever':blocked.length+' conflitos para rever';
-  var html='<div class="notice"><strong>'+safeLabel+' · '+blockedLabel+'</strong><p>Pré-visualização apenas. Campos iguais ficam iguais; campos alterados em lados diferentes serão combinados. Os restantes conflitos continuam preservados.</p></div>';
-  if(safe.length)html+='<div class="list section">'+safe.map(function(item){return '<article class="list-item"><strong>'+esc(item.display_name||stores[item.store]||"Registo")+'</strong><p>Neste dispositivo: '+esc((item.local_changes||[]).map(label).join(", ")||"sem alterações")+' · Workspace remoto: '+esc((item.remote_changes||[]).map(label).join(", ")||"sem alterações")+'</p><details><summary>Pré-visualizar resultado combinado</summary><pre class="conflict-preview">'+esc(JSON.stringify(item.payload,null,2))+'</pre></details></article>';}).join('')+'</div>';
+  var html='<div class="notice"><strong>'+safeLabel+' · '+blockedLabel+'</strong><p>Pré-visualização apenas. As combinações juntam campos independentes; quando só uma versão mudou desde a base comum, a prévia seleciona essa versão. Os restantes conflitos continuam preservados para escolha explícita.</p></div>';
+  if(safe.length)html+='<div class="list section">'+safe.map(function(item){var oneSide=item.single_change===true,changedSide=item.changed_side==="local"?"Neste dispositivo":"Workspace remoto",proposal=oneSide?"Só "+changedSide.toLowerCase()+" alterou: "+(item.changed_side==="local"?(item.local_changes||[]):(item.remote_changes||[])).map(label).join(", ")+". Será mantida essa versão.":"Neste dispositivo: "+((item.local_changes||[]).map(label).join(", ")||"sem alterações")+" · Workspace remoto: "+((item.remote_changes||[]).map(label).join(", ")||"sem alterações")+". Campos diferentes serão combinados.";return '<article class="list-item"><strong>'+esc(item.display_name||stores[item.store]||"Registo")+'</strong><p>'+esc(proposal)+'</p><details><summary>'+ (oneSide?'Pré-visualizar versão selecionada':'Pré-visualizar resultado combinado')+'</summary><pre class="conflict-preview">'+esc(JSON.stringify(item.payload,null,2))+'</pre></details></article>';}).join('')+'</div>';
   if(blocked.length)html+='<details class="section"><summary>'+blocked.length+' conflito(s) precisam de escolha campo a campo</summary><div class="list section">'+blocked.map(function(item){return '<article class="list-item"><strong>'+esc(item.display_name||stores[item.store]||"Registo")+'</strong><p>'+esc(item.reason||"Não é seguro combinar automaticamente.")+'</p></article>';}).join('')+'</div></details>';
-  if(safe.length)html+='<button class="btn accent" type="button" data-action="resolve-independent-conflict-batch">Combinar e sincronizar '+safe.length+(safe.length===1?' registo':' registos')+'</button>';
-  else html+='<p class="notice section">Não há combinações independentes. Abre cada conflito para escolher explicitamente os campos.</p>';
+  if(safe.length)html+='<button class="btn accent" type="button" data-action="resolve-independent-conflict-batch">Aplicar e sincronizar '+safe.length+(safe.length===1?' resolução segura':' resoluções seguras')+'</button>';
+  else html+='<p class="notice section">Não há resoluções sem sobreposição. Abre cada conflito para escolher explicitamente os campos.</p>';
   return html;
 }
 function remoteConflictReviewHTML(versions){
@@ -873,6 +889,9 @@ function remoteConflictReviewHTML(versions){
   var html='<div class="notice"><strong>Revê as duas versões · '+esc(versions.store)+'</strong><p>A versão local mantém as alterações deste dispositivo. A versão remota é a última gravação do workspace. A decisão só é aplicada se nenhuma delas tiver mudado desde esta comparação.</p></div><div class="grid cols-2"><section><h4>Neste dispositivo</h4><pre class="conflict-preview">'+esc(JSON.stringify(versions.local,null,2))+'</pre></section><section><h4>No workspace remoto</h4><pre class="conflict-preview">'+esc(JSON.stringify(versions.remote,null,2))+'</pre></section></div>';
   if(merge){
     html+='<section class="notice section"><strong>Combinação segura disponível</strong><p>O dispositivo alterou: '+esc(fieldList(merge.local_changes)||'nenhum campo')+'. O workspace alterou: '+esc(fieldList(merge.remote_changes)||'nenhum campo')+'. Os campos não se sobrepõem.</p><details open><summary>Pré-visualizar a combinação</summary><pre class="conflict-preview">'+esc(JSON.stringify(merge.payload,null,2))+'</pre></details><button class="btn accent" type="button" data-action="resolve-version-conflict" data-resolution="merge_non_overlapping" data-sync-id="'+esc(versions.sync_id)+'" data-store="'+esc(versions.store)+'" data-remote-version="'+esc(versions.remote_updated_at)+'" data-local-version="'+esc(versions.local_updated_at||'')+'">Combinar alterações independentes</button></section>';
+  }else if(versions.single_change_suggestion){
+    var single=versions.single_change_suggestion,singleLabel=single.changed_side==='local'?'neste dispositivo':'no workspace remoto',singleResolution=single.resolution;
+    html+='<section class="notice section"><strong>Uma única versão tem alterações</strong><p>Desde a base comum, só houve mudanças '+singleLabel+': '+esc(fieldList(single.changes))+'. A outra cópia mantém a base anterior. Confirma para manter a versão alterada.</p><details><summary>Pré-visualizar a versão que será mantida</summary><pre class="conflict-preview">'+esc(JSON.stringify(single.changed_side==='local'?versions.local:versions.remote,null,2))+'</pre></details><button class="btn accent" type="button" data-action="resolve-version-conflict" data-resolution="'+esc(singleResolution)+'" data-sync-id="'+esc(versions.sync_id)+'" data-store="'+esc(versions.store)+'" data-remote-version="'+esc(versions.remote_updated_at)+'" data-local-version="'+esc(versions.local_updated_at||'')+'">Manter a única versão alterada</button></section>';
   }else{
     html+='<p class="notice section">'+esc(versions.merge_unavailable||'Não foi possível combinar automaticamente estas versões. Escolhe explicitamente qual manter.')+'</p>';
     if(versions.manual_merge_fields?.length){
@@ -1020,6 +1039,53 @@ function fileToDataURL(file,maxBytes){
     reader.readAsDataURL(file);
   });
 }
+async function preparePlayerPhoto(file){
+  var maxInputBytes=15*1024*1024,maxStoredBytes=5*1024*1024;
+  if(!file||!file.size)return null;
+  if(file.size>maxInputBytes)throw new Error("A fotografia excede 15 MB. Escolhe uma versão mais pequena.");
+  if(!String(file.type||"").startsWith("image/"))throw new Error("Escolhe um ficheiro de imagem para a foto do atleta.");
+  var commonImageType=/^image\/(?:jpeg|png|webp)$/i.test(file.type||"");
+  if(file.size<=maxStoredBytes&&commonImageType)return{file:file,dataUrl:await fileToDataURL(file,maxStoredBytes)};
+  var bitmap=null,objectUrl=null;
+  if(typeof createImageBitmap==="function")try{bitmap=await createImageBitmap(file);}catch(_){}
+  if(!bitmap){
+    try{
+      objectUrl=URL.createObjectURL(file);
+      bitmap=await new Promise(function(resolve,reject){
+        var image=new Image();
+        image.onload=function(){
+          if(!image.naturalWidth||!image.naturalHeight){reject(new Error("A imagem não tem dimensões válidas."));return;}
+          resolve({width:image.naturalWidth,height:image.naturalHeight,draw:function(context,w,h){context.drawImage(image,0,0,w,h);},close:function(){image.src="";}});
+        };
+        image.onerror=function(){reject(new Error("O telemóvel não conseguiu descodificar este formato de imagem. Exporta a foto como JPEG ou PNG e tenta novamente."));};
+        image.src=objectUrl;
+      });
+    }catch(error){
+      if(objectUrl)URL.revokeObjectURL(objectUrl);
+      throw error;
+    }
+  }
+  try{
+    var scale=Math.min(1,1600/Math.max(bitmap.width,bitmap.height)),canvas=document.createElement("canvas"),blob=null;
+    for(var pass=0;pass<3;pass++){
+      canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+      var context=canvas.getContext("2d");
+      if(!context)throw new Error("O telemóvel não conseguiu preparar a fotografia.");
+      context.fillStyle="#fff";context.fillRect(0,0,canvas.width,canvas.height);
+      if(bitmap.draw)bitmap.draw(context,canvas.width,canvas.height);else context.drawImage(bitmap,0,0,canvas.width,canvas.height);
+      for(var quality=0.82;quality>=0.46;quality-=0.12){
+        blob=await new Promise(function(resolve){canvas.toBlob(resolve,"image/jpeg",quality);});
+        if(blob&&blob.size<=maxStoredBytes)break;
+      }
+      if(blob&&blob.size<=maxStoredBytes)break;
+      scale*=0.72;
+    }
+    if(!blob||blob.size>maxStoredBytes)throw new Error("Não foi possível reduzir a fotografia para sincronização.");
+    var safeName=String(file.name||"atleta").replace(/\.[^.]+$/,"")+".jpg";
+    var optimized=typeof File==="function"?new File([blob],safeName,{type:"image/jpeg",lastModified:Date.now()}):blob;
+    return{file:optimized,dataUrl:await fileToDataURL(optimized,maxStoredBytes)};
+  }finally{bitmap.close?.();if(objectUrl)URL.revokeObjectURL(objectUrl);}
+}
 function splitSubject(value){
   var raw=String(value||"");
   if(raw.indexOf(":")<0) return {type:null,id:null};
@@ -1087,6 +1153,15 @@ async function restorePlayerToRoster(id){
 async function deletePlayerPermanently(id){
   var player=await DB.obter("jogadores",id);
   if(!player) throw new Error("Jogador não encontrado.");
+  var goals=PlayerGoals.state(player).items;
+  if(goals.length){
+    var team=await HeadCoachMemory.ensureTeam(),playerRef=String(player.sync_id||""),archiveSyncId=await PlayerArchive.stableId(DEFAULT_TEAM_ID,playerRef),archive=PlayerArchive.snapshot(player,{teamId:DEFAULT_TEAM_ID,teamName:team.nome,teamAgeGroup:team.escalao}),archiveBody=JSON.stringify(archive),archiveTitle="Histórico · "+String(player.nome||"Atleta").slice(0,150);
+    await DB.criarWorkspaceDocumentSeAusente({team_id:DEFAULT_TEAM_ID,type:"player_archive",title:archiveTitle,body:archiveBody,status:"archived",external_key:"player-archive:"+DEFAULT_TEAM_ID+":"+playerRef,sync_id:archiveSyncId,created_by:"human",created_by_label:HUMAN_LABEL,updated_by:"human",updated_by_label:HUMAN_LABEL});
+    var saved=(await DB.porIndice("workspace_documents","team_id",DEFAULT_TEAM_ID)).find(function(doc){return doc.type==="player_archive"&&doc.sync_id===archiveSyncId;});if(!saved)throw new Error("O arquivo histórico não foi confirmado localmente; o atleta continua na equipa.");var existingArchive=PlayerArchive.state(saved),currentRevision=archive.development_goals.revision||0,savedRevision=existingArchive.development_goals.revision||0;
+    if(savedRevision>currentRevision)throw new Error("O arquivo tem uma revisão mais recente do que a ficha local. Atualiza e compara antes de remover o atleta.");
+    if(savedRevision===currentRevision&&JSON.stringify(existingArchive.development_goals)!==JSON.stringify(archive.development_goals))throw new Error("O arquivo e a ficha têm alterações diferentes. Compara as versões antes de remover o atleta.");
+    if(savedRevision<currentRevision){await DB.modificar("workspace_documents",saved.id,function(current){if(current.sync_id!==archiveSyncId||current.updated_at!==saved.updated_at)throw new Error("O arquivo foi alterado noutro dispositivo. Compara as versões antes de remover o atleta.");return Object.assign({},current,{title:archiveTitle,body:archiveBody,updated_at:new Date().toISOString(),updated_by:"human",updated_by_label:HUMAN_LABEL});});}
+  }
   await removePlayerFromOpenMatches(player);
   await DB.apagar("jogadores",id);
   await logHuman("deleted_player","Retirou jogador definitivamente · "+player.nome,"player",player.sync_id||id);
@@ -1097,6 +1172,18 @@ app.addEventListener("click",async function(event){
   var target=event.target.closest("[data-action]");
   if(!target) return;
   var action=target.dataset.action;
+  if(action==="search-load-more"){
+    if(!activeSearchResults)return;
+    var moreFrom=activeSearchResults.visible,moreTo=Math.min(moreFrom+SEARCH_RESULT_PAGE_SIZE,activeSearchResults.rows.length),resultList=app.querySelector("[data-search-results]");
+    if(!resultList)return;
+    resultList.insertAdjacentHTML("beforeend",workspaceSearchResultRows(activeSearchResults.rows.slice(moreFrom,moreTo)));
+    activeSearchResults.visible=moreTo;
+    var countHeading=app.querySelector("[data-search-count]"),moreButton=app.querySelector('[data-action="search-load-more"]'),limitNotice=app.querySelector("[data-search-limit]");
+    if(countHeading)countHeading.textContent=searchCountText(activeSearchResults.visible,activeSearchResults.total);
+    if(moreButton)moreButton.hidden=moreTo>=activeSearchResults.rows.length;
+    if(limitNotice)limitNotice.hidden=activeSearchResults.total<=activeSearchResults.rows.length||moreTo<activeSearchResults.rows.length;
+    return;
+  }
   if(action==="review-independent-conflict-batch"){
     target.disabled=true;pendingIndependentConflictPreviews=null;
     var batchReviewBox=target.parentElement.querySelector('[data-conflict-batch-preview]');
@@ -1108,9 +1195,9 @@ app.addEventListener("click",async function(event){
   if(action==="resolve-independent-conflict-batch"){
     var batchItems=pendingIndependentConflictPreviews;
     if(!Array.isArray(batchItems)||!batchItems.length){alert("Volta a analisar os conflitos antes de os combinar.");return;}
-    if(!confirm("Combinar e sincronizar "+batchItems.length+(batchItems.length===1?" registo":" registos")+" com alterações em campos diferentes? Os conflitos sobrepostos não serão alterados. Cada versão será novamente verificada antes da gravação."))return;
+    if(!confirm("Aplicar e sincronizar "+batchItems.length+(batchItems.length===1?" resolução segura":" resoluções seguras")+" da pré-visualização? As versões escolhidas e combinadas serão verificadas novamente antes da gravação; conflitos sobrepostos não serão alterados."))return;
     target.disabled=true;
-    try{var batchResult=await RemoteWorkspace.resolveIndependentConflictBatch(batchItems);pendingIndependentConflictPreviews=null;var remaining=batchResult.conflicts?.length||0;var batchMessage=remaining?"Combinações seguras sincronizadas. "+remaining+(remaining===1?" conflito continua preservado para revisão.":" conflitos continuam preservados para revisão."):"Combinações seguras sincronizadas: "+batchItems.length+(batchItems.length===1?" registo.":" registos.");alert(batchMessage);return router();}
+    try{var batchResult=await RemoteWorkspace.resolveIndependentConflictBatch(batchItems);pendingIndependentConflictPreviews=null;var remaining=batchResult.conflicts?.length||0;var batchMessage=remaining?"Resoluções seguras sincronizadas. "+remaining+(remaining===1?" conflito continua preservado para revisão.":" conflitos continuam preservados para revisão."):"Resoluções seguras sincronizadas: "+batchItems.length+(batchItems.length===1?" registo.":" registos.");alert(batchMessage);return router();}
     catch(error){pendingIndependentConflictPreviews=null;alert("Não foi possível concluir todas as combinações: "+error.message+" Volta a analisar os conflitos para obter versões atuais.");return router();}
     finally{target.disabled=false;}
   }
@@ -1378,24 +1465,28 @@ async function saveTeamDevelopmentDocument(form,type,payload,title,targetDate,re
   }
   await WorkspaceStore.logActivity({team_id:DEFAULT_TEAM_ID,actor:"human",actor_label:HUMAN_LABEL,action:existing?"updated_document":"created_document",summary:(existing?"Atualizou ":"Criou ")+WORKSPACE_DOC_LABELS[type].toLowerCase()+" · "+title,entity_type:"document",entity_id:docId||externalKey});
 }
+function workspaceSearchResultRows(rows){return rows.map(function(r){return '<a class="list-item row" href="'+esc(r.href)+'"><span class="badge">'+esc(r.type)+'</span><span class="grow"><span class="title">'+esc(r.title)+'</span><span class="meta">'+(r.date?fmtDate(r.date):"Data não registada")+'</span></span><span aria-hidden="true">›</span></a>';}).join("");}
+function searchCountText(visible,total){return total===visible?'Resultados · '+total:'Resultados · '+visible+' de '+total;}
 async function viewSearch(){
-  var params=new URLSearchParams((location.hash.split("?")[1]||"")),query=(params.get("q")||"").trim(),kind=params.get("kind")||"all",from=params.get("from")||"",to=params.get("to")||"",seasonId=params.get("season")||"",datasets=await Promise.all([HeadCoachMemory.ensureTeam(),DB.porIndice("media_items","team_id",DEFAULT_TEAM_ID),WorkspaceStore.listDocuments(DEFAULT_TEAM_ID,{includeArchived:true}),HeadCoachMemory.list(DEFAULT_TEAM_ID,{includeArchived:true}),DB.porIndice("jogadores","team_id",DEFAULT_TEAM_ID),DB.porIndice("exercicios","team_id",DEFAULT_TEAM_ID)]),media=datasets[1],docs=datasets[2],memory=datasets[3],players=datasets[4],exercises=datasets[5],seasonsDoc=docs.find(x=>x.type==="season_index"),seasonState=VisionSeasons.state(seasonsDoc),season=seasonState.items.find(x=>x.id===seasonId)||null,tokens=query.toLocaleLowerCase("pt-PT").split(/\s+/).filter(Boolean),hasFilter=!!(tokens.length||kind!=="all"||from||to||seasonId),matches=[],matchOrigins=new Map(),trainingOrigins=new Map();
+  activeSearchResults=null;
+  var params=new URLSearchParams((location.hash.split("?")[1]||"")),query=(params.get("q")||"").trim(),kind=params.get("kind")||"all",from=params.get("from")||"",to=params.get("to")||"",seasonId=params.get("season")||"",datasets=await Promise.all([HeadCoachMemory.ensureTeam(),DB.porIndice("media_items","team_id",DEFAULT_TEAM_ID),WorkspaceStore.listDocuments(DEFAULT_TEAM_ID,{includeArchived:true}),HeadCoachMemory.list(DEFAULT_TEAM_ID,{includeArchived:true}),DB.porIndice("jogadores","team_id",DEFAULT_TEAM_ID),DB.porIndice("exercicios","team_id",DEFAULT_TEAM_ID)]),media=datasets[1],docs=datasets[2],memory=datasets[3],players=datasets[4],exercises=datasets[5],seasonsDoc=docs.find(x=>x.type==="season_index"),seasonState=VisionSeasons.state(seasonsDoc),season=seasonState.items.find(x=>x.id===seasonId)||null,tokens=query.toLocaleLowerCase("pt-PT").split(/\s+/).filter(Boolean),hasFilter=!!(tokens.length||kind!=="all"||from||to||seasonId),matches=[],totalMatches=0,matchOrigins=new Map(),trainingOrigins=new Map();
   function searchable(v){if(v==null)return"";if(typeof v==="string"||typeof v==="number"||typeof v==="boolean")return String(v);if(Array.isArray(v))return v.map(searchable).join(" ");if(typeof v==="object")return Object.entries(v).filter(([k])=>!/image|photo|avatar|data_url|storage_path|sync_|updated_at|created_at|external_key|revision|id$/i.test(k)).map(function(x){return searchable(x[1]);}).join(" ");return"";}
   function inSelectedSeason(type,date,seasonPlayerRef){if(!season)return false;if(seasonPlayerRef&&!season.roster.some(p=>String(p.ref)===String(seasonPlayerRef)))return false;if(type==="Atleta")return true;return !!date&&VisionSeasons.includes(season,String(date).slice(0,10));}
-  function add(type,title,date,href,source,filter,seasonPlayerRef){if(!hasFilter)return;var displayTitle=String(title||"Registo sem título"),day=String(date||"").slice(0,10),category=filter||type;if(kind!=="all"&&category!==kind)return;if(from&&(!day||day<from))return;if(to&&(!day||day>to))return;if(seasonId&&!inSelectedSeason(type,day,seasonPlayerRef))return;var hay=(displayTitle+" "+searchable(source)+" "+String(date||"")).toLocaleLowerCase("pt-PT");if(!tokens.every(function(token){return hay.includes(token);}))return;matches.push({type,title:displayTitle,date:day,href,filter:category});matches.sort((a,b)=>b.date.localeCompare(a.date));if(matches.length>100)matches.length=100;}
+  function add(type,title,date,href,source,filter,seasonPlayerRef){if(!hasFilter)return;var displayTitle=String(title||"Registo sem título"),day=String(date||"").slice(0,10),category=filter||type;if(kind!=="all"&&category!==kind)return;if(from&&(!day||day<from))return;if(to&&(!day||day>to))return;if(seasonId&&!inSelectedSeason(type,day,seasonPlayerRef))return;var hay=(displayTitle+" "+searchable(source)+" "+String(date||"")).toLocaleLowerCase("pt-PT");if(!tokens.every(function(token){return hay.includes(token);}))return;totalMatches++;if(matches.length>=SEARCH_RESULT_RETAIN_LIMIT&&day<=matches[matches.length-1].date)return;var row={type,title:displayTitle,date:day,href,filter:category},low=0,high=matches.length;while(low<high){var mid=(low+high)>>1;if(matches[mid].date>=day)low=mid+1;else high=mid;}matches.splice(low,0,row);if(matches.length>SEARCH_RESULT_RETAIN_LIMIT)matches.pop();}
   players.forEach(function(p){add("Atleta",p.nome,p.created_at,"#/equipa/jogador/"+p.id,{nome:p.nome,numero:p.numero,posicao:p.posicao,disponibilidade:p.estado_disponibilidade,goals:PlayerGoals.state(p).items},"player",p.sync_id);PlayerGoals.state(p).items.forEach(function(g){add("Objetivo individual",g.title,g.started_at,"#/equipa/jogador/"+p.id,{...g,atleta:p.nome},"objective",p.sync_id);});});
   await Promise.all([
     DB.percorrerIndice("jogos","team_id",DEFAULT_TEAM_ID,function(m){if(m.sync_id)matchOrigins.set(String(m.sync_id),m.id);add("Jogo · "+(m.adversario||"Adversário"),m.adversario,m.data,"#/equipa/jogo/"+m.id,{...m,events:VisionMatchEvents.state(m).events,evidence:VisionMatchEvidence.state(m).moments},"match");}),
     DB.percorrerIndice("treinos","team_id",DEFAULT_TEAM_ID,function(t){if(t.sync_id)trainingOrigins.set(String(t.sync_id),t.id);add("Treino",t.objetivo||t.escalao,t.data,"#/consulta/"+t.id,{...t,blocks:t.blocos},"training");})
   ]);
   exercises.filter(function(e){return e.workspace_v2;}).forEach(function(e){add("Exercício",e.nome,e.updated_at,"#/exercicios/"+e.id,e,"exercise");});
-  docs.forEach(function(d){var target=d.type==="season_index"?"#/epocas":d.type==="weekly_plan"||d.type==="team_goal"?"#/evolucao":"#/planos/"+d.id,category=d.type==="team_goal"?"objective":d.type==="weekly_plan"?"training":"document";add(WORKSPACE_DOC_LABELS[d.type]||"Documento",d.title,d.target_date||d.updated_at,target,{...d,body:d.body},category);});
+  docs.forEach(function(d){var target=d.type==="season_index"?"#/epocas":d.type==="player_archive"?"#/equipa/arquivo-atletas":d.type==="weekly_plan"||d.type==="team_goal"?"#/evolucao":"#/planos/"+d.id,category=d.type==="team_goal"?"objective":d.type==="weekly_plan"?"training":d.type==="player_archive"?"player":"document";add(WORKSPACE_DOC_LABELS[d.type]||"Documento",d.title,d.target_date||d.updated_at,target,{...d,body:d.body},category);});
   memory.forEach(function(m){var refs=m.subject_refs||[],sourceType=m.source?.ref_type,sourceId=m.source?.ref_id,origin=sourceType&&sourceId?{type:sourceType,id:sourceId}:refs.find(x=>x.type==="match"||x.type==="training"),linkedMatch=origin?.type==="match"&&matchOrigins.get(String(origin.id)),linkedTraining=origin?.type==="training"&&trainingOrigins.get(String(origin.id)),subject=refs.find(x=>x.type==="player"),player=subject&&players.find(p=>String(p.sync_id)===String(subject.id)),href=linkedMatch?"#/equipa/jogo/"+linkedMatch:linkedTraining?"#/treinos/"+linkedTraining:player?"#/equipa/jogador/"+player.id:"#/timeline/memory/"+m.id;add("Observação",m.title,m.occurred_at,href,m,"observation",player?.sync_id);});
   media.forEach(function(m){add("Media",m.title,m.created_at,"#/media",m,"media");});
   var typeOptions=[["all","Tudo"],["player","Atletas"],["match","Jogos"],["training","Treinos"],["exercise","Exercícios"],["objective","Objetivos"],["observation","Observações"],["document","Documentos"],["media","Media"]].map(x=>'<option value="'+x[0]+'" '+(kind===x[0]?"selected":"")+'>'+x[1]+'</option>').join(""),seasonOptions='<option value="">Todas as épocas</option>'+(seasonId&&!season?'<option value="'+esc(seasonId)+'" selected>Época indisponível</option>':'')+seasonState.items.map(x=>'<option value="'+esc(x.id)+'" '+(seasonId===x.id?"selected":"")+'>'+esc(x.name)+'</option>').join("");
   var form='<form class="panel form" data-form="workspace-search"><div class="form-grid"><label class="field"><span>Pesquisar</span><input name="q" value="'+esc(query)+'" placeholder="Atleta, adversário, exercício, observação…" autofocus></label><label class="field"><span>Tipo</span><select name="kind">'+typeOptions+'</select></label><label class="field"><span>Desde</span><input name="from" type="date" value="'+esc(from)+'"></label><label class="field"><span>Até</span><input name="to" type="date" value="'+esc(to)+'"></label><label class="field"><span>Época</span><select name="season">'+seasonOptions+'</select></label></div><div class="toolbar"><button class="btn accent" type="submit">Pesquisar</button><a class="btn secondary" href="#/pesquisa">Limpar filtros</a></div></form>';
-  var resultHtml=matches.map(function(r){return '<a class="list-item row" href="'+esc(r.href)+'"><span class="badge">'+esc(r.type)+'</span><span class="grow"><span class="title">'+esc(r.title)+'</span><span class="meta">'+(r.date?fmtDate(r.date):"Data não registada")+'</span></span><span aria-hidden="true">›</span></a>';}).join("")||'<div class="empty">'+(hasFilter?'Sem resultados para estes filtros.':'Escreve um termo ou escolhe filtros para pesquisar o workspace.')+'</div>';
-  setView("Pesquisa e histórico",'<section class="panel hero-main"><div class="kicker">Pesquisa transversal</div><h2 class="display">Encontra o registo e abre a sua origem.</h2><p class="lead">Pesquisa atletas, jogos, treinos, exercícios, objetivos, observações, documentos e media. Os filtros por data e época mantêm os períodos separados.</p></section>'+form+'<section class="section"><div class="section-head"><div><h2>Resultados · '+matches.length+'</h2><p>Até 100 correspondências, por data mais recente</p></div></div><div class="list">'+resultHtml+'</div></section>',"Histórico");
+  var initialVisible=Math.min(SEARCH_RESULT_PAGE_SIZE,matches.length);activeSearchResults={rows:matches,visible:initialVisible,total:totalMatches};
+  var resultHtml=workspaceSearchResultRows(matches.slice(0,initialVisible))||'<div class="empty">'+(hasFilter?'Sem resultados para estes filtros.':'Escreve um termo ou escolhe filtros para pesquisar o workspace.')+'</div>',hasMore=initialVisible<matches.length,hasTruncated=totalMatches>matches.length;
+  setView("Pesquisa e histórico",'<section class="panel hero-main"><div class="kicker">Pesquisa transversal</div><h2 class="display">Encontra o registo e abre a sua origem.</h2><p class="lead">Pesquisa atletas, jogos, treinos, exercícios, objetivos, observações, documentos e media. Os filtros por data e época mantêm os períodos separados.</p></section>'+form+'<section class="section" data-search-page><div class="section-head"><div><h2 data-search-count>'+esc(searchCountText(initialVisible,totalMatches))+'</h2><p>Ordenados por data mais recente</p></div></div><div class="list" data-search-results>'+resultHtml+'</div><p class="notice" data-search-limit '+(hasTruncated?'':'hidden')+'>A pesquisa encontrou '+totalMatches+' registos; por desempenho, a lista contém os '+matches.length+' mais recentes. Usa os filtros de data para consultar um período mais antigo.</p><div class="toolbar"><button class="btn secondary" type="button" data-action="search-load-more" '+(hasMore?'':'hidden')+'>Carregar mais resultados</button></div></section>',"Histórico");
 }
 
 app.addEventListener("submit",async function(event){
@@ -1502,7 +1593,16 @@ app.addEventListener("submit",async function(event){
     return go("#/equipa");
   }
   if(type==="player"){
+    if(form.dataset.saving==="true")return;
+    form.dataset.saving="true";
+    var playerSubmit=form.querySelector('button[type="submit"]');
+    if(playerSubmit){playerSubmit.disabled=true;playerSubmit.setAttribute("aria-busy","true");}
+    try{
     var previousPlayer=id?await DB.obter("jogadores",id):null;
+    var photoFile=fd.get("foto_file"),preparedPhoto=null;
+    if(photoFile&&photoFile.size){
+      try{preparedPhoto=await preparePlayerPhoto(photoFile);}catch(error){alert("A fotografia não foi guardada: "+error.message);return;}
+    }
     var nextAvailability=PlayerStatus.normalize(fd.get("estado_disponibilidade"));
     var playerId=await saveRecord("jogadores",id,{
       team_id:DEFAULT_TEAM_ID,
@@ -1514,49 +1614,25 @@ app.addEventListener("submit",async function(event){
       notas:fd.get("notas")||null
     });
     var savedPlayer=await DB.obter("jogadores",playerId);
-    var photoFile=fd.get("foto_file");
-    if(photoFile&&photoFile.size){
-      if(!String(photoFile.type||"").startsWith("image/")){
-        alert("Escolhe um ficheiro de imagem para a foto do atleta.");
-        return;
-      }
-      var localPhoto=await fileToDataURL(photoFile,5*1024*1024);
-      await DB.atualizar("jogadores",Object.assign({},savedPlayer,{foto:localPhoto}));
+    if(preparedPhoto){
+      photoFile=preparedPhoto.file;
+      var localPhoto=preparedPhoto.dataUrl;
+      var localPhotoId=await HeadCoachMedia.create({
+        team_id:DEFAULT_TEAM_ID,
+        subject_type:"player",
+        subject_id:playerId,
+        type:"photo",
+        title:"Foto · "+fd.get("nome"),
+        data_url:localPhoto,
+        file_name:photoFile.name||null,
+        mime_type:photoFile.type||null,
+        size:photoFile.size,
+        note:"Foto de perfil do atleta"
+      });
+      var localPhotoItem=await DB.obter("media_items",localPhotoId);
+      await DB.atualizar("jogadores",Object.assign({},savedPlayer,{foto:localPhoto,profile_media_ref:localPhotoItem.sync_id}));
       savedPlayer=await DB.obter("jogadores",playerId);
-      var saveLocalPlayerPhoto=async function(){
-        await HeadCoachMedia.create({
-          team_id:DEFAULT_TEAM_ID,
-          subject_type:"player",
-          subject_id:playerId,
-          type:"photo",
-          title:"Foto · "+fd.get("nome"),
-          data_url:localPhoto,
-          file_name:photoFile.name||null,
-          mime_type:photoFile.type||null,
-          size:photoFile.size,
-          note:"Foto de perfil do atleta"
-        });
-      };
-      var uploadError=null,uploadedRemotely=false;
-      try{
-        if(await RemoteWorkspace.canUpload()){
-          await RemoteWorkspace.uploadFileMedia(photoFile,{
-            subject_type:"player",
-            subject_id:playerId,
-            type:"photo",
-            title:"Foto · "+fd.get("nome"),
-            note:"Foto de perfil do atleta"
-          });
-          uploadedRemotely=true;
-        }
-      }catch(error){uploadError=error;}
-      if(!uploadedRemotely&&!uploadError) await saveLocalPlayerPhoto();
-      if(uploadError&&!uploadError.remoteMediaSaved){
-        await saveLocalPlayerPhoto();
-        alert("A fotografia ficou guardada neste dispositivo e será sincronizada quando a ligação estiver disponível.");
-      }else if(uploadError){
-        alert("A fotografia chegou ao workspace remoto, mas este dispositivo não confirmou a cópia local. Abre a app com Internet para a sincronizar.");
-      }
+      RemoteWorkspace.scheduleSync(0);
       await logHuman("updated_player_photo","Atualizou foto do atleta · "+fd.get("nome"),"player",savedPlayer.sync_id||playerId);
     }
     if(id&&previousPlayer&&PlayerStatus.normalize(previousPlayer.estado_disponibilidade)!==nextAvailability){
@@ -1565,6 +1641,8 @@ app.addEventListener("submit",async function(event){
     }
     await logHuman(id?"updated_player":"created_player",(id?"Atualizou jogador · ":"Adicionou jogador · ")+fd.get("nome"),"player",playerId);
     return go("#/equipa/jogador/"+playerId);
+    }catch(error){alert("Não foi possível guardar o jogador: "+error.message);return;}
+    finally{delete form.dataset.saving;if(playerSubmit){playerSubmit.disabled=false;playerSubmit.removeAttribute("aria-busy");}}
   }
   if(type==="player-goal"){
     var playerId=Number(id),player=await DB.obter("jogadores",playerId),evidenceRefs=fd.getAll("evidence_refs").map(function(value){var split=value.split(":");return{type:split.shift(),id:split.join(":")};}),goalId=fd.get("goal_id")||crypto.randomUUID();

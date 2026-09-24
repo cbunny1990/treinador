@@ -20,21 +20,21 @@ A conversa pode acontecer fora da app, por exemplo no ChatGPT. A app continua a 
 
 ## Navegação humana
 
-A aplicação principal tem cinco áreas:
+A navegação principal tem seis áreas:
 
 - **Workspace** — estado atual da equipa, próximos eventos, prioridades, planos recentes e atividade.
 - **Equipa** — perfil, jogadores e jogos.
 - **Planos** — planos de treino, análises de jogo, notas e briefings.
 - **Media** — biblioteca visual partilhada.
 - **Timeline** — histórico de dados, documentos e ações de humano/agente.
-- **Pesquisa e histórico** — pesquisa transversal com filtros de data/época e atalhos para a origem dos registos.
-- **Semana e evolução** — organização semanal e objetivos explícitos da equipa, sem inferir melhoria.
+
+Pesquisa e histórico (`#/pesquisa`), Semana e evolução (`#/evolucao`) e Épocas (`#/epocas`) são páginas secundárias, acessíveis a partir do Workspace e dos registos relacionados; não são separadores da navegação principal.
 
 Chat embutido, OpenRouter, gerador de treino IA, biblioteca antiga de exercícios e dashboard Head Coach antigo foram removidos do produto ativo.
 
 ## Dados ativos
 
-IndexedDB v9 mantém os objetos principais e a fila/tombstones necessários para sincronização remota:
+IndexedDB v14 mantém os objetos principais e a fila/tombstones necessários para sincronização remota:
 
 - `teams`
 - `jogadores`
@@ -196,7 +196,7 @@ A reformulação remove o produto antigo da experiência sem apagar silenciosame
 
 A suíte deve validar, no mínimo:
 
-- migração de dados antigos para IndexedDB v9;
+- migração de dados antigos até à versão IndexedDB v14;
 - funcionamento offline;
 - captura de observação pelo treinador;
 - documentos partilhados;
@@ -214,6 +214,12 @@ Cobertura adicional no mesmo teste: ida PC → backend → telemóvel → backen
 ### Combinação assistida de edições sem sobreposição
 
 Cada gravação enviada ou recebida guarda localmente o último `payload` remoto comum em `_sync_base`; este campo é excluído do payload de rede. Ao comparar um conflito de um registo versionado, o cliente calcula alterações por campo de topo usando essa base. Só oferece combinação automática quando PC e telemóvel mudaram campos diferentes; listas e objetos aninhados são tratados como um único campo. A prévia mostra o resultado e os campos alterados, e o treinador confirma antes da escrita condicional contra a versão remota ainda atual. Se ambos alteraram o mesmo campo ou falta a base comum, o treinador pode escolher explicitamente qual versão fornece cada campo que difere; campos iguais são mantidos. A escrita verifica que as escolhas abrangem exatamente os campos ainda diferentes e revalida as versões local e remota antes de sincronizar. Referências por resolver bloqueiam combinação. Media e atividade imutável nunca são combinadas. Registos mais antigos sem base comum podem assim ser reconciliados campo a campo, sem eliminar silenciosamente a versão oposta.
+
+Quando a base comum existe e apenas um lado alterou o conteúdo, a comparação identifica a versão alterada e permite ao treinador confirmá-la explicitamente. A revisão agrupada inclui estes casos na prévia com a decisão (`keep_local` ou `keep_remote`) visível; os registos sobrepostos, sem base comum ou media continuam para escolha individual. A aplicação revalida as duas revisões antes de cada escrita e sincroniza o lote uma vez após as decisões confirmadas.
+
+Regressão de duas bases ampliada (24/09/2026): o lote verifica ambos os casos de conteúdo unilateral. Para `keep_remote`, o conteúdo remoto alterado aparece no dispositivo depois da decisão; para `keep_local`, uma edição local é enviada quando o remoto avançou de versão mas voltou ao conteúdo comum. No mesmo lote, duas combinações independentes são sincronizadas, um conflito sobreposto continua pendente, há uma única passagem final de sync e permanecem cinco registos sem duplicação. A prévia é lida antes de confirmar e não altera o backend.
+
+Esta revisão da interface e do sincronizador está incluída na shell da PWA `vision-coach-v154`; a ativação migra a cache da app mantendo a cache persistente dos originais aprovados de exercícios.
 
 ### Carregamento inicial do Workspace
 
@@ -233,7 +239,7 @@ Na v69 publicada, o treinador confirmou a consolidação no PC e a leitura dos d
 
 Reconciliação pré-deploy, read-only (23/09/2026): foram recuperados os 17 ficheiros com as versões registadas pelo Supabase MCP em produção, incluindo as sete migrações base e `20260922103529_enable_workspace_realtime`. A pasta local contém essas 17 versões mais três migrações pendentes: Realtime de `activity_log`, criação de equipa durante `INSERT ... RETURNING` e hardening RLS de duas tabelas privadas. Os antigos baselines consolidados e migrações de continuidade com versões posteriores foram substituídos para manter a mesma sequência de histórico. Os 20 ficheiros coincidem com a exportação e as migrações locais. A validação ocorreu numa stack de auditoria isolada. A tentativa de `supabase migration list --linked` falhou porque este worktree não está ligado ao projeto. Nenhuma ligação, reparação, aplicação remota ou `db push` foi feita. Antes de publicar, rever as três migrações novas e confirmar as 17 versões já existentes no remoto.
 
-O advisor remoto sinalizou `private.agent_request_log` e `private.mcp_connector_tokens` com RLS desligado. A auditoria confirmou que `anon` e `authenticated` não têm privilégios de tabela; a stack local isolada também confirmou RLS ativo, `service_role` com `BYPASSRLS` e RPCs do conector a funcionar sob RLS. A migração local `20260923140620_enable_private_internal_table_rls.sql` revoga novamente os privilégios de `PUBLIC`, `anon` e `authenticated` e ativa RLS, sem políticas de acesso para esses papéis. O projeto publicado não foi alterado; a migração aguarda a revisão antes de qualquer aplicação.
+Em 24/09/2026, após autorização explícita do treinador, aplicou-se `20260924144849_enable_private_internal_table_rls.sql` no projeto Supabase Vision Coach. `private.agent_request_log` e `private.mcp_connector_tokens` têm RLS ativo; `PUBLIC`, `anon` e `authenticated` não têm grants, e as RPCs continuam a usar o acesso backend existente. O advisor confirma RLS sem policies para estas tabelas internas; uma stack Supabase descartável independente passou as regressões reais de RLS/RPCs.
 
 
 ### Scroll do Workspace durante sincronização

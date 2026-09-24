@@ -26,7 +26,7 @@ test("tokens MCP ficam em schema privado e só como hash", () => {
 });
 
 test("tabelas internas ativam RLS sem abrir privilégios a papéis cliente", () => {
-  const migration = fs.readFileSync(path.join(root, "supabase", "migrations", "20260923140620_enable_private_internal_table_rls.sql"), "utf8");
+  const migration = fs.readFileSync(path.join(root, "supabase", "migrations", "20260924144849_enable_private_internal_table_rls.sql"), "utf8");
   for (const table of ["agent_request_log", "mcp_connector_tokens"]) {
     assert.match(migration, new RegExp(`private\\.${table}([,\\s]|$)`, "i"));
     assert.match(migration, new RegExp(`alter table private\\.${table} enable row level security`, "i"));

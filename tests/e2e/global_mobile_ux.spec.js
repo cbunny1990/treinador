@@ -75,7 +75,7 @@ test("aviso do PWA é anunciado e fica acessível acima da navegação móvel", 
   const updateButton = page.getByRole("button", { name: "Atualizar app" });
   await expect(updateButton).toBeDisabled();
   await expect(nameField).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v152"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v156"))).toBeNull();
   const position = await notice.evaluate(element => {
     const rect = element.getBoundingClientRect();
     return { fixed: getComputedStyle(element).position, bottom: rect.bottom, navTop: document.querySelector(".bottom-nav").getBoundingClientRect().top };
@@ -97,7 +97,7 @@ test("aviso do PWA bloqueia atualização enquanto decorre uma sessão de treino
   });
   await expect(page.getByRole("button", { name: "Iniciar treino", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Iniciar treino", exact: true }).click();
-  await expect.poll(() => page.evaluate(trainingId => DB.obter("treinos", trainingId).then(row => row.session.status), id)).toBe("running");
+  await expect.poll(() => page.evaluate(trainingId => DB.obter("treinos", trainingId).then(row => row?.session?.status ?? null), id)).toBe("running");
   await page.waitForFunction(() => !!navigator.serviceWorker?.controller);
   await page.evaluate(() => {
     navigator.serviceWorker.dispatchEvent(new Event("controllerchange"));
@@ -105,14 +105,14 @@ test("aviso do PWA bloqueia atualização enquanto decorre uma sessão de treino
   });
   await expect(page.getByRole("status").filter({ hasText: "Atualização disponível" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeDisabled();
-  await expect.poll(() => page.evaluate(trainingId => DB.obter("treinos", trainingId).then(row => row.session.status), id)).toBe("running");
+  await expect.poll(() => page.evaluate(trainingId => DB.obter("treinos", trainingId).then(row => row?.session?.status ?? null), id)).toBe("running");
   await page.evaluate(() => go("#/workspace"));
   await expect(page.getByRole("heading", { name: "O estado da equipa, num único lugar." })).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeDisabled();
   expect(await page.evaluate(() => window.VisionAppReloadGuard.hasActiveSession())).toBe(true);
   await page.evaluate(sessionId => go("#/sessao/" + sessionId), id);
   await page.getByRole("button", { name: "Terminar treino", exact: true }).click();
-  await expect.poll(() => page.evaluate(sessionId => DB.obter("treinos", sessionId).then(row => row.session.status), id)).toBe("completed");
+  await expect.poll(() => page.evaluate(sessionId => DB.obter("treinos", sessionId).then(row => row?.session?.status ?? null), id)).toBe("completed");
   await page.evaluate(() => go("#/workspace"));
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeEnabled();
   expect(await page.evaluate(() => window.VisionAppReloadGuard.hasActiveSession())).toBe(false);
@@ -137,7 +137,7 @@ test("aviso do PWA continua bloqueado fora do quadro enquanto decorre um jogo", 
   page.on("dialog", dialog => dialog.accept());
   await expect(page.getByRole("button", { name: "Iniciar jogo e contar minutos", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Iniciar jogo e contar minutos", exact: true }).click();
-  await expect.poll(() => page.evaluate(matchId => DB.obter("jogos", matchId).then(row => row.visual_match.status), id)).toBe("running");
+  await expect.poll(() => page.evaluate(matchId => DB.obter("jogos", matchId).then(row => row?.visual_match?.status ?? null), id)).toBe("running");
   await page.waitForFunction(() => !!navigator.serviceWorker?.controller);
   await page.evaluate(() => {
     navigator.serviceWorker.dispatchEvent(new Event("controllerchange"));
@@ -151,7 +151,7 @@ test("aviso do PWA continua bloqueado fora do quadro enquanto decorre um jogo", 
   expect(await page.evaluate(() => window.VisionAppReloadGuard.hasActiveSession())).toBe(true);
   await page.evaluate(matchId => go("#/jogo-visual/" + matchId), id);
   await page.getByRole("button", { name: "Terminar utilização", exact: true }).click();
-  await expect.poll(() => page.evaluate(matchId => DB.obter("jogos", matchId).then(row => row.visual_match.status), id)).toBe("completed");
+  await expect.poll(() => page.evaluate(matchId => DB.obter("jogos", matchId).then(row => row?.visual_match?.status ?? null), id)).toBe("completed");
   await page.evaluate(() => go("#/workspace"));
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeEnabled();
   expect(await page.evaluate(() => window.VisionAppReloadGuard.hasActiveSession())).toBe(false);

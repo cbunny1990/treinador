@@ -58,6 +58,10 @@ test("payload remoto remove chaves locais e data_url", () => {
     sync_actor_label: "Head Coach",
     data_url: "data:image/png;base64,secret",
     _sync_base: { adversario: "Rivais" },
+    operational_needs_review: "pending",
+    operational_proposal_status: "draft",
+    operational_timeline_date: "2026-09-24T12:00:00.000Z",
+    operational_timeline_status: "visible",
     nome: "Jogador",
   });
   assert.deepEqual(payload, { nome: "Jogador" });
@@ -1812,6 +1816,8 @@ test("pré-visualização e resolução agrupada sincronizam só combinações i
       ["batch-independent-1", { adversario: "Rivais 1", data: "2026-10-01", nota_tatica: "Base", resultado: "0-0" }],
       ["batch-independent-2", { adversario: "Rivais 2", data: "2026-10-02", local: "Campo velho", observacao: "Base" }],
       ["batch-overlap", { adversario: "Rival inicial", data: "2026-10-03", nota_tatica: "Base" }],
+      ["batch-remote-only", { adversario: "Rival remoto", data: "2026-10-04", nota_tatica: "Base" }],
+      ["batch-local-only", { adversario: "Rival local", data: "2026-10-05", nota_tatica: "Base" }],
     ]) ids.push(await devices[0].criar("jogos", { team_id: "default", ...payload, external_key: key, sync_dirty: true }));
     await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
 
@@ -1822,10 +1828,17 @@ test("pré-visualização e resolução agrupada sincronizam só combinações i
       ["batch-independent-1", { nota_tatica: "Nota do telemóvel" }],
       ["batch-independent-2", { local: "Campo novo" }],
       ["batch-overlap", { adversario: "Rival do telemóvel" }],
+      ["batch-remote-only", { nota_tatica: "Alteração remota" }],
     ]) {
       const row = phoneRows.find((item) => item.external_key === key);
       await devices[1].atualizar("jogos", { ...row, ...change, sync_dirty: true });
     }
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    let localOnlyPhone = (await devices[1].listar("jogos")).find((item) => item.external_key === "batch-local-only");
+    await devices[1].atualizar("jogos", { ...localOnlyPhone, nota_tatica: "Alteração temporária", sync_dirty: true });
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    localOnlyPhone = (await devices[1].listar("jogos")).find((item) => item.external_key === "batch-local-only");
+    await devices[1].atualizar("jogos", { ...localOnlyPhone, nota_tatica: "Base", sync_dirty: true });
     await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
 
     useDevice(0);
@@ -1838,15 +1851,29 @@ test("pré-visualização e resolução agrupada sincronizam só combinações i
       const row = pcRows.find((item) => item.external_key === key);
       await devices[0].atualizar("jogos", { ...row, ...change, sync_dirty: true });
     }
+    const unchangedRemoteOnly = pcRows.find((item) => item.external_key === "batch-remote-only");
+    await devices[0].atualizar("jogos", { ...unchangedRemoteOnly, sync_dirty: true });
+    const changedLocallyOnly = pcRows.find((item) => item.external_key === "batch-local-only");
+    await devices[0].atualizar("jogos", { ...changedLocallyOnly, nota_tatica: "Alteração só no PC", sync_dirty: true });
     const detected = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
-    assert.equal(detected.conflicts.length, 3);
+    assert.equal(detected.conflicts.length, 5);
     const conflictStorage = new Map([["treinador.remote.supabase.v1", JSON.stringify({ remoteTeamId, conflicts: detected.conflicts })]]);
     globalThis.localStorage = { getItem: (key) => conflictStorage.get(key) || null, setItem: (key, value) => conflictStorage.set(key, value) };
     const beforePreview = remote.rows.map((row) => ({ id: row.id, payload: { ...row.payload } }));
     const preview = await RemoteWorkspace.previewIndependentConflictBatch();
-    assert.equal(preview.examined, 3);
-    assert.equal(preview.safe.length, 2);
+    assert.equal(preview.examined, 5);
+    assert.equal(preview.safe.length, 4);
     assert.equal(preview.needs_review.length, 1);
+    const remoteOnly = preview.safe.find((item) => item.sync_id === detected.conflicts.find((conflict) => conflict.local_id === unchangedRemoteOnly.id).sync_id);
+    assert.equal(remoteOnly.resolution, "keep_remote");
+    assert.equal(remoteOnly.single_change, true);
+    assert.deepEqual(remoteOnly.local_changes, []);
+    assert.deepEqual(remoteOnly.remote_changes, ["nota_tatica"]);
+    const localOnly = preview.safe.find((item) => item.sync_id === detected.conflicts.find((conflict) => conflict.local_id === changedLocallyOnly.id).sync_id);
+    assert.equal(localOnly.resolution, "keep_local");
+    assert.equal(localOnly.single_change, true);
+    assert.deepEqual(localOnly.local_changes, ["nota_tatica"]);
+    assert.deepEqual(localOnly.remote_changes, []);
     assert.equal(preview.needs_review[0].sync_id, detected.conflicts.find((item) => item.local_id === ids[2]).sync_id);
     assert.deepEqual(remote.rows.map((row) => ({ id: row.id, payload: row.payload })), beforePreview, "a pré-visualização não escreve no remoto");
 
@@ -1854,9 +1881,9 @@ test("pré-visualização e resolução agrupada sincronizam só combinações i
     RemoteWorkspace.syncNow = async () => { syncCalls++; return RemoteWorkspace._syncRecords(remoteTeamId, "coach"); };
     const applied = await RemoteWorkspace.resolveIndependentConflictBatch(preview.safe);
     assert.equal(syncCalls, 1);
-    assert.equal(applied.pushed, 2);
+    assert.equal(applied.pushed, 3, "a versão remota escolhida já estava persistida; as duas combinações e a única alteração local são enviadas");
     assert.equal(applied.conflicts.length, 1, "a versão com campos sobrepostos fica para decisão explícita");
-    assert.equal(remote.rows.length, 3, "nenhum registo duplicado foi criado");
+    assert.equal(remote.rows.length, 5, "nenhum registo duplicado foi criado");
     const merged1 = remote.rows.find((row) => row.payload.adversario === "Rivais 1");
     assert.equal(merged1.payload.nota_tatica, "Nota do telemóvel");
     assert.equal(merged1.payload.resultado, "2-1");
@@ -1865,6 +1892,12 @@ test("pré-visualização e resolução agrupada sincronizam só combinações i
     assert.equal(merged2.payload.observacao, "Nota do PC");
     const stillPending = await devices[0].obter("jogos", ids[2]);
     assert.equal(stillPending.sync_dirty, true);
+    const remoteOnlyAfterReview = await devices[0].obter("jogos", unchangedRemoteOnly.id);
+    assert.equal(remoteOnlyAfterReview.nota_tatica, "Alteração remota");
+    assert.equal(remoteOnlyAfterReview.sync_dirty, false);
+    const localOnlyAfterReview = await devices[0].obter("jogos", changedLocallyOnly.id);
+    assert.equal(localOnlyAfterReview.nota_tatica, "Alteração só no PC");
+    assert.equal(localOnlyAfterReview.sync_dirty, false);
   }); } finally {
     globalThis.localStorage = originalStorage;
     RemoteWorkspace.syncNow = originalSyncNow;

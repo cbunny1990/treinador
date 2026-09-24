@@ -137,6 +137,79 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
     }, gameSyncId);
     expect(desktopUpdate).toEqual({ conflicts: [], adversario: "Editado offline no telemóvel", dirty: false });
 
+    await page.waitForFunction(() => typeof VisionMatchAnalysis !== "undefined" && typeof VisionMatchEvidence !== "undefined");
+    const evidenceSyncId = crypto.randomUUID();
+    const momentToKeep = crypto.randomUUID();
+    const momentToDelete = crypto.randomUUID();
+    await page.evaluate(async ({ syncId, keepId, deleteId }) => {
+      const id = await DB.criar("jogos", {
+        team_id: DEFAULT_TEAM_ID, sync_id: syncId, data: "2026-09-24",
+        adversario: "Análise e evidências offline", estado: "concluido",
+      });
+      await DB.modificar("jogos", id, (row) => VisionMatchAnalysis.save(row, {
+        fields: { summary: "Resumo inicial no PC" },
+      }, { expected_revision: 0, actor: "Treinador" }));
+      await DB.modificar("jogos", id, (row) => VisionMatchEvidence.apply(row, {
+        type: "add", expected_revision: 0,
+        item: { id: keepId, url: "https://example.test/jogo.mp4", seconds: 90, category: "goal", description: "Momento a manter", relation_type: "none" },
+      }));
+      await DB.modificar("jogos", id, (row) => VisionMatchEvidence.apply(row, {
+        type: "add", expected_revision: 1,
+        item: { id: deleteId, url: "https://example.test/jogo.mp4", seconds: 150, category: "chance", description: "Momento a remover", relation_type: "none" },
+      }));
+      const result = await RemoteWorkspace.syncNow();
+      if (result.conflicts.length) throw new Error(JSON.stringify(result.conflicts));
+    }, { syncId: evidenceSyncId, keepId: momentToKeep, deleteId: momentToDelete });
+    await phone.evaluate(async (syncId) => {
+      const result = await RemoteWorkspace.syncNow();
+      if (result.conflicts.length) throw new Error(JSON.stringify(result.conflicts));
+      const row = (await DB.listar("jogos")).find((item) => item.sync_id === syncId);
+      if (!row || VisionMatchAnalysis.fromMatch(row).fields.summary !== "Resumo inicial no PC" || VisionMatchEvidence.state(row).moments.length !== 2) {
+        throw new Error("A análise inicial e os dois momentos não chegaram ao telemóvel.");
+      }
+    }, evidenceSyncId);
+
+    await mobileContext.setOffline(true);
+    await phone.evaluate(async ({ syncId, keepId, deleteId }) => {
+      const row = (await DB.listar("jogos")).find((item) => item.sync_id === syncId);
+      if (!row) throw new Error("Jogo com análise não encontrado no telemóvel.");
+      let changed = VisionMatchEvidence.apply(row, {
+        type: "edit", id: keepId, expected_revision: 2,
+        item: { seconds: 95, description: "Momento revisto offline" },
+      });
+      changed = VisionMatchEvidence.apply(changed, {
+        type: "delete", id: deleteId, expected_revision: 3, confirmed: true,
+      });
+      changed = VisionMatchAnalysis.save(changed, {
+        fields: { ...VisionMatchAnalysis.fromMatch(changed).fields, summary: "Resumo revisto offline no telemóvel" },
+      }, { expected_revision: 1, actor: "Treinador" });
+      await DB.modificar("jogos", row.id, () => ({ ...changed, sync_dirty: true }));
+    }, { syncId: evidenceSyncId, keepId: momentToKeep, deleteId: momentToDelete });
+    const beforeEvidenceReconnect = await admin.from("workspace_records").select("payload").eq("id", evidenceSyncId).single();
+    expect(beforeEvidenceReconnect.error).toBeNull();
+    expect(beforeEvidenceReconnect.data.payload.post_game.analysis.fields.summary).toBe("Resumo inicial no PC");
+    expect(beforeEvidenceReconnect.data.payload.match_evidence.moments).toHaveLength(2);
+
+    await mobileContext.setOffline(false);
+    const evidencePhonePush = await phone.evaluate(async () => RemoteWorkspace.syncNow());
+    expect(evidencePhonePush.conflicts).toEqual([]);
+    const evidenceDesktopPull = await page.evaluate(async (syncId) => {
+      const result = await RemoteWorkspace.syncNow();
+      const row = (await DB.listar("jogos")).find((item) => item.sync_id === syncId);
+      return { conflicts: result.conflicts, summary: VisionMatchAnalysis.fromMatch(row).fields.summary, moments: VisionMatchEvidence.state(row).moments };
+    }, evidenceSyncId);
+    expect(evidenceDesktopPull.conflicts).toEqual([]);
+    expect(evidenceDesktopPull.summary).toBe("Resumo revisto offline no telemóvel");
+    expect(evidenceDesktopPull.moments).toHaveLength(1);
+    expect(evidenceDesktopPull.moments[0]).toMatchObject({ id: momentToKeep, seconds: 95, description: "Momento revisto offline" });
+    await phone.evaluate(() => RemoteWorkspace.syncNow());
+    await page.evaluate(() => RemoteWorkspace.syncNow());
+    const evidenceAfterReplay = await admin.from("workspace_records").select("id,payload").eq("id", evidenceSyncId);
+    expect(evidenceAfterReplay.error).toBeNull();
+    expect(evidenceAfterReplay.data).toHaveLength(1);
+    expect(evidenceAfterReplay.data[0].payload.match_evidence.moments).toHaveLength(1);
+    expect(evidenceAfterReplay.data[0].payload.match_evidence.moments[0].id).toBe(momentToKeep);
+
     await context.setOffline(true);
     await page.evaluate(async (syncId) => {
       const row = (await DB.listar("jogos")).find((item) => item.sync_id === syncId);
@@ -204,9 +277,9 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
     expect(mobileConflict.remote).toBe("Edição offline no PC");
 
     const photoPlayerSyncId = crypto.randomUUID();
-    const profilePhotoSyncId = crypto.randomUUID();
+    let profilePhotoSyncId;
     const profilePhotoBytes = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7RxycAAAAASUVORK5CYII=";
-    const photoPlayerId = await page.evaluate(async (syncId) => {
+    await page.evaluate(async (syncId) => {
       const id = await DB.criar("jogadores", {
         team_id: DEFAULT_TEAM_ID, sync_id: syncId, nome: "Atleta de foto PWA", plantel_ativo: true,
       });
@@ -214,14 +287,40 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
       if (result.conflicts.some((item) => item.sync_id === syncId)) throw new Error(JSON.stringify(result.conflicts));
       return id;
     }, photoPlayerSyncId);
-    await context.setOffline(true);
-    const localPhotoId = await page.evaluate(({ playerId, syncId, bytes }) => DB.criar("media_items", {
-      team_id: DEFAULT_TEAM_ID, subject_type: "player", subject_id: playerId,
-      sync_id: syncId, type: "photo", title: "Foto de perfil original",
-      note: "Foto de perfil do atleta", file_name: "perfil.png", mime_type: "image/png", data_url: bytes,
-    }), { playerId: photoPlayerId, syncId: profilePhotoSyncId, bytes: profilePhotoBytes });
-    await context.setOffline(false);
-    const photoPush = await page.evaluate(async ({ syncId, localId }) => {
+    const phonePlayerId = await phone.evaluate(async (syncId) => {
+      const result = await RemoteWorkspace.syncNow();
+      if (result.conflicts.some((item) => item.sync_id === syncId)) throw new Error(JSON.stringify(result.conflicts));
+      return (await DB.listar("jogadores")).find((item) => item.sync_id === syncId)?.id;
+    }, photoPlayerSyncId);
+    expect(phonePlayerId).toBeTruthy();
+    await phone.goto("/#/equipa/jogador/" + phonePlayerId + "/editar");
+    await expect(phone.getByLabel("Foto do atleta")).toBeVisible();
+    await mobileContext.setOffline(true);
+    await phone.locator('input[name="foto_file"]').setInputFiles({
+      name: "perfil.png", mimeType: "image/png", buffer: Buffer.from(profilePhotoBytes.split(",")[1], "base64"),
+    });
+    await phone.getByRole("button", { name: "Guardar", exact: true }).click();
+    await expect(phone).toHaveURL(new RegExp("#/equipa/jogador/" + phonePlayerId + "$"));
+    const queuedPhoto = await phone.evaluate(async (playerId) => {
+      const player = await DB.obter("jogadores", playerId);
+      const photo = (await HeadCoachMedia.listForSubject("player", playerId))
+        .find((item) => item.note === "Foto de perfil do atleta");
+      return { playerDirty: player.sync_dirty, playerPhoto: player.foto, ref: player.profile_media_ref,
+        id: photo?.id, syncId: photo?.sync_id, dataUrl: photo?.data_url, dirty: photo?.sync_dirty,
+        fileName: photo?.file_name, mimeType: photo?.mime_type };
+    }, phonePlayerId);
+    expect(queuedPhoto.playerDirty).toBe(true);
+    expect(queuedPhoto.playerPhoto).toMatch(/^data:image\/png;base64,/);
+    expect(queuedPhoto.syncId).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(queuedPhoto.ref).toBe(queuedPhoto.syncId);
+    expect(queuedPhoto.dataUrl).toBe(queuedPhoto.playerPhoto);
+    expect(queuedPhoto.dirty).toBe(true);
+    expect(queuedPhoto.fileName).toBe("perfil.png");
+    expect(queuedPhoto.mimeType).toBe("image/png");
+    const localPhotoId = queuedPhoto.id;
+    profilePhotoSyncId = queuedPhoto.syncId;
+    await mobileContext.setOffline(false);
+    const photoPush = await phone.evaluate(async ({ syncId, localId }) => {
       const result = await RemoteWorkspace.syncNow();
       return { conflicts: result.conflicts.filter((item) => item.sync_id === syncId), local: await DB.obter("media_items", localId) };
     }, { syncId: profilePhotoSyncId, localId: localPhotoId });
@@ -235,6 +334,18 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
     const publicPhoto = await fetch(`${url}/storage/v1/object/public/team-media/${remotePhoto.data.storage_path}`);
     expect(publicPhoto.ok).toBe(false);
 
+    const desktopPhotoState = await page.evaluate(async ({ syncId, playerSyncId }) => {
+      const result = await RemoteWorkspace.syncNow();
+      const photo = (await DB.listar("media_items")).find((item) => item.sync_id === syncId);
+      const player = (await DB.listar("jogadores")).find((item) => item.sync_id === playerSyncId);
+      return { conflicts: result.conflicts.filter((item) => item.sync_id === syncId),
+        photoUrl: photo?.url, playerPhoto: player?.foto, ref: player?.profile_media_ref };
+    }, { syncId: profilePhotoSyncId, playerSyncId: photoPlayerSyncId });
+    expect(desktopPhotoState.conflicts).toEqual([]);
+    expect(desktopPhotoState.photoUrl).toMatch(/\/storage\/v1\/object\/sign\/team-media\//);
+    expect(desktopPhotoState.playerPhoto).toMatch(/\/storage\/v1\/object\/sign\/team-media\//);
+    expect(desktopPhotoState.ref).toBe(profilePhotoSyncId);
+
     const phonePhotoState = await phone.evaluate(async ({ syncId, playerSyncId }) => {
       const result = await RemoteWorkspace.syncNow();
       const media = (await DB.listar("media_items")).find((item) => item.sync_id === syncId);
@@ -243,10 +354,10 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
       return { mediaConflicts, title: media?.title, dataUrl: media?.data_url, url: media?.url, playerPhoto: player?.foto, storagePath: media?.storage_path };
     }, { syncId: profilePhotoSyncId, playerSyncId: photoPlayerSyncId });
     expect(phonePhotoState.mediaConflicts).toEqual([]);
-    expect(phonePhotoState.title).toBe("Foto de perfil original");
-    expect(phonePhotoState.dataUrl).toBeUndefined();
+    expect(phonePhotoState.title).toBe("Foto · Atleta de foto PWA");
+    expect(phonePhotoState.dataUrl).toMatch(/^data:image\/png;base64,/);
     expect(phonePhotoState.url).toMatch(/\/storage\/v1\/object\/sign\/team-media\//);
-    expect(phonePhotoState.playerPhoto).toMatch(/\/storage\/v1\/object\/sign\/team-media\//);
+    expect(phonePhotoState.playerPhoto).toMatch(/^data:image\/png;base64,/);
     expect(phonePhotoState.storagePath).toBe(remotePhoto.data.storage_path);
 
     await mobileContext.setOffline(true);

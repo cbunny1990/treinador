@@ -29,14 +29,24 @@ async function seedV3(page) {
     await new Promise((resolve, reject) => {
       const req = indexedDB.open("treinador", 3);
       req.onupgradeneeded = () => {
-        req.result.createObjectStore("jogadores", { keyPath: "id", autoIncrement: true });
+        const db = req.result;
+        const tx = req.transaction;
+        db.createObjectStore("jogadores", { keyPath: "id", autoIncrement: true });
+        tx.objectStore("jogadores").add({ nome: "Jogador legado", escalao: "sub-8" });
+        for (const store of ["treinos", "jogos", "memory_items", "workspace_documents", "activity_items"]) {
+          db.createObjectStore(store, { keyPath: "id", autoIncrement: true });
+        }
+        tx.objectStore("treinos").add({ team_id: "default", data: "2026-09-18", escalao: "sub-8" });
+        tx.objectStore("jogos").add({ team_id: "default", data: "2026-09-19", adversario: "Jogo legado" });
+        tx.objectStore("memory_items").add({ team_id: "default", status: "active", occurred_at: "2026-09-20T12:00:00.000Z", title: "Memória legada" });
+        tx.objectStore("workspace_documents").add({ team_id: "default", status: "ready", updated_at: "2026-09-21T12:00:00.000Z", title: "Documento legado" });
+        tx.objectStore("workspace_documents").add({ team_id: "default", created_at: "2026-09-22T12:00:00.000Z", updated_at: "2026-09-22T12:00:00.000Z", title: "Documento sem estado legado" });
+        tx.objectStore("activity_items").add({ team_id: "default", created_at: "2026-09-22T12:00:00.000Z", summary: "Atividade legada" });
       };
       req.onsuccess = () => {
         const db = req.result;
-        const tx = db.transaction("jogadores", "readwrite");
-        tx.objectStore("jogadores").add({ nome: "Jogador legado", escalao: "sub-8" });
-        tx.oncomplete = () => { db.close(); resolve(); };
-        tx.onerror = () => reject(tx.error);
+        db.close();
+        resolve();
       };
       req.onerror = () => reject(req.error);
     });
@@ -51,15 +61,40 @@ test("migra dados antigos para o workspace e continua offline", async ({ page, c
   const migrated = await page.evaluate(async () => {
     const db = await abrirDB();
     const players = await DB.listar("jogadores");
+    const timelineRows = {};
+    for (const [store, status] of [["treinos", null], ["jogos", null], ["memory_items", "active"], ["workspace_documents", "visible"], ["activity_items", null]]) {
+      timelineRows[store] = [];
+      await DB.percorrerEquipaMaisRecentes(store, "default", 10, (row) => timelineRows[store].push(row.title || row.summary || row.adversario || row.data), status);
+    }
+    const legacyDocument = (await DB.porIndice("workspace_documents", "team_id", "default")).find((row) => row.title === "Documento sem estado legado");
     return {
       version: db.version,
       teamId: players[0].team_id,
+      timelineRows,
+      legacyDocumentStatus: legacyDocument?.status ?? null,
       stores: Array.from(db.objectStoreNames),
+      dateIndexes: ["jogos", "treinos"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_data")),
+      operationsIndexes: db.transaction("jogos").objectStore("jogos").indexNames.contains("team_proposal_status")
+        && ["team_completed_review", "team_proposal_status"].every((index) => db.transaction("treinos").objectStore("treinos").indexNames.contains(index)),
+      timelineIndexes: ["activity_items", "jogos", "treinos"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_timeline"))
+        && db.transaction("workspace_documents").objectStore("workspace_documents").indexNames.contains("team_timeline_status")
+        && ["memory_items", "workspace_documents"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_status_timeline")),
     };
   });
 
-  expect(migrated.version).toBe(10);
+  expect(migrated.version).toBe(14);
   expect(migrated.teamId).toBe("default");
+  expect(migrated.dateIndexes).toBeTruthy();
+  expect(migrated.operationsIndexes).toBeTruthy();
+  expect(migrated.timelineIndexes).toBeTruthy();
+  expect(migrated.timelineRows).toEqual({
+    treinos: ["2026-09-18"],
+    jogos: ["Jogo legado"],
+    memory_items: ["Memória legada"],
+    workspace_documents: ["Documento sem estado legado", "Documento legado"],
+    activity_items: ["Atividade legada"],
+  });
+  expect(migrated.legacyDocumentStatus).toBeNull();
   expect(migrated.stores).toContain("workspace_documents");
   expect(migrated.stores).toContain("activity_items");
   expect(migrated.stores).toContain("sync_tombstones");
@@ -115,6 +150,29 @@ test("workspace indica falha de sincronização e limpa o aviso após recuperaç
     await RemoteWorkspace.syncNow();
   });
   await expect(page.getByRole("status").filter({ hasText: "Não foi possível confirmar a sincronização." })).toHaveCount(0);
+});
+
+test("falha da sincronização automática fica visível no telemóvel e desaparece quando recupera", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/#/equipa/jogador/novo");
+  await page.getByLabel("Notas factuais").fill("Texto por guardar durante uma falha de rede");
+  await page.evaluate(() => {
+    clearTimeout(RemoteWorkspace._syncTimer);
+    clearTimeout(RemoteWorkspace._syncRetryTimer);
+    RemoteWorkspace._scheduleSyncRetry = () => 2000;
+    RemoteWorkspace.status = async () => ({ signedIn: true, remoteTeamId: "team-test" });
+    RemoteWorkspace.syncNow = async () => { throw new Error("URL temporário secreto?token=nao-expor"); };
+    RemoteWorkspace.scheduleSync(0);
+  });
+  const pending = page.getByRole("status").filter({ hasText: "Sincronização pendente" });
+  await expect(pending).toBeVisible();
+  await expect(pending).toHaveAttribute("aria-live", "polite");
+  await expect(page.getByLabel("Notas factuais")).toHaveValue("Texto por guardar durante uma falha de rede");
+  expect(await pending.textContent()).not.toContain("nao-expor");
+
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", { detail: {} })));
+  await expect(pending).toHaveCount(0);
+  await expect(page.getByLabel("Notas factuais")).toHaveValue("Texto por guardar durante uma falha de rede");
 });
 
 test("Workspace lê o estado remoto e um único snapshot local em paralelo", async ({ page }) => {
@@ -173,6 +231,7 @@ test("snapshot do Workspace conta media sem carregar payloads e omite timeline n
 
 test("snapshot compacto do Workspace percorre o histórico sem materializar jogos e treinos", async ({ page }) => {
   await page.goto("/");
+  await page.waitForFunction(() => typeof WorkspaceStore !== "undefined" && typeof DB !== "undefined");
   await page.evaluate(async () => {
     RemoteWorkspace.scheduleSync = () => {};
     const start = Date.now();
@@ -200,13 +259,23 @@ test("snapshot compacto do Workspace percorre o histórico sem materializar jogo
       if (store === "jogos" || store === "treinos") throw new Error(`Snapshot compacto materializou ${store}.`);
       return fullRead(store, ...args);
     };
-    const scan = DB.percorrerIndice.bind(DB);
     window.__compactScanCounts = {};
-    DB.percorrerIndice = async (store, ...args) => {
-      const count = await scan(store, ...args);
-      window.__compactScanCounts[store] = count;
-      return count;
+    DB.percorrerIndice = (store, ...args) => {
+      if (store === "jogos" || store === "treinos") throw new Error(`Snapshot compacto percorreu o histórico completo de ${store}.`);
+      return DB.percorrerIndice.bind(DB)(store, ...args);
     };
+    const first = DB.primeiroIntervaloEquipa.bind(DB);
+    DB.primeiroIntervaloEquipa = (store, teamId, from, predicate) => first(store, teamId, from, row => {
+      const key = "next_" + store;
+      window.__compactScanCounts[key] = (window.__compactScanCounts[key] || 0) + 1;
+      return predicate(row);
+    });
+    const byValue = DB.percorrerValorEquipa.bind(DB);
+    DB.percorrerValorEquipa = (store, index, teamId, value, visit) => byValue(store, index, teamId, value, row => {
+      const key = store + "_" + index;
+      window.__compactScanCounts[key] = (window.__compactScanCounts[key] || 0) + 1;
+      visit(row);
+    });
     window.__compactSnapshot = await WorkspaceStore.buildSnapshot(DEFAULT_TEAM_ID, {
       includeArchivedDocuments: true, countMediaOnly: true, includeTimeline: false, compactOperationalRecords: true,
     });
@@ -225,7 +294,10 @@ test("snapshot compacto do Workspace percorre o histórico sem materializar jogo
   expect(snapshot).toEqual({
     hasFullHistory: false, nextMatch: "Próximo adversário", nextTraining: "Próximo treino",
     reviewCount: 26, reviewSamples: 4, trainingProposals: 7, matchProposals: 9, staleMatchProposals: 10,
-    scanned: { jogos: 40, treinos: 40 },
+    scanned: {
+      next_jogos: 1, next_treinos: 1, jogos_team_proposal_status: 19,
+      treinos_team_completed_review: 26, treinos_team_proposal_status: 7,
+    },
   });
 });
 
@@ -267,6 +339,47 @@ test("Workspace não reconstrói a página após sincronizações sem alteraçõ
   })));
   await page.waitForTimeout(100);
   expect(await page.evaluate(() => window.__snapshotBuilds)).toBe(initial + 2);
+});
+
+test("Workspace restaura o scroll se o layout o ajustar durante uma atualização assíncrona", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.waitForFunction(() => typeof routerRunning === "boolean" && !routerRunning);
+  await page.evaluate(() => {
+    document.getElementById("app").style.minHeight = "2200px";
+    window.scrollTo(0, 640);
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(640);
+
+  const positions = await page.evaluate(() => {
+    const nativeRequestAnimationFrame = window.requestAnimationFrame;
+    let pendingFrame;
+    window.requestAnimationFrame = callback => { pendingFrame = callback; return 1; };
+    setView("Workspace atualizado", '<div style="height:2200px">Conteúdo atualizado</div>');
+    window.requestAnimationFrame = nativeRequestAnimationFrame;
+    // Simulate the browser adjusting the viewport after synced content changes its layout.
+    window.scrollTo(0, 820);
+    const beforeRestore = window.scrollY;
+    pendingFrame();
+    return { beforeRestore, afterRestore: window.scrollY };
+  });
+
+  expect(positions.beforeRestore).toBe(820);
+  expect(positions.afterRestore).toBe(640);
+
+  const userScrollPosition = await page.evaluate(() => {
+    window.scrollTo(0, 640);
+    const nativeRequestAnimationFrame = window.requestAnimationFrame;
+    let pendingFrame;
+    window.requestAnimationFrame = callback => { pendingFrame = callback; return 1; };
+    setView("Workspace atualizado outra vez", '<div style="height:2200px">Conteúdo atualizado</div>');
+    window.requestAnimationFrame = nativeRequestAnimationFrame;
+    window.dispatchEvent(new WheelEvent("wheel"));
+    window.scrollTo(0, 900);
+    pendingFrame();
+    return window.scrollY;
+  });
+  expect(userScrollPosition).toBe(900);
 });
 
 test("sincronização preserva texto por guardar num formulário comum", async ({ page }) => {
@@ -1222,21 +1335,50 @@ test("conflito de edição compara as duas versões antes de permitir uma decis�
   await expect.poll(() => page.evaluate(() => window.__versionResolution)).toEqual(["match-conflict", "jogos", "keep_local", "v2", "local-v2", null]);
 });
 
+test("conflito com uma só versão alterada mostra a proposta antes de confirmar", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined" && typeof router === "function" && typeof MCPConnectors !== "undefined");
+  await page.evaluate(() => {
+    RemoteWorkspace.status = async () => ({ configured: true, signedIn: true, email: "treinador@example.test", remoteTeamId: "team-test", conflicts: [{ store: "jogos", local_id: 12, sync_id: "match-one-sided", reason: "version_mismatch", expected_updated_at: "v1", remote_updated_at: "v2" }] });
+    RemoteWorkspace.getConfig = () => ({ url: "https://example.supabase.co", publishableKey: "sb_publishable_test" });
+    RemoteWorkspace.listTeams = async () => [{ id: "team-test", name: "Equipa de teste" }];
+    MCPConnectors.list = async () => [];
+    RemoteWorkspace.readVersionConflict = async (id, store) => ({
+      sync_id: id, store, local_updated_at: "local-v2", remote_updated_at: "v2",
+      local: { nota_tatica: "Base anterior" }, remote: { nota_tatica: "Apoio após perda" },
+      merge_suggestion: null,
+      single_change_suggestion: { resolution: "keep_remote", changed_side: "remote", changes: ["nota_tatica"] },
+      merge_unavailable: "Só uma versão mudou desde a última base comum.",
+    });
+    RemoteWorkspace.resolveVersionConflict = async (...args) => { window.__singleResolution = args; return { conflicts: [] }; };
+    go("#/definicoes");
+  });
+  await page.getByRole("button", { name: "Comparar versões" }).click();
+  await expect(page.getByText("Uma única versão tem alterações")).toBeVisible();
+  await page.getByText("Pré-visualizar a versão que será mantida").click();
+  await expect(page.locator("details pre.conflict-preview")).toContainText("Apoio após perda");
+  expect(await page.evaluate(() => window.__singleResolution)).toBeUndefined();
+  page.on("dialog", dialog => dialog.accept());
+  await page.getByRole("button", { name: "Manter a única versão alterada" }).click();
+  await expect.poll(() => page.evaluate(() => window.__singleResolution)).toEqual(["match-one-sided", "jogos", "keep_remote", "v2", "local-v2", null]);
+});
+
 test("pré-visualização em lote deixa os conflitos sobrepostos para revisão e só grava após confirmação", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined" && typeof router === "function" && typeof MCPConnectors !== "undefined");
   await page.evaluate(() => {
-    const conflicts = ["m1", "m2", "m3"].map((id) => ({ store: "jogos", local_id: id, sync_id: id, reason: "version_mismatch", expected_updated_at: "v1", remote_updated_at: "v2" }));
+    const conflicts = ["m1", "m2", "m3", "m4"].map((id) => ({ store: "jogos", local_id: id, sync_id: id, reason: "version_mismatch", expected_updated_at: "v1", remote_updated_at: "v2" }));
     RemoteWorkspace.status = async () => ({ configured: true, signedIn: true, email: "treinador@example.test", remoteTeamId: "team-test", conflicts });
     RemoteWorkspace.getConfig = () => ({ url: "https://example.supabase.co", publishableKey: "sb_publishable_test" });
     RemoteWorkspace.listTeams = async () => [{ id: "team-test", name: "Equipa de teste" }];
     MCPConnectors.list = async () => [];
     RemoteWorkspace.previewIndependentConflictBatch = async () => {
       window.__batchWrites = 0;
-      return { examined: 3, safe: [
-        { sync_id: "m1", store: "jogos", display_name: "Jogo 1", mergeable: true, expected_remote: "r1", expected_local: "l1", local_changes: ["resultado"], remote_changes: ["nota_tatica"], payload: { resultado: "2-1", nota_tatica: "Apoio" } },
-        { sync_id: "m2", store: "jogos", display_name: "Jogo 2", mergeable: true, expected_remote: "r2", expected_local: "l2", local_changes: ["local"], remote_changes: ["data"], payload: { local: "Campo A", data: "2026-10-04" } },
-      ], needs_review: [{ sync_id: "m3", store: "jogos", display_name: "Jogo 3", mergeable: false, reason: "Os dois lados alteraram o mesmo campo." }] };
+      return { examined: 4, safe: [
+        { sync_id: "m1", store: "jogos", display_name: "Jogo 1", mergeable: true, resolution: "merge_non_overlapping", expected_remote: "r1", expected_local: "l1", local_changes: ["resultado"], remote_changes: ["nota_tatica"], payload: { resultado: "2-1", nota_tatica: "Apoio" } },
+        { sync_id: "m2", store: "jogos", display_name: "Jogo 2", mergeable: true, resolution: "merge_non_overlapping", expected_remote: "r2", expected_local: "l2", local_changes: ["local"], remote_changes: ["data"], payload: { local: "Campo A", data: "2026-10-04" } },
+        { sync_id: "m3", store: "jogos", display_name: "Jogo 3", mergeable: true, resolution: "keep_remote", single_change: true, changed_side: "remote", expected_remote: "r3", expected_local: "l3", local_changes: [], remote_changes: ["nota_tatica"], payload: { nota_tatica: "Versão remota" } },
+      ], needs_review: [{ sync_id: "m4", store: "jogos", display_name: "Jogo 4", mergeable: false, reason: "Os dois lados alteraram o mesmo campo." }] };
     };
     RemoteWorkspace.resolveIndependentConflictBatch = async (items) => {
       window.__batchWrites++;
@@ -1245,16 +1387,17 @@ test("pré-visualização em lote deixa os conflitos sobrepostos para revisão e
     };
     go("#/definicoes");
   });
-  await page.getByRole("button", { name: "Analisar combinações seguras (3)" }).click();
-  await expect(page.getByText("2 combinações seguras · 1 conflito para rever")).toBeVisible();
+  await page.getByRole("button", { name: "Analisar resoluções seguras (4)" }).click();
+  await expect(page.getByText("3 resoluções seguras · 1 conflito para rever")).toBeVisible();
   await page.getByText("1 conflito(s) precisam de escolha campo a campo", { exact: true }).click();
   await expect(page.getByText("Os dois lados alteraram o mesmo campo.")).toBeVisible();
+  await expect(page.getByText("Só workspace remoto alterou: Nota tática. Será mantida essa versão.")).toBeVisible();
   expect(await page.evaluate(() => window.__batchWrites)).toBe(0);
   let resultMessage = "";
   page.on("dialog", async dialog => { if (dialog.type() === "alert") resultMessage = dialog.message(); await dialog.accept(); });
-  await page.getByRole("button", { name: "Combinar e sincronizar 2 registos" }).click();
-  await expect.poll(() => page.evaluate(() => window.__batchItems?.length)).toBe(2);
-  expect(await page.evaluate(() => window.__batchItems.map(item => item.sync_id))).toEqual(["m1", "m2"]);
+  await page.getByRole("button", { name: "Aplicar e sincronizar 3 resoluções seguras" }).click();
+  await expect.poll(() => page.evaluate(() => window.__batchItems?.length)).toBe(3);
+  expect(await page.evaluate(() => window.__batchItems.map(item => item.sync_id))).toEqual(["m1", "m2", "m3"]);
   expect(resultMessage).toContain("1 conflito continua preservado");
 });
 
@@ -1339,6 +1482,7 @@ test("sync concluída respeita mudança da barra de scroll sem evento wheel", as
   });
   await expect.poll(() => page.evaluate(() => window.__workspaceRenderPending)).toBe(true);
   await page.evaluate(() => {
+    window.dispatchEvent(new PointerEvent("pointerdown", { clientX: window.innerWidth - 1, clientY: 500, button: 0 }));
     window.scrollTo(0, 920);
     window.__releaseWorkspaceRender();
   });
@@ -1358,6 +1502,7 @@ test("render do Workspace não repõe o scroll capturado se a barra mudar antes 
     window.scrollTo(0, 640);
     renderedViewRoute = location.hash || "#/";
     setView("Workspace", "<div style='height:1800px'>Workspace</div>");
+    window.dispatchEvent(new PointerEvent("pointerdown", { clientX: window.innerWidth - 1, clientY: 500, button: 0 }));
     window.scrollTo(0, 920);
     window.requestAnimationFrame = nativeFrame;
     if (typeof queuedFrame !== "function") throw new Error("render frame was not queued");
@@ -1447,7 +1592,7 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
   await expect(page.getByText(/Atualização disponível\. Termina ou guarda o trabalho em curso/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeDisabled();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v152"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v156"))).toBeNull();
 });
 
 test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
@@ -1460,7 +1605,7 @@ test("service worker update after an older cached reload does not stay suppresse
   }).catch(() => {});
   await reloaded;
   await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v152"))).toBe("1");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v156"))).toBe("1");
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {
@@ -1515,14 +1660,12 @@ test("estado do jogador condiciona convocatória e saída do plantel preserva re
   expect(stored.stillSubstitute).toBe(false);
 });
 
-test("falha do upload remoto preserva a foto na fila local", async ({ page }) => {
+test("foto do atleta persiste na fila local antes de iniciar a sincronização remota", async ({ page }) => {
   await page.goto("/#/equipa/jogador/novo");
   await page.evaluate(() => {
-    RemoteWorkspace.canUpload = async () => true;
-    RemoteWorkspace.uploadFileMedia = async () => { throw new Error("rede interrompida"); };
+    window.__photoSyncDelays = [];
+    RemoteWorkspace.scheduleSync = (delay = 1400) => window.__photoSyncDelays.push(delay);
   });
-  let fallbackNotice = "";
-  page.on("dialog", async (dialog) => { fallbackNotice = dialog.message(); await dialog.accept(); });
   await page.getByLabel("Nome").fill("Foto Upload Recuperação E2E");
   await page.locator('input[name="foto_file"]').setInputFiles({
     name: "atleta.png",
@@ -1530,14 +1673,111 @@ test("falha do upload remoto preserva a foto na fila local", async ({ page }) =>
     buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"),
   });
   await page.getByRole("button", { name: "Guardar", exact: true }).click();
-  await expect.poll(() => fallbackNotice).toContain("guardada neste dispositivo");
   await expect(page).toHaveURL(/#\/equipa\/jogador\/\d+$/);
   const saved = await page.evaluate(async () => {
     const player = (await DB.listar("jogadores")).find((row) => row.nome === "Foto Upload Recuperação E2E");
     const media = await HeadCoachMedia.listForSubject("player", player.id);
-    return { photo: player.foto, media: media.find((item) => item.note === "Foto de perfil do atleta") };
+    return { photo: player.foto, ref: player.profile_media_ref, media: media.find((item) => item.note === "Foto de perfil do atleta"), syncDelays: window.__photoSyncDelays };
   });
   expect(saved.photo).toMatch(/^data:image\/png;base64,/);
   expect(saved.media.data_url).toMatch(/^data:image\/png;base64,/);
   expect(saved.media.sync_dirty).toBe(true);
+  expect(saved.ref).toBe(saved.media.sync_id);
+  expect(saved.syncDelays).toContain(0);
+});
+
+test("editar atleta guarda e sincroniza foto grande de telemóvel sem duplicar em submissão repetida", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/#/equipa");
+  const playerId = await page.evaluate(async () => DB.criar("jogadores", {
+    team_id: DEFAULT_TEAM_ID, nome: "Atleta Foto Telemóvel", numero: 8,
+    estado_disponibilidade: "disponivel",
+  }));
+  await page.goto("/#/equipa/jogador/" + playerId + "/editar");
+  await page.evaluate(() => {
+    window.__photoSyncDelays = [];
+    RemoteWorkspace.scheduleSync = (delay = 1400) => window.__photoSyncDelays.push(delay);
+  });
+  const largePhoto = await page.evaluate(() => new Promise((resolve, reject) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1900; canvas.height = 1400;
+    const context = canvas.getContext("2d"), pixels = context.createImageData(canvas.width, canvas.height);
+    let seed = 123456789;
+    for (let i = 0; i < pixels.data.length; i += 4) {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      pixels.data[i] = seed & 255; pixels.data[i + 1] = (seed >>> 8) & 255;
+      pixels.data[i + 2] = (seed >>> 16) & 255; pixels.data[i + 3] = 255;
+    }
+    context.putImageData(pixels, 0, 0);
+    canvas.toBlob((blob) => {
+      if (!blob) return reject(new Error("Falhou a criação da fotografia grande de teste."));
+      const reader = new FileReader();
+      reader.onload = () => resolve({ dataUrl: reader.result, size: blob.size });
+      reader.onerror = () => reject(new Error("Falhou a leitura da fotografia de teste."));
+      reader.readAsDataURL(blob);
+    }, "image/png");
+  }));
+  expect(largePhoto.size).toBeGreaterThan(5 * 1024 * 1024);
+  await page.locator('input[name="foto_file"]').setInputFiles({
+    name: "foto-telemovel.png", mimeType: "image/png",
+    buffer: Buffer.from(largePhoto.dataUrl.split(",")[1], "base64"),
+  });
+  await page.evaluate(() => {
+    const form = document.querySelector('form[data-form="player"]');
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await expect(page).toHaveURL(new RegExp("#/equipa/jogador/" + playerId + "$"));
+  const saved = await page.evaluate(async (id) => {
+    const player = await DB.obter("jogadores", id);
+    const media = await HeadCoachMedia.listForSubject("player", id);
+    return { player, media: media.find((item) => item.note === "Foto de perfil do atleta"), profilePhotoCount: media.filter((item) => item.note === "Foto de perfil do atleta").length, syncDelays: window.__photoSyncDelays };
+  }, playerId);
+  expect(saved.player.foto, JSON.stringify({ player: saved.player, media: saved.media && { mime_type: saved.media.mime_type, size: saved.media.size, dirty: saved.media.sync_dirty }, delays: saved.syncDelays })).toMatch(/^data:image\/jpeg;base64,/);
+  expect(saved.player.sync_dirty).toBe(true);
+  expect(saved.media.data_url).toMatch(/^data:image\/jpeg;base64,/);
+  expect(saved.media.size).toBeLessThan(5 * 1024 * 1024);
+  expect(saved.media.sync_dirty).toBe(true);
+  expect(saved.profilePhotoCount).toBe(1);
+  expect(saved.player.profile_media_ref).toBe(saved.media.sync_id);
+  expect(saved.syncDelays).toContain(0);
+});
+
+test("foto grande guarda em telemóvel sem createImageBitmap e fica abaixo do limite sincronizável", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/#/equipa/jogador/novo");
+  await page.evaluate(() => Object.defineProperty(window, "createImageBitmap", { configurable: true, value: undefined }));
+  await page.getByLabel("Nome").fill("Foto Sem Bitmap E2E");
+  const largePhoto = await page.evaluate(() => new Promise((resolve, reject) => {
+    const canvas = document.createElement("canvas"); canvas.width = 1900; canvas.height = 1400;
+    const context = canvas.getContext("2d"), pixels = context.createImageData(canvas.width, canvas.height);
+    let seed = 987654321;
+    for (let i = 0; i < pixels.data.length; i += 4) {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      pixels.data[i] = seed & 255; pixels.data[i + 1] = (seed >>> 8) & 255;
+      pixels.data[i + 2] = (seed >>> 16) & 255; pixels.data[i + 3] = 255;
+    }
+    context.putImageData(pixels, 0, 0);
+    canvas.toBlob(blob => {
+      if (!blob) return reject(new Error("Falhou a imagem de teste."));
+      const reader = new FileReader(); reader.onload = () => resolve({ dataUrl: reader.result, size: blob.size });
+      reader.onerror = () => reject(new Error("Falhou a leitura da imagem de teste.")); reader.readAsDataURL(blob);
+    }, "image/png");
+  }));
+  expect(largePhoto.size).toBeGreaterThan(5 * 1024 * 1024);
+  await page.locator('input[name="foto_file"]').setInputFiles({
+    name: "foto-sem-bitmap.png", mimeType: "image/png", buffer: Buffer.from(largePhoto.dataUrl.split(",")[1], "base64"),
+  });
+  await page.getByRole("button", { name: "Guardar", exact: true }).click();
+  await expect(page).toHaveURL(/#\/equipa\/jogador\/\d+$/);
+  const saved = await page.evaluate(async () => {
+    const player = (await DB.listar("jogadores")).find(row => row.nome === "Foto Sem Bitmap E2E");
+    const media = await HeadCoachMedia.listForSubject("player", player.id);
+    const photo = media.find(item => item.note === "Foto de perfil do atleta");
+    return { player, photo };
+  });
+  expect(saved.player.foto).toMatch(/^data:image\/jpeg;base64,/);
+  expect(saved.photo.data_url).toBe(saved.player.foto);
+  expect(saved.photo.size).toBeLessThan(5 * 1024 * 1024);
+  expect(saved.photo.sync_dirty).toBe(true);
 });
