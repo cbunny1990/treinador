@@ -28,7 +28,8 @@ const model=row=>({...row.payload,sync_id:row.id});
 const clean=row=>{const p={...row};delete p.sync_id;delete p.team_id;return p;};
 async function output(admin,c,row,extra={}){
  const r=model(row),p=C.state(r).proposal,target=p?.target_ref?await find(admin,c,'training',{id:p.target_ref},{optional:true}):null;
- return {id:row.id,updated_at:row.updated_at,external_key:r.external_key||null,date:r.data,review:r.review||{status:'pending'},review_key:C.reviewKey(r.review),continuity:C.state(r),evidence:C.evidence(r),progress:C.progress(r,target?model(target):null),followup:target?{id:target.id,updated_at:target.updated_at,date:target.payload.data,objective:target.payload.objetivo}:null,...extra};
+ const reviewState=C.effectiveReview(r);
+ return {id:row.id,updated_at:row.updated_at,external_key:r.external_key||null,date:r.data,review:reviewState,review_key:C.reviewKey(reviewState),continuity:C.state(r),evidence:C.evidence(r),progress:C.progress(r,target?model(target):null),followup:target?{id:target.id,updated_at:target.updated_at,date:target.payload.data,objective:target.payload.objetivo}:null,...extra};
 }
 export async function executeContinuityTool(admin,c,name,args){
  if(!c.scopes?.includes('read'))throw new Error('connector_scope_read_required');
@@ -49,8 +50,8 @@ export async function executeContinuityTool(admin,c,name,args){
   exercises=(data||[]).map(model);versions=(data||[]).map(x=>({id:x.id,updated_at:x.updated_at}));
  }
  let target=null;
- if(name==='save_training_review'){action='review';next=C.saveReview(row,{...row.review,...(args.review||{})},{expected_review_key:C.reviewKey(row.review),actor:'Head Coach'});}
- else if(name==='clear_training_review'){action='clear_review';next=C.clearReview(row,{expected_review_key:C.reviewKey(row.review),confirmed:args.confirmed});}
+ if(name==='save_training_review'){action='review';const reviewState=C.effectiveReview(row);next=C.saveReview(row,{...reviewState,...(args.review||{})},{expected_review_key:C.reviewKey(reviewState),actor:'Head Coach'});}
+ else if(name==='clear_training_review'){action='clear_review';const reviewState=C.effectiveReview(row);next=C.clearReview(row,{expected_review_key:C.reviewKey(reviewState),confirmed:args.confirmed});}
  else if(name==='prepare_training_continuity'){
   if(state.proposal?.status==='draft'&&state.proposal.source_key===C.sourceKey(row)&&!args.replace_existing)return output(admin,c,source,{already_prepared:true});
   action='propose';next=C.prepare(row,exercises,await C.identities(row),{actor:'Regra de continuidade'});

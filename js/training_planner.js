@@ -143,13 +143,18 @@ function tpNormalizeTraining(input) {
   row.objetivo = row.objetivo || "";
   row.notas = row.notas || null;
   row.source_match_ref = row.source_match_ref || null;
+  const planReview = row.review && typeof row.review === "object" ? row.review : null;
+  const sessionReview = row.session?.review && typeof row.session.review === "object" ? row.session.review : null;
+  const selectedReview = typeof planReview?.status === "string" && planReview.status.trim()
+    ? planReview
+    : (typeof sessionReview?.status === "string" && sessionReview.status.trim() ? sessionReview : planReview || sessionReview);
   row.review = {
     status: "pending",
     melhorou: null,
     continua: null,
     proxima_acao: null,
     conclusao: null,
-    ...((row.review && typeof row.review === "object") ? row.review : {})
+    ...(selectedReview || {})
   };
   return row;
 }

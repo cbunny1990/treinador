@@ -370,7 +370,7 @@ async function viewWorkspace(options){
     ? (remoteStatus.lastSyncAt ? "Workspace remoto ligado · última sincronização "+fmtDate(remoteStatus.lastSyncAt) : "Workspace remoto ligado · pronto para sincronizar")
     : "Modo local ativo · configura a ligação remota nas Definições";
   var unavailable=s.players.filter(function(p){return !PlayerStatus.isAvailable(p);});
-  var pendingReviews=s.pending_reviews||s.trainings?.filter(function(t){var review=t.review||t.session?.review;return (t.status==="completed"||t.session?.status==="completed")&&review?.status!=="done";})||[];
+  var pendingReviews=s.pending_reviews||s.trainings?.filter(function(t){var review=VisionTrainingContinuity.effectiveReview(t);return (t.status==="completed"||t.session?.status==="completed")&&review.status!=="done";})||[];
   var pendingReviewCount=Number.isFinite(s.pending_reviews_count)?s.pending_reviews_count:pendingReviews.length;
   var pendingTrainingProposals=s.pending_training_proposals||s.trainings?.filter(function(t){return t.continuity?.proposal?.status==="draft";}).map(function(t){return {kind:"training",id:t.id,date:t.data,title:t.continuity.proposal.objective||t.objetivo||"Proposta de treino"};})||[];
   var pendingTeamProposals=reportSeasonDocs.filter(function(d){if(d.type!=="team_goal"||d.status==="archived")return false;return TeamDevelopment.teamGoal(d).agent_proposal?.status==="proposed";}).map(function(d){var goal=TeamDevelopment.teamGoal(d);return {kind:"team",id:d.id,date:d.created_at,title:goal.title||d.title||"Prioridade da equipa"};});

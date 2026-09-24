@@ -36,7 +36,7 @@ async function seedV3(page) {
         for (const store of ["treinos", "jogos", "memory_items", "workspace_documents", "activity_items"]) {
           db.createObjectStore(store, { keyPath: "id", autoIncrement: true });
         }
-        tx.objectStore("treinos").add({ team_id: "default", data: "2026-09-18", escalao: "sub-8" });
+        tx.objectStore("treinos").add({ team_id: "default", data: "2026-09-18", escalao: "sub-8", status: "completed", review: {}, session: { status: "completed", review: { status: "done", conclusao: "Concluído na sessão" } } });
         tx.objectStore("jogos").add({ team_id: "default", data: "2026-09-19", adversario: "Jogo legado" });
         tx.objectStore("memory_items").add({ team_id: "default", status: "active", occurred_at: "2026-09-20T12:00:00.000Z", title: "Memória legada" });
         tx.objectStore("workspace_documents").add({ team_id: "default", status: "ready", updated_at: "2026-09-21T12:00:00.000Z", title: "Documento legado" });
@@ -67,8 +67,10 @@ test("migra dados antigos para o workspace e continua offline", async ({ page, c
       await DB.percorrerEquipaMaisRecentes(store, "default", 10, (row) => timelineRows[store].push(row.title || row.summary || row.adversario || row.data), status);
     }
     const legacyDocument = (await DB.porIndice("workspace_documents", "team_id", "default")).find((row) => row.title === "Documento sem estado legado");
+    const migratedTraining = (await DB.porIndice("treinos", "team_id", "default")).find((row) => row.data === "2026-09-18");
     return {
       version: db.version,
+      trainingNeedsReview: migratedTraining?.operational_needs_review ?? null,
       teamId: players[0].team_id,
       timelineRows,
       legacyDocumentStatus: legacyDocument?.status ?? null,
@@ -82,7 +84,8 @@ test("migra dados antigos para o workspace e continua offline", async ({ page, c
     };
   });
 
-  expect(migrated.version).toBe(14);
+  expect(migrated.version).toBe(15);
+  expect(migrated.trainingNeedsReview).toBe("not_pending");
   expect(migrated.teamId).toBe("default");
   expect(migrated.dateIndexes).toBeTruthy();
   expect(migrated.operationsIndexes).toBeTruthy();
@@ -417,15 +420,19 @@ test("Workspace assessment queue respects top-level and session review records",
     const base = { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: "2026-09-22", blocos: [] };
     await DB.criar("treinos", { ...base, status: "completed", objetivo: "Avaliação concluída no plano", review: { status: "done", conclusao: "Registada" } });
     await DB.criar("treinos", { ...base, sync_id: crypto.randomUUID(), status: "ready", objetivo: "Avaliação concluída na sessão", session: { status: "completed", review: { status: "done", conclusao: "Registada na sessão" } } });
+    await DB.criar("treinos", { ...base, sync_id: crypto.randomUUID(), status: "ready", objetivo: "Sessão concluída com review vazio no plano", review: {}, session: { status: "completed", review: { status: "done", conclusao: "Registada na sessão" } } });
+    await DB.criar("treinos", { ...base, sync_id: crypto.randomUUID(), status: "ready", objetivo: "Review pendente do plano prevalece", review: { status: "pending" }, session: { status: "completed", review: { status: "done", conclusao: "Registada na sessão" } } });
     await DB.criar("treinos", { ...base, sync_id: crypto.randomUUID(), status: "ready", objetivo: "Avaliação pendente na sessão", session: { status: "completed", review: { status: "pending" } } });
     await DB.criar("treinos", { ...base, sync_id: crypto.randomUUID(), status: "completed", objetivo: "Avaliação legada pendente" });
   });
   await page.goto("/");
-  const queue = page.getByRole("heading", { name: "Avaliações por preencher · 2" }).locator("xpath=..");
+  const queue = page.getByRole("heading", { name: "Avaliações por preencher · 3" }).locator("xpath=..");
   await expect(queue.getByText("Avaliação pendente na sessão")).toBeVisible();
   await expect(queue.getByText("Avaliação legada pendente")).toBeVisible();
+  await expect(queue.getByText("Review pendente do plano prevalece")).toBeVisible();
   await expect(queue.getByText("Avaliação concluída no plano")).toHaveCount(0);
   await expect(queue.getByText("Avaliação concluída na sessão")).toHaveCount(0);
+  await expect(queue.getByText("Sessão concluída com review vazio no plano")).toHaveCount(0);
 });
 
 test("Workspace includes Head Coach team priority proposals in the review queue", async ({ page }) => {
@@ -1490,6 +1497,37 @@ test("sync concluída respeita mudança da barra de scroll sem evento wheel", as
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(920);
 });
 
+test("sync concluída respeita touchmove recebido durante a atualização", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.waitForFunction(() => typeof router === "function" && typeof WorkspaceStore !== "undefined");
+  await page.evaluate(async () => {
+    const buildSnapshot = WorkspaceStore.buildSnapshot.bind(WorkspaceStore);
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    window.__releaseWorkspaceTouchRender = release;
+    window.__workspaceTouchRenderPending = false;
+    WorkspaceStore.buildSnapshot = async (...args) => {
+      if (!window.__workspaceTouchRenderPending) {
+        window.__workspaceTouchRenderPending = true;
+        await gate;
+      }
+      return buildSnapshot(...args);
+    };
+    document.getElementById("app").style.minHeight = "1800px";
+    window.scrollTo(0, 640);
+    window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", { detail: { pulled: 1, pushed: 0, conflicts: [], deleted: 0 } }));
+  });
+  await expect.poll(() => page.evaluate(() => window.__workspaceTouchRenderPending)).toBe(true);
+  await page.evaluate(() => {
+    window.scrollTo(0, 920);
+    window.dispatchEvent(new Event("touchmove", { bubbles: true }));
+    window.__releaseWorkspaceTouchRender();
+  });
+  await expect(page.getByText("Human–AI Shared Workspace")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(920);
+});
+
 test("render do Workspace não repõe o scroll capturado se a barra mudar antes do frame", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
@@ -1592,7 +1630,7 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
   await expect(page.getByText(/Atualização disponível\. Termina ou guarda o trabalho em curso/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeDisabled();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v156"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v158"))).toBeNull();
 });
 
 test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
@@ -1605,7 +1643,7 @@ test("service worker update after an older cached reload does not stay suppresse
   }).catch(() => {});
   await reloaded;
   await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v156"))).toBe("1");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v158"))).toBe("1");
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {

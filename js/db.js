@@ -1,6 +1,6 @@
 // Camada de dados offline (IndexedDB). Sem servidor: tudo vive no telemóvel.
 const DB_NOME = "treinador";
-const DB_VERSAO = 14;
+const DB_VERSAO = 15;
 const DEFAULT_TEAM_ID = "default";
 const STORES = [
   "jogadores", "exercicios", "treinos", "treino_itens", "presencas", "avaliacoes", "jogos",
@@ -25,11 +25,19 @@ function _operationalIndexFields(store, row) {
   } else if (store === "treinos") {
     next.operational_timeline_date = String(row?.data || "");
     const completed = row?.status === "completed" || row?.session?.status === "completed";
-    const review = row?.review || row?.session?.review;
+    const review = _trainingReview(row);
     next.operational_needs_review = completed && review?.status !== "done" ? "pending" : "not_pending";
     next.operational_proposal_status = row?.continuity?.proposal?.status || null;
   }
   return next;
+}
+
+function _trainingReview(row) {
+  const planReview = row?.review;
+  if (typeof planReview?.status === "string" && planReview.status.trim()) return planReview;
+  const sessionReview = row?.session?.review;
+  if (typeof sessionReview?.status === "string" && sessionReview.status.trim()) return sessionReview;
+  return planReview || sessionReview;
 }
 
 let _db = null;
