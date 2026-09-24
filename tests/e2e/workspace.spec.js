@@ -40,6 +40,7 @@ async function seedV3(page) {
         tx.objectStore("jogos").add({ team_id: "default", data: "2026-09-19", adversario: "Jogo legado" });
         tx.objectStore("memory_items").add({ team_id: "default", status: "active", occurred_at: "2026-09-20T12:00:00.000Z", title: "Memória legada" });
         tx.objectStore("workspace_documents").add({ team_id: "default", status: "ready", updated_at: "2026-09-21T12:00:00.000Z", title: "Documento legado" });
+        tx.objectStore("workspace_documents").add({ team_id: "default", created_at: "2026-09-22T12:00:00.000Z", updated_at: "2026-09-22T12:00:00.000Z", title: "Documento sem estado legado" });
         tx.objectStore("activity_items").add({ team_id: "default", created_at: "2026-09-22T12:00:00.000Z", summary: "Atividade legada" });
       };
       req.onsuccess = () => {
@@ -61,24 +62,27 @@ test("migra dados antigos para o workspace e continua offline", async ({ page, c
     const db = await abrirDB();
     const players = await DB.listar("jogadores");
     const timelineRows = {};
-    for (const [store, status] of [["treinos", null], ["jogos", null], ["memory_items", "active"], ["workspace_documents", "ready"], ["activity_items", null]]) {
+    for (const [store, status] of [["treinos", null], ["jogos", null], ["memory_items", "active"], ["workspace_documents", "visible"], ["activity_items", null]]) {
       timelineRows[store] = [];
       await DB.percorrerEquipaMaisRecentes(store, "default", 10, (row) => timelineRows[store].push(row.title || row.summary || row.adversario || row.data), status);
     }
+    const legacyDocument = (await DB.porIndice("workspace_documents", "team_id", "default")).find((row) => row.title === "Documento sem estado legado");
     return {
       version: db.version,
       teamId: players[0].team_id,
       timelineRows,
+      legacyDocumentStatus: legacyDocument?.status ?? null,
       stores: Array.from(db.objectStoreNames),
       dateIndexes: ["jogos", "treinos"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_data")),
       operationsIndexes: db.transaction("jogos").objectStore("jogos").indexNames.contains("team_proposal_status")
         && ["team_completed_review", "team_proposal_status"].every((index) => db.transaction("treinos").objectStore("treinos").indexNames.contains(index)),
       timelineIndexes: ["activity_items", "jogos", "treinos"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_timeline"))
+        && db.transaction("workspace_documents").objectStore("workspace_documents").indexNames.contains("team_timeline_status")
         && ["memory_items", "workspace_documents"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_status_timeline")),
     };
   });
 
-  expect(migrated.version).toBe(13);
+  expect(migrated.version).toBe(14);
   expect(migrated.teamId).toBe("default");
   expect(migrated.dateIndexes).toBeTruthy();
   expect(migrated.operationsIndexes).toBeTruthy();
@@ -87,9 +91,10 @@ test("migra dados antigos para o workspace e continua offline", async ({ page, c
     treinos: ["2026-09-18"],
     jogos: ["Jogo legado"],
     memory_items: ["Memória legada"],
-    workspace_documents: ["Documento legado"],
+    workspace_documents: ["Documento sem estado legado", "Documento legado"],
     activity_items: ["Atividade legada"],
   });
+  expect(migrated.legacyDocumentStatus).toBeNull();
   expect(migrated.stores).toContain("workspace_documents");
   expect(migrated.stores).toContain("activity_items");
   expect(migrated.stores).toContain("sync_tombstones");
@@ -1521,7 +1526,7 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
   await expect(page.getByText(/Atualização disponível\. Termina ou guarda o trabalho em curso/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeDisabled();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v154"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v155"))).toBeNull();
 });
 
 test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
@@ -1534,7 +1539,7 @@ test("service worker update after an older cached reload does not stay suppresse
   }).catch(() => {});
   await reloaded;
   await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v154"))).toBe("1");
+  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v155"))).toBe("1");
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {

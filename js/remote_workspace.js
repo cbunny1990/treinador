@@ -98,7 +98,7 @@ function remotePayload(row) {
   for (const key of [
     "id", "team_id", "sync_id", "sync_dirty", "sync_local_updated_at",
     "remote_updated_at", "remote_team_id", "sync_actor_type", "sync_actor_label", "data_url", "profile_media_ref", "_sync_base",
-    "operational_needs_review", "operational_proposal_status", "operational_timeline_date",
+    "operational_needs_review", "operational_proposal_status", "operational_timeline_date", "operational_timeline_status",
   ]) {
     delete payload[key];
   }

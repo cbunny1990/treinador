@@ -1,6 +1,6 @@
 // Camada de dados offline (IndexedDB). Sem servidor: tudo vive no telemóvel.
 const DB_NOME = "treinador";
-const DB_VERSAO = 13;
+const DB_VERSAO = 14;
 const DEFAULT_TEAM_ID = "default";
 const STORES = [
   "jogadores", "exercicios", "treinos", "treino_itens", "presencas", "avaliacoes", "jogos",
@@ -16,6 +16,7 @@ function _operationalIndexFields(store, row) {
     next.operational_timeline_date = String(row?.created_at || "");
   } else if (store === "workspace_documents") {
     next.operational_timeline_date = String(row?.updated_at || row?.created_at || "");
+    next.operational_timeline_status = row?.status === "archived" ? "archived" : "visible";
   } else if (store === "memory_items") {
     next.operational_timeline_date = String(row?.occurred_at || row?.created_at || "");
   } else if (store === "jogos") {
@@ -141,6 +142,9 @@ function abrirDB() {
         }
         if (["memory_items", "workspace_documents"].includes(nome) && !os.indexNames.contains("team_status_timeline")) {
           os.createIndex("team_status_timeline", ["team_id", "status", "operational_timeline_date"], { unique: false });
+        }
+        if (nome === "workspace_documents" && !os.indexNames.contains("team_timeline_status")) {
+          os.createIndex("team_timeline_status", ["team_id", "operational_timeline_status", "operational_timeline_date"], { unique: false });
         }
         os.openCursor().onsuccess = (ev) => {
           const cursor = ev.target.result;
@@ -441,7 +445,7 @@ const DB = {
     const maximum = Math.max(1, Math.min(500, Math.floor(Number(limit) || 100)));
     const os = await _tx(store, "readonly");
     return new Promise((resolve, reject) => {
-      const indexName = allStatusStores.has(store) ? "team_status_timeline" : "team_timeline";
+      const indexName = store === "workspace_documents" ? "team_timeline_status" : allStatusStores.has(store) ? "team_status_timeline" : "team_timeline";
       const range = allStatusStores.has(store)
         ? IDBKeyRange.bound([teamId, status, ""], [teamId, status, "\uffff"])
         : IDBKeyRange.bound([teamId, ""], [teamId, "\uffff"]);

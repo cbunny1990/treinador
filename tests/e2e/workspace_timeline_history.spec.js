@@ -20,6 +20,8 @@ test("Timeline mantém os 100 itens recentes sem carregar históricos completos"
       await DB.criar("treinos", { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: date, escalao: "sub-8", review: payload });
       if (i === 119) latestMatchId = matchId;
     }
+    await DB.criar("workspace_documents", { team_id: DEFAULT_TEAM_ID, type: "legacy", title: "Documento sem estado", created_at: "2028-01-01T00:00:00.000Z", updated_at: "2028-01-01T00:00:00.000Z" });
+    await DB.criar("workspace_documents", { team_id: DEFAULT_TEAM_ID, type: "legacy", title: "Documento com estado legado", status: "legacy_pending", created_at: "2027-12-31T00:00:00.000Z", updated_at: "2027-12-31T00:00:00.000Z" });
     await DB.criar("workspace_documents", { team_id: DEFAULT_TEAM_ID, type: "training_plan", title: "Documento arquivado", status: "archived", created_at: "2030-01-01T00:00:00.000Z", updated_at: "2030-01-01T00:00:00.000Z" });
     await DB.criar("memory_items", { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), kind: "observation", title: "Memória arquivada", content: "não mostrar", status: "archived", occurred_at: "2030-01-01", created_at: "2030-01-01T00:00:00.000Z" });
     window.timelineCursorCounts = counts;
@@ -48,15 +50,15 @@ test("Timeline mantém os 100 itens recentes sem carregar históricos completos"
   await expect(page.getByText("Jogo · Jogo 119")).toBeVisible();
   await expect(page.getByText("Jogo · Jogo 99", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Documento arquivado")).toHaveCount(0);
+  await expect(page.getByText("Documento sem estado", { exact: true })).toBeVisible();
+  await expect(page.getByText("Documento com estado legado", { exact: true })).toBeVisible();
   await expect(page.getByText("Memória arquivada")).toHaveCount(0);
   await expect(page.getByText("payload de histórico não apresentado", { exact: false })).toHaveCount(0);
   await expect(page.locator('.timeline-item a[href="#/equipa/jogo/' + fixture.latestMatchId + '"]')).toBeVisible();
   const counts = await page.evaluate(() => window.timelineCursorCounts);
   expect(counts).toEqual({
     activity_items: 50,
-    "workspace_documents:draft": 0,
-    "workspace_documents:ready": 100,
-    "workspace_documents:approved": 0,
+    "workspace_documents:visible": 100,
     "memory_items:active": 100,
     jogos: 100,
     treinos: 100,

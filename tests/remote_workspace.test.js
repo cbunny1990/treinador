@@ -61,6 +61,7 @@ test("payload remoto remove chaves locais e data_url", () => {
     operational_needs_review: "pending",
     operational_proposal_status: "draft",
     operational_timeline_date: "2026-09-24T12:00:00.000Z",
+    operational_timeline_status: "visible",
     nome: "Jogador",
   });
   assert.deepEqual(payload, { nome: "Jogador" });

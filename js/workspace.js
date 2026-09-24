@@ -121,11 +121,11 @@ async function workspaceRecentTimeline(teamId, limit = 100) {
       actor: item.actor, actor_label: item.actor_label,
       ref: { metadata: item.metadata && typeof item.metadata === "object" ? { _vision_coach_unresolved_origin: item.metadata._vision_coach_unresolved_origin } : {} },
     })),
-    ...["draft", "ready", "approved"].map((status) => DB.percorrerEquipaMaisRecentes("workspace_documents", teamId, maxRows, (item) => rows.push({
+    DB.percorrerEquipaMaisRecentes("workspace_documents", teamId, maxRows, (item) => rows.push({
         type: "document", date: item.operational_timeline_date, title: item.title,
         actor: item.updated_by || item.created_by, actor_label: item.updated_by_label || item.created_by_label,
         ref: { id: item.id, type: item.type },
-      }), status)),
+      }), "visible"),
     DB.percorrerEquipaMaisRecentes("memory_items", teamId, maxRows, (item) => rows.push({
         type: "memory", date: item.operational_timeline_date, title: item.title,
         actor: item.metadata?.actor || "human", actor_label: item.metadata?.actor_label || item.source?.label || "Treinador",
