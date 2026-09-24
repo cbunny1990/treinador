@@ -1976,6 +1976,7 @@ const RemoteWorkspace = {
         storage_path: remote.storage_path, deleted_at: remote.deleted_at };
     } else remoteView = await this._hydratePayload(remote.kind, remote.payload, remoteTeamId);
     let mergeSuggestion = null;
+    let singleChangeSuggestion = null;
     let manualMergeFields = [];
     let localPayload = null;
     let mergeUnavailable = "A versão comum ainda não está guardada neste dispositivo.";
@@ -1988,6 +1989,13 @@ const RemoteWorkspace = {
           mergeUnavailable = mergeSuggestion?.overlaps?.length
             ? "As duas versões alteraram alguns dos mesmos campos. Escolhe explicitamente o valor a manter em cada campo diferente."
             : mergeSuggestion ? "" : "Não foi possível calcular uma combinação segura.";
+          if (mergeSuggestion && !mergeSuggestion.overlaps.length) {
+            if (mergeSuggestion.local_changes.length && !mergeSuggestion.remote_changes.length) {
+              singleChangeSuggestion = { resolution: "keep_local", changed_side: "local", changes: mergeSuggestion.local_changes };
+            } else if (!mergeSuggestion.local_changes.length && mergeSuggestion.remote_changes.length) {
+              singleChangeSuggestion = { resolution: "keep_remote", changed_side: "remote", changes: mergeSuggestion.remote_changes };
+            }
+          }
         }
       } catch (_) {
         mergeUnavailable = "Uma referência do registo precisa de revisão antes de combinar. Ainda podes escolher uma das versões completas.";
@@ -2004,10 +2012,13 @@ const RemoteWorkspace = {
         local_changes: mergeSuggestion.local_changes,
         remote_changes: mergeSuggestion.remote_changes,
       } : null,
+      single_change_suggestion: singleChangeSuggestion,
       manual_merge_fields: manualMergeFields,
-      merge_unavailable: mergeSuggestion && !mergeSuggestion.overlaps.length && (!mergeSuggestion.local_changes.length || !mergeSuggestion.remote_changes.length)
-        ? "Uma das versões não tem alterações de conteúdo em relação à última versão comum. Escolhe explicitamente qual manter."
-        : mergeUnavailable,
+      merge_unavailable: singleChangeSuggestion
+        ? "Só uma versão mudou desde a última base comum. A outra mantém o conteúdo anterior."
+        : mergeSuggestion && !mergeSuggestion.overlaps.length && (!mergeSuggestion.local_changes.length || !mergeSuggestion.remote_changes.length)
+          ? "Nenhuma versão tem alterações de conteúdo diferentes da base comum. Escolhe explicitamente qual manter."
+          : mergeUnavailable,
     };
   },
 
@@ -2017,16 +2028,28 @@ const RemoteWorkspace = {
     const reviewed = await Promise.all(conflicts.map(async (conflict) => {
       try {
         const versions = await this.readVersionConflict(conflict.sync_id, conflict.store);
-        if (!versions.merge_suggestion) return {
-          sync_id: conflict.sync_id, store: conflict.store, display_name: conflict.display_name || null,
-          mergeable: false, reason: versions.merge_unavailable || "As versões exigem decisão campo a campo.",
-        };
-        return {
+        if (versions.merge_suggestion) return {
           sync_id: conflict.sync_id, store: conflict.store, display_name: conflict.display_name || null,
           mergeable: true, expected_remote: versions.remote_updated_at, expected_local: versions.local_updated_at,
+          resolution: "merge_non_overlapping",
           local_changes: versions.merge_suggestion.local_changes,
           remote_changes: versions.merge_suggestion.remote_changes,
-          payload: versions.merge_suggestion.payload,
+          payload: remoteConflictPreview(versions.merge_suggestion.payload),
+        };
+        if (versions.single_change_suggestion) {
+          const suggestion = versions.single_change_suggestion;
+          return {
+            sync_id: conflict.sync_id, store: conflict.store, display_name: conflict.display_name || null,
+            mergeable: true, expected_remote: versions.remote_updated_at, expected_local: versions.local_updated_at,
+            resolution: suggestion.resolution, single_change: true, changed_side: suggestion.changed_side,
+            local_changes: suggestion.changed_side === "local" ? suggestion.changes : [],
+            remote_changes: suggestion.changed_side === "remote" ? suggestion.changes : [],
+            payload: suggestion.changed_side === "local" ? versions.local : versions.remote,
+          };
+        }
+        return {
+          sync_id: conflict.sync_id, store: conflict.store, display_name: conflict.display_name || null,
+          mergeable: false, reason: versions.merge_unavailable || "As versões exigem decisão campo a campo.",
         };
       } catch (error) {
         return {
@@ -2048,7 +2071,9 @@ const RemoteWorkspace = {
     for (const item of previews) {
       const key = `${item?.store}|${item?.sync_id}`;
       if (!item?.mergeable || !remoteIsUuid(item.sync_id) || !REMOTE_STORE_KINDS[item.store]
-        || !item.expected_remote || !item.expected_local || seen.has(key)) {
+        || !item.expected_remote || !item.expected_local
+        || !["merge_non_overlapping", "keep_local", "keep_remote"].includes(item.resolution)
+        || seen.has(key)) {
         throw new Error("A pré-visualização em lote é inválida ou repetida. Analisa novamente os conflitos.");
       }
       seen.add(key);
@@ -2056,7 +2081,7 @@ const RemoteWorkspace = {
     let applied = 0;
     try {
       for (const item of previews) {
-        await this.resolveVersionConflict(item.sync_id, item.store, "merge_non_overlapping",
+        await this.resolveVersionConflict(item.sync_id, item.store, item.resolution,
           item.expected_remote, item.expected_local, null, { deferSync: true });
         applied++;
       }
@@ -2146,6 +2171,7 @@ const RemoteWorkspace = {
         if (!current.sync_dirty || current.sync_id !== syncId || current.sync_local_updated_at !== local.sync_local_updated_at) throw new Error("A versão local mudou durante a decisão. Reabre o conflito.");
         return { ...current, remote_updated_at: remote.updated_at, remote_team_id: remoteTeamId, sync_dirty: true };
       }, { remote: true });
+      if (options.deferSync === true) return { applied: true, conflicts: [] };
     } else {
       let merged;
       if (store === "media_items") {
@@ -2175,6 +2201,7 @@ const RemoteWorkspace = {
       const applied = await this._applyPulledRecord(store, local, merged);
       if (!applied.applied) throw new Error("A versão local mudou durante a decisão. Reabre o conflito.");
     }
+    if (options.deferSync === true) return { applied: true, conflicts: [] };
     return this.syncNow();
   },
 

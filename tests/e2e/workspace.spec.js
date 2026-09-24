@@ -1222,21 +1222,50 @@ test("conflito de edição compara as duas versões antes de permitir uma decis�
   await expect.poll(() => page.evaluate(() => window.__versionResolution)).toEqual(["match-conflict", "jogos", "keep_local", "v2", "local-v2", null]);
 });
 
+test("conflito com uma só versão alterada mostra a proposta antes de confirmar", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined" && typeof router === "function" && typeof MCPConnectors !== "undefined");
+  await page.evaluate(() => {
+    RemoteWorkspace.status = async () => ({ configured: true, signedIn: true, email: "treinador@example.test", remoteTeamId: "team-test", conflicts: [{ store: "jogos", local_id: 12, sync_id: "match-one-sided", reason: "version_mismatch", expected_updated_at: "v1", remote_updated_at: "v2" }] });
+    RemoteWorkspace.getConfig = () => ({ url: "https://example.supabase.co", publishableKey: "sb_publishable_test" });
+    RemoteWorkspace.listTeams = async () => [{ id: "team-test", name: "Equipa de teste" }];
+    MCPConnectors.list = async () => [];
+    RemoteWorkspace.readVersionConflict = async (id, store) => ({
+      sync_id: id, store, local_updated_at: "local-v2", remote_updated_at: "v2",
+      local: { nota_tatica: "Base anterior" }, remote: { nota_tatica: "Apoio após perda" },
+      merge_suggestion: null,
+      single_change_suggestion: { resolution: "keep_remote", changed_side: "remote", changes: ["nota_tatica"] },
+      merge_unavailable: "Só uma versão mudou desde a última base comum.",
+    });
+    RemoteWorkspace.resolveVersionConflict = async (...args) => { window.__singleResolution = args; return { conflicts: [] }; };
+    go("#/definicoes");
+  });
+  await page.getByRole("button", { name: "Comparar versões" }).click();
+  await expect(page.getByText("Uma única versão tem alterações")).toBeVisible();
+  await page.getByText("Pré-visualizar a versão que será mantida").click();
+  await expect(page.locator("details pre.conflict-preview")).toContainText("Apoio após perda");
+  expect(await page.evaluate(() => window.__singleResolution)).toBeUndefined();
+  page.on("dialog", dialog => dialog.accept());
+  await page.getByRole("button", { name: "Manter a única versão alterada" }).click();
+  await expect.poll(() => page.evaluate(() => window.__singleResolution)).toEqual(["match-one-sided", "jogos", "keep_remote", "v2", "local-v2", null]);
+});
+
 test("pré-visualização em lote deixa os conflitos sobrepostos para revisão e só grava após confirmação", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined" && typeof router === "function" && typeof MCPConnectors !== "undefined");
   await page.evaluate(() => {
-    const conflicts = ["m1", "m2", "m3"].map((id) => ({ store: "jogos", local_id: id, sync_id: id, reason: "version_mismatch", expected_updated_at: "v1", remote_updated_at: "v2" }));
+    const conflicts = ["m1", "m2", "m3", "m4"].map((id) => ({ store: "jogos", local_id: id, sync_id: id, reason: "version_mismatch", expected_updated_at: "v1", remote_updated_at: "v2" }));
     RemoteWorkspace.status = async () => ({ configured: true, signedIn: true, email: "treinador@example.test", remoteTeamId: "team-test", conflicts });
     RemoteWorkspace.getConfig = () => ({ url: "https://example.supabase.co", publishableKey: "sb_publishable_test" });
     RemoteWorkspace.listTeams = async () => [{ id: "team-test", name: "Equipa de teste" }];
     MCPConnectors.list = async () => [];
     RemoteWorkspace.previewIndependentConflictBatch = async () => {
       window.__batchWrites = 0;
-      return { examined: 3, safe: [
-        { sync_id: "m1", store: "jogos", display_name: "Jogo 1", mergeable: true, expected_remote: "r1", expected_local: "l1", local_changes: ["resultado"], remote_changes: ["nota_tatica"], payload: { resultado: "2-1", nota_tatica: "Apoio" } },
-        { sync_id: "m2", store: "jogos", display_name: "Jogo 2", mergeable: true, expected_remote: "r2", expected_local: "l2", local_changes: ["local"], remote_changes: ["data"], payload: { local: "Campo A", data: "2026-10-04" } },
-      ], needs_review: [{ sync_id: "m3", store: "jogos", display_name: "Jogo 3", mergeable: false, reason: "Os dois lados alteraram o mesmo campo." }] };
+      return { examined: 4, safe: [
+        { sync_id: "m1", store: "jogos", display_name: "Jogo 1", mergeable: true, resolution: "merge_non_overlapping", expected_remote: "r1", expected_local: "l1", local_changes: ["resultado"], remote_changes: ["nota_tatica"], payload: { resultado: "2-1", nota_tatica: "Apoio" } },
+        { sync_id: "m2", store: "jogos", display_name: "Jogo 2", mergeable: true, resolution: "merge_non_overlapping", expected_remote: "r2", expected_local: "l2", local_changes: ["local"], remote_changes: ["data"], payload: { local: "Campo A", data: "2026-10-04" } },
+        { sync_id: "m3", store: "jogos", display_name: "Jogo 3", mergeable: true, resolution: "keep_remote", single_change: true, changed_side: "remote", expected_remote: "r3", expected_local: "l3", local_changes: [], remote_changes: ["nota_tatica"], payload: { nota_tatica: "Versão remota" } },
+      ], needs_review: [{ sync_id: "m4", store: "jogos", display_name: "Jogo 4", mergeable: false, reason: "Os dois lados alteraram o mesmo campo." }] };
     };
     RemoteWorkspace.resolveIndependentConflictBatch = async (items) => {
       window.__batchWrites++;
@@ -1245,16 +1274,17 @@ test("pré-visualização em lote deixa os conflitos sobrepostos para revisão e
     };
     go("#/definicoes");
   });
-  await page.getByRole("button", { name: "Analisar combinações seguras (3)" }).click();
-  await expect(page.getByText("2 combinações seguras · 1 conflito para rever")).toBeVisible();
+  await page.getByRole("button", { name: "Analisar resoluções seguras (4)" }).click();
+  await expect(page.getByText("3 resoluções seguras · 1 conflito para rever")).toBeVisible();
   await page.getByText("1 conflito(s) precisam de escolha campo a campo", { exact: true }).click();
   await expect(page.getByText("Os dois lados alteraram o mesmo campo.")).toBeVisible();
+  await expect(page.getByText("Só workspace remoto alterou: Nota tática. Será mantida essa versão.")).toBeVisible();
   expect(await page.evaluate(() => window.__batchWrites)).toBe(0);
   let resultMessage = "";
   page.on("dialog", async dialog => { if (dialog.type() === "alert") resultMessage = dialog.message(); await dialog.accept(); });
-  await page.getByRole("button", { name: "Combinar e sincronizar 2 registos" }).click();
-  await expect.poll(() => page.evaluate(() => window.__batchItems?.length)).toBe(2);
-  expect(await page.evaluate(() => window.__batchItems.map(item => item.sync_id))).toEqual(["m1", "m2"]);
+  await page.getByRole("button", { name: "Aplicar e sincronizar 3 resoluções seguras" }).click();
+  await expect.poll(() => page.evaluate(() => window.__batchItems?.length)).toBe(3);
+  expect(await page.evaluate(() => window.__batchItems.map(item => item.sync_id))).toEqual(["m1", "m2", "m3"]);
   expect(resultMessage).toContain("1 conflito continua preservado");
 });
 
