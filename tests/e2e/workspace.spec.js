@@ -1497,6 +1497,37 @@ test("sync concluída respeita mudança da barra de scroll sem evento wheel", as
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(920);
 });
 
+test("sync concluída respeita touchmove recebido durante a atualização", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.waitForFunction(() => typeof router === "function" && typeof WorkspaceStore !== "undefined");
+  await page.evaluate(async () => {
+    const buildSnapshot = WorkspaceStore.buildSnapshot.bind(WorkspaceStore);
+    let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    window.__releaseWorkspaceTouchRender = release;
+    window.__workspaceTouchRenderPending = false;
+    WorkspaceStore.buildSnapshot = async (...args) => {
+      if (!window.__workspaceTouchRenderPending) {
+        window.__workspaceTouchRenderPending = true;
+        await gate;
+      }
+      return buildSnapshot(...args);
+    };
+    document.getElementById("app").style.minHeight = "1800px";
+    window.scrollTo(0, 640);
+    window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", { detail: { pulled: 1, pushed: 0, conflicts: [], deleted: 0 } }));
+  });
+  await expect.poll(() => page.evaluate(() => window.__workspaceTouchRenderPending)).toBe(true);
+  await page.evaluate(() => {
+    window.scrollTo(0, 920);
+    window.dispatchEvent(new Event("touchmove", { bubbles: true }));
+    window.__releaseWorkspaceTouchRender();
+  });
+  await expect(page.getByText("Human–AI Shared Workspace")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(920);
+});
+
 test("render do Workspace não repõe o scroll capturado se a barra mudar antes do frame", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");

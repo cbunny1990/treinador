@@ -5,7 +5,7 @@ const { defineConfig } = require("@playwright/test");
 module.exports = defineConfig({
   testDir: "./tests/e2e",
   testMatch: "workspace.spec.js",
-  grep: /sync do Workspace corre em fundo, atualiza a vista uma vez e preserva o scroll|sync concluída não repõe o scroll antigo se o treinador rolar durante a atualização/,
+  grep: /sync do Workspace corre em fundo, atualiza a vista uma vez e preserva o scroll|sync concluída não repõe o scroll antigo se o treinador rolar durante a atualização|sync concluída respeita touchmove recebido/,
   timeout: 30000,
   workers: 1,
   use: {
