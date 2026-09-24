@@ -149,7 +149,7 @@ function linesText(value){return Array.isArray(value)?value.join(String.fromChar
 function matchStructure(match){return VisionCalendar.normalizeMatch(match||{});}
 function docTypeLabel(type){return WORKSPACE_DOC_LABELS[type]||"Documento";}
 function docTypeShort(type){
-  return {training_plan:"PT",match_analysis:"AJ",weekly_plan:"S",team_goal:"EE",season_index:"Ép",note:"N",brief:"B"}[type]||"D";
+  return {training_plan:"PT",match_analysis:"AJ",weekly_plan:"S",team_goal:"EE",season_index:"Ép",player_archive:"HA",note:"N",brief:"B"}[type]||"D";
 }
 
 async function routeOnce(){
@@ -163,6 +163,7 @@ async function routeOnce(){
     if(!root) return viewWorkspace({skipRemoteSync:skipRemoteSync});
     if(root==="equipa"){
       if(parts[1]==="editar") return viewTeamForm();
+      if(parts[1]==="arquivo-atletas") return viewArchivedPlayers();
       if(parts[1]==="jogador" && parts[2]==="novo") return viewPlayerForm();
       if(parts[1]==="jogador" && parts[2] && parts[3]==="editar") return viewPlayerForm(parts[2]);
       if(parts[1]==="jogador" && parts[2]) return viewPlayer(parts[2]);
@@ -497,12 +498,18 @@ async function viewTeam(){
     return '<a class="card player-card" href="#/equipa/jogador/'+p.id+'">'+avatarHTML(p)+'<span class="grow"><span class="title">'+esc(p.nome)+'</span><span class="meta">Fora do plantel</span></span><span class="badge system">Retirado</span></a>';
   }).join(""):"";
   var html='<div class="profile-grid">';
-  html+='<section class="panel hero-main">'+teamCrestHTML(team,true)+'<div class="kicker">Perfil da equipa</div><h2 class="display" style="font-size:28px">'+esc(team.nome||"Equipa")+'</h2><p class="lead">'+esc([team.clube,team.escalao,team.epoca,team.competicao,team.formato].filter(Boolean).join(" · ")||"Completa os dados base da equipa.")+'</p><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/editar">Editar equipa</a><a class="btn" href="#/equipa/jogador/novo">Adicionar jogador</a></div></section>';
+  html+='<section class="panel hero-main">'+teamCrestHTML(team,true)+'<div class="kicker">Perfil da equipa</div><h2 class="display" style="font-size:28px">'+esc(team.nome||"Equipa")+'</h2><p class="lead">'+esc([team.clube,team.escalao,team.epoca,team.competicao,team.formato].filter(Boolean).join(" · ")||"Completa os dados base da equipa.")+'</p><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/editar">Editar equipa</a><a class="btn" href="#/equipa/jogador/novo">Adicionar jogador</a><a class="btn secondary" href="#/equipa/arquivo-atletas">Histórico de atletas</a></div></section>';
   html+='<section class="panel hero-side"><div class="metric-label">Modelo de trabalho</div><p class="lead">A equipa é a fonte factual do workspace. O agente deve ler estes dados, nunca inventá-los.</p><div class="notice" style="margin-top:14px">A IA autorizada pode consultar os mesmos dados e preparar propostas através do MCP. Gere os acessos em <a class="link" href="#/definicoes">Definições</a>. As decisões e ações de jogo continuam a exigir confirmação do treinador.</div></section></div>';
   html+='<section class="section"><div class="section-head"><div><h2>Plantel</h2><p>'+players.length+' jogador(es) · '+availableCount+' disponível(eis) · '+(players.length-availableCount)+' não disponível(eis)</p></div><a class="link" href="#/equipa/jogador/novo">Adicionar</a></div><div class="player-grid">'+playerCards+'</div></section>';
   if(retiredPlayers.length) html+='<section class="section"><div class="section-head"><div><h2>Fora do plantel</h2><p>'+retiredPlayers.length+' jogador(es) retirado(s)</p></div></div><div class="player-grid">'+retiredCards+'</div></section>';
 
   setView(team.nome||"Equipa",html,"Equipa");
+}
+async function viewArchivedPlayers(){
+  var docs=(await WorkspaceStore.listDocuments(DEFAULT_TEAM_ID,{includeArchived:true})).filter(function(doc){return doc.type==="player_archive";}).sort(function(a,b){return String(b.updated_at||b.created_at).localeCompare(String(a.updated_at||a.created_at));});
+  var cards=docs.map(function(doc){var archive=PlayerArchive.state(doc),goals=archive.development_goals.items;return '<article class="list-item"><div class="row"><div class="grow"><div class="title">'+esc(archive.player.name)+(archive.player.number!=null?' · #'+esc(archive.player.number):'')+'</div><div class="meta">'+esc(archive.player.age_group||archive.team_age_group||'Escalão não registado')+' · Arquivado '+fmtDate(archive.archived_at.slice(0,10))+' · '+goals.length+' objetivo(s)</div></div><span class="badge archived">Histórico</span></div>'+(goals.length?'<div class="team-week-detail">'+goals.map(function(goal){return '<section><h4>'+esc(goal.title)+' · '+esc(PlayerGoals.states[goal.status]||goal.status)+'</h4><p class="meta">Desde '+fmtDate(goal.started_at)+(goal.updated_at?' · Atualizado '+fmtDate(String(goal.updated_at).slice(0,10)):'')+'</p><p>'+esc(goal.notes||'Sem observações registadas.')+'</p>'+(goal.history?.length?'<details><summary>Histórico de alterações · '+goal.history.length+'</summary><ol>'+goal.history.map(function(version){return '<li>'+fmtDate(String(version.updated_at||'').slice(0,10))+' · '+esc(version.title||goal.title)+' · '+esc(PlayerGoals.states[version.status]||version.status)+(version.notes?' · '+esc(version.notes):'')+'</li>';}).join('')+'</ol></details>':'')+(goal.evidence_refs?.length?'<p class="meta">Evidências ligadas: '+goal.evidence_refs.map(function(ref){return esc(ref.type)+' · '+esc(ref.id);}).join(' · ')+'</p>':'')+(goal.exercise_refs?.length?'<p class="meta">Exercícios ligados: '+goal.exercise_refs.map(esc).join(' · ')+'</p>':'')+'</section>';}).join('')+'</div>':'<p class="meta">Não havia objetivos individuais registados quando o atleta foi removido.</p>')+'<p class="meta">Registo de leitura. As referências a jogos, treinos, observações e exercícios mantêm os UUIDs de origem. Nenhuma fotografia foi copiada para este arquivo.</p></article>';}).join("");
+  var html='<section class="panel hero-main"><div class="kicker">Equipa · Histórico</div><h2 class="display">Atletas removidos</h2><p class="lead">Arquivo sincronizado dos objetivos individuais e respetivas alterações. Os jogos, treinos e fotografias permanecem nos seus registos originais.</p><div class="toolbar"><a class="btn secondary" href="#/equipa">Voltar à equipa</a></div></section><section class="section"><div class="list">'+(cards||'<div class="empty">Ainda não há fichas de atletas removidos.</div>')+'</div></section>';
+  setView("Histórico de atletas",html,"Equipa");
 }
 
 async function viewTeamForm(){
@@ -693,7 +700,8 @@ async function viewDocuments(options){
 }
 async function viewDocumentForm(id){
   var doc=id?await WorkspaceStore.getDocument(id):null;
-  var typeOpts=WORKSPACE_DOC_TYPES.map(function(type){
+  if(doc?.type==="player_archive")return go("#/equipa/arquivo-atletas");
+  var typeOpts=WORKSPACE_EDITABLE_DOC_TYPES.map(function(type){
     return '<option value="'+type+'" '+((doc&&doc.type||"training_plan")===type?"selected":"")+'>'+esc(docTypeLabel(type))+'</option>';
   }).join("");
   var statusLabels={draft:"Rascunho",ready:"Pronto",approved:"Aprovado"};
@@ -725,6 +733,7 @@ function renderMediaCards(items){
 }
 async function viewDocument(id){
   var doc=await WorkspaceStore.getDocument(id);
+  if(doc?.type==="player_archive")return go("#/equipa/arquivo-atletas");
   if(!doc||doc.status==="archived") return go("#/planos");
   var media=await HeadCoachMedia.listForSubject("document",id);
   var html='<section class="panel hero-main">';
@@ -1090,6 +1099,15 @@ async function restorePlayerToRoster(id){
 async function deletePlayerPermanently(id){
   var player=await DB.obter("jogadores",id);
   if(!player) throw new Error("Jogador não encontrado.");
+  var goals=PlayerGoals.state(player).items;
+  if(goals.length){
+    var team=await HeadCoachMemory.ensureTeam(),playerRef=String(player.sync_id||""),archiveSyncId=await PlayerArchive.stableId(DEFAULT_TEAM_ID,playerRef),archive=PlayerArchive.snapshot(player,{teamId:DEFAULT_TEAM_ID,teamName:team.nome,teamAgeGroup:team.escalao}),archiveBody=JSON.stringify(archive),archiveTitle="Histórico · "+String(player.nome||"Atleta").slice(0,150);
+    await DB.criarWorkspaceDocumentSeAusente({team_id:DEFAULT_TEAM_ID,type:"player_archive",title:archiveTitle,body:archiveBody,status:"archived",external_key:"player-archive:"+DEFAULT_TEAM_ID+":"+playerRef,sync_id:archiveSyncId,created_by:"human",created_by_label:HUMAN_LABEL,updated_by:"human",updated_by_label:HUMAN_LABEL});
+    var saved=(await DB.porIndice("workspace_documents","team_id",DEFAULT_TEAM_ID)).find(function(doc){return doc.type==="player_archive"&&doc.sync_id===archiveSyncId;});if(!saved)throw new Error("O arquivo histórico não foi confirmado localmente; o atleta continua na equipa.");var existingArchive=PlayerArchive.state(saved),currentRevision=archive.development_goals.revision||0,savedRevision=existingArchive.development_goals.revision||0;
+    if(savedRevision>currentRevision)throw new Error("O arquivo tem uma revisão mais recente do que a ficha local. Atualiza e compara antes de remover o atleta.");
+    if(savedRevision===currentRevision&&JSON.stringify(existingArchive.development_goals)!==JSON.stringify(archive.development_goals))throw new Error("O arquivo e a ficha têm alterações diferentes. Compara as versões antes de remover o atleta.");
+    if(savedRevision<currentRevision){await DB.modificar("workspace_documents",saved.id,function(current){if(current.sync_id!==archiveSyncId||current.updated_at!==saved.updated_at)throw new Error("O arquivo foi alterado noutro dispositivo. Compara as versões antes de remover o atleta.");return Object.assign({},current,{title:archiveTitle,body:archiveBody,updated_at:new Date().toISOString(),updated_by:"human",updated_by_label:HUMAN_LABEL});});}
+  }
   await removePlayerFromOpenMatches(player);
   await DB.apagar("jogadores",id);
   await logHuman("deleted_player","Retirou jogador definitivamente · "+player.nome,"player",player.sync_id||id);
@@ -1407,7 +1425,7 @@ async function viewSearch(){
     DB.percorrerIndice("treinos","team_id",DEFAULT_TEAM_ID,function(t){if(t.sync_id)trainingOrigins.set(String(t.sync_id),t.id);add("Treino",t.objetivo||t.escalao,t.data,"#/consulta/"+t.id,{...t,blocks:t.blocos},"training");})
   ]);
   exercises.filter(function(e){return e.workspace_v2;}).forEach(function(e){add("Exercício",e.nome,e.updated_at,"#/exercicios/"+e.id,e,"exercise");});
-  docs.forEach(function(d){var target=d.type==="season_index"?"#/epocas":d.type==="weekly_plan"||d.type==="team_goal"?"#/evolucao":"#/planos/"+d.id,category=d.type==="team_goal"?"objective":d.type==="weekly_plan"?"training":"document";add(WORKSPACE_DOC_LABELS[d.type]||"Documento",d.title,d.target_date||d.updated_at,target,{...d,body:d.body},category);});
+  docs.forEach(function(d){var target=d.type==="season_index"?"#/epocas":d.type==="player_archive"?"#/equipa/arquivo-atletas":d.type==="weekly_plan"||d.type==="team_goal"?"#/evolucao":"#/planos/"+d.id,category=d.type==="team_goal"?"objective":d.type==="weekly_plan"?"training":d.type==="player_archive"?"player":"document";add(WORKSPACE_DOC_LABELS[d.type]||"Documento",d.title,d.target_date||d.updated_at,target,{...d,body:d.body},category);});
   memory.forEach(function(m){var refs=m.subject_refs||[],sourceType=m.source?.ref_type,sourceId=m.source?.ref_id,origin=sourceType&&sourceId?{type:sourceType,id:sourceId}:refs.find(x=>x.type==="match"||x.type==="training"),linkedMatch=origin?.type==="match"&&matchOrigins.get(String(origin.id)),linkedTraining=origin?.type==="training"&&trainingOrigins.get(String(origin.id)),subject=refs.find(x=>x.type==="player"),player=subject&&players.find(p=>String(p.sync_id)===String(subject.id)),href=linkedMatch?"#/equipa/jogo/"+linkedMatch:linkedTraining?"#/treinos/"+linkedTraining:player?"#/equipa/jogador/"+player.id:"#/timeline/memory/"+m.id;add("Observação",m.title,m.occurred_at,href,m,"observation",player?.sync_id);});
   media.forEach(function(m){add("Media",m.title,m.created_at,"#/media",m,"media");});
   var typeOptions=[["all","Tudo"],["player","Atletas"],["match","Jogos"],["training","Treinos"],["exercise","Exercícios"],["objective","Objetivos"],["observation","Observações"],["document","Documentos"],["media","Media"]].map(x=>'<option value="'+x[0]+'" '+(kind===x[0]?"selected":"")+'>'+x[1]+'</option>').join(""),seasonOptions='<option value="">Todas as épocas</option>'+(seasonId&&!season?'<option value="'+esc(seasonId)+'" selected>Época indisponível</option>':'')+seasonState.items.map(x=>'<option value="'+esc(x.id)+'" '+(seasonId===x.id?"selected":"")+'>'+esc(x.name)+'</option>').join("");

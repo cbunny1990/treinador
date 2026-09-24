@@ -1,13 +1,15 @@
 "use strict";
 
 const WORKSPACE_DEFAULT_TEAM_ID = typeof DEFAULT_TEAM_ID === "undefined" ? "default" : DEFAULT_TEAM_ID;
-const WORKSPACE_DOC_TYPES = ["training_plan", "match_analysis", "weekly_plan", "team_goal", "season_index", "note", "brief"];
+const WORKSPACE_DOC_TYPES = ["training_plan", "match_analysis", "weekly_plan", "team_goal", "season_index", "player_archive", "note", "brief"];
+const WORKSPACE_EDITABLE_DOC_TYPES = WORKSPACE_DOC_TYPES.filter((type) => type !== "player_archive");
 const WORKSPACE_DOC_LABELS = {
   training_plan: "Plano de treino",
   match_analysis: "Análise de jogo",
   weekly_plan: "Plano semanal",
   team_goal: "Objetivo da equipa",
   season_index: "Arquivo de épocas",
+  player_archive: "Histórico de atleta",
   note: "Nota",
   brief: "Briefing",
 };
@@ -337,7 +339,7 @@ const WorkspaceStore = {
 
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
-    WORKSPACE_DOC_TYPES, WORKSPACE_DOC_LABELS, WORKSPACE_STATUSES,
+    WORKSPACE_DOC_TYPES, WORKSPACE_EDITABLE_DOC_TYPES, WORKSPACE_DOC_LABELS, WORKSPACE_STATUSES,
     normalizarWorkspaceDocument, normalizarActivity, workspaceTimeline, workspacePriority,
   };
 }

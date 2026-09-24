@@ -188,6 +188,32 @@ const DB = {
     _notifyRemoteSync(store, options);
     return id;
   },
+  async criarWorkspaceDocumentSeAusente(obj) {
+    if (!obj?.team_id || !obj?.type || !obj?.sync_id) throw new Error("Documento partilhado precisa de equipa, tipo e UUID estável.");
+    const db = await abrirDB();
+    let created = false;
+    const result = await new Promise((resolve, reject) => {
+      const tx = db.transaction("workspace_documents", "readwrite"), os = tx.objectStore("workspace_documents");
+      let id, failure = null;
+      const cursor = os.index("team_type").openCursor(IDBKeyRange.only([obj.team_id, obj.type]));
+      cursor.onsuccess = () => {
+        const row = cursor.result;
+        if (row) {
+          if (_visibleInSelectedRemoteWorkspace(row.value) && row.value.sync_id === obj.sync_id) { id = row.primaryKey; return; }
+          row.continue();
+          return;
+        }
+        try { created = true; const add = os.add(_prepareSyncRecord("workspace_documents", obj)); add.onsuccess = () => { id = add.result; }; add.onerror = () => { failure = add.error; }; }
+        catch (error) { failure = error; tx.abort(); }
+      };
+      cursor.onerror = () => { failure = cursor.error; };
+      tx.oncomplete = () => resolve({ id, created });
+      tx.onabort = () => reject(failure || tx.error || new Error("Não foi possível guardar o documento partilhado."));
+      tx.onerror = () => { failure = failure || tx.error; };
+    });
+    if (result.created) _notifyRemoteSync("workspace_documents");
+    return result;
+  },
   async atualizar(store, obj, options = {}) {
     const os = await _tx(store, "readwrite");
     const result = await _prom(os.put(_prepareSyncRecord(store, obj, options)));
