@@ -152,6 +152,29 @@ test("workspace indica falha de sincronização e limpa o aviso após recuperaç
   await expect(page.getByRole("status").filter({ hasText: "Não foi possível confirmar a sincronização." })).toHaveCount(0);
 });
 
+test("falha da sincronização automática fica visível no telemóvel e desaparece quando recupera", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/#/equipa/jogador/novo");
+  await page.getByLabel("Notas factuais").fill("Texto por guardar durante uma falha de rede");
+  await page.evaluate(() => {
+    clearTimeout(RemoteWorkspace._syncTimer);
+    clearTimeout(RemoteWorkspace._syncRetryTimer);
+    RemoteWorkspace._scheduleSyncRetry = () => 2000;
+    RemoteWorkspace.status = async () => ({ signedIn: true, remoteTeamId: "team-test" });
+    RemoteWorkspace.syncNow = async () => { throw new Error("URL temporário secreto?token=nao-expor"); };
+    RemoteWorkspace.scheduleSync(0);
+  });
+  const pending = page.getByRole("status").filter({ hasText: "Sincronização pendente" });
+  await expect(pending).toBeVisible();
+  await expect(pending).toHaveAttribute("aria-live", "polite");
+  await expect(page.getByLabel("Notas factuais")).toHaveValue("Texto por guardar durante uma falha de rede");
+  expect(await pending.textContent()).not.toContain("nao-expor");
+
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", { detail: {} })));
+  await expect(pending).toHaveCount(0);
+  await expect(page.getByLabel("Notas factuais")).toHaveValue("Texto por guardar durante uma falha de rede");
+});
+
 test("Workspace lê o estado remoto e um único snapshot local em paralelo", async ({ page }) => {
   await page.goto("/#/calendario");
   await expect(page.getByRole("heading", { name: "Calendário" })).toBeVisible();
@@ -1637,14 +1660,12 @@ test("estado do jogador condiciona convocatória e saída do plantel preserva re
   expect(stored.stillSubstitute).toBe(false);
 });
 
-test("falha do upload remoto preserva a foto na fila local", async ({ page }) => {
+test("foto do atleta persiste na fila local antes de iniciar a sincronização remota", async ({ page }) => {
   await page.goto("/#/equipa/jogador/novo");
   await page.evaluate(() => {
-    RemoteWorkspace.canUpload = async () => true;
-    RemoteWorkspace.uploadFileMedia = async () => { throw new Error("rede interrompida"); };
+    window.__photoSyncDelays = [];
+    RemoteWorkspace.scheduleSync = (delay = 1400) => window.__photoSyncDelays.push(delay);
   });
-  let fallbackNotice = "";
-  page.on("dialog", async (dialog) => { fallbackNotice = dialog.message(); await dialog.accept(); });
   await page.getByLabel("Nome").fill("Foto Upload Recuperação E2E");
   await page.locator('input[name="foto_file"]').setInputFiles({
     name: "atleta.png",
@@ -1652,14 +1673,111 @@ test("falha do upload remoto preserva a foto na fila local", async ({ page }) =>
     buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"),
   });
   await page.getByRole("button", { name: "Guardar", exact: true }).click();
-  await expect.poll(() => fallbackNotice).toContain("guardada neste dispositivo");
   await expect(page).toHaveURL(/#\/equipa\/jogador\/\d+$/);
   const saved = await page.evaluate(async () => {
     const player = (await DB.listar("jogadores")).find((row) => row.nome === "Foto Upload Recuperação E2E");
     const media = await HeadCoachMedia.listForSubject("player", player.id);
-    return { photo: player.foto, media: media.find((item) => item.note === "Foto de perfil do atleta") };
+    return { photo: player.foto, ref: player.profile_media_ref, media: media.find((item) => item.note === "Foto de perfil do atleta"), syncDelays: window.__photoSyncDelays };
   });
   expect(saved.photo).toMatch(/^data:image\/png;base64,/);
   expect(saved.media.data_url).toMatch(/^data:image\/png;base64,/);
   expect(saved.media.sync_dirty).toBe(true);
+  expect(saved.ref).toBe(saved.media.sync_id);
+  expect(saved.syncDelays).toContain(0);
+});
+
+test("editar atleta guarda e sincroniza foto grande de telemóvel sem duplicar em submissão repetida", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/#/equipa");
+  const playerId = await page.evaluate(async () => DB.criar("jogadores", {
+    team_id: DEFAULT_TEAM_ID, nome: "Atleta Foto Telemóvel", numero: 8,
+    estado_disponibilidade: "disponivel",
+  }));
+  await page.goto("/#/equipa/jogador/" + playerId + "/editar");
+  await page.evaluate(() => {
+    window.__photoSyncDelays = [];
+    RemoteWorkspace.scheduleSync = (delay = 1400) => window.__photoSyncDelays.push(delay);
+  });
+  const largePhoto = await page.evaluate(() => new Promise((resolve, reject) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1900; canvas.height = 1400;
+    const context = canvas.getContext("2d"), pixels = context.createImageData(canvas.width, canvas.height);
+    let seed = 123456789;
+    for (let i = 0; i < pixels.data.length; i += 4) {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      pixels.data[i] = seed & 255; pixels.data[i + 1] = (seed >>> 8) & 255;
+      pixels.data[i + 2] = (seed >>> 16) & 255; pixels.data[i + 3] = 255;
+    }
+    context.putImageData(pixels, 0, 0);
+    canvas.toBlob((blob) => {
+      if (!blob) return reject(new Error("Falhou a criação da fotografia grande de teste."));
+      const reader = new FileReader();
+      reader.onload = () => resolve({ dataUrl: reader.result, size: blob.size });
+      reader.onerror = () => reject(new Error("Falhou a leitura da fotografia de teste."));
+      reader.readAsDataURL(blob);
+    }, "image/png");
+  }));
+  expect(largePhoto.size).toBeGreaterThan(5 * 1024 * 1024);
+  await page.locator('input[name="foto_file"]').setInputFiles({
+    name: "foto-telemovel.png", mimeType: "image/png",
+    buffer: Buffer.from(largePhoto.dataUrl.split(",")[1], "base64"),
+  });
+  await page.evaluate(() => {
+    const form = document.querySelector('form[data-form="player"]');
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await expect(page).toHaveURL(new RegExp("#/equipa/jogador/" + playerId + "$"));
+  const saved = await page.evaluate(async (id) => {
+    const player = await DB.obter("jogadores", id);
+    const media = await HeadCoachMedia.listForSubject("player", id);
+    return { player, media: media.find((item) => item.note === "Foto de perfil do atleta"), profilePhotoCount: media.filter((item) => item.note === "Foto de perfil do atleta").length, syncDelays: window.__photoSyncDelays };
+  }, playerId);
+  expect(saved.player.foto, JSON.stringify({ player: saved.player, media: saved.media && { mime_type: saved.media.mime_type, size: saved.media.size, dirty: saved.media.sync_dirty }, delays: saved.syncDelays })).toMatch(/^data:image\/jpeg;base64,/);
+  expect(saved.player.sync_dirty).toBe(true);
+  expect(saved.media.data_url).toMatch(/^data:image\/jpeg;base64,/);
+  expect(saved.media.size).toBeLessThan(5 * 1024 * 1024);
+  expect(saved.media.sync_dirty).toBe(true);
+  expect(saved.profilePhotoCount).toBe(1);
+  expect(saved.player.profile_media_ref).toBe(saved.media.sync_id);
+  expect(saved.syncDelays).toContain(0);
+});
+
+test("foto grande guarda em telemóvel sem createImageBitmap e fica abaixo do limite sincronizável", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/#/equipa/jogador/novo");
+  await page.evaluate(() => Object.defineProperty(window, "createImageBitmap", { configurable: true, value: undefined }));
+  await page.getByLabel("Nome").fill("Foto Sem Bitmap E2E");
+  const largePhoto = await page.evaluate(() => new Promise((resolve, reject) => {
+    const canvas = document.createElement("canvas"); canvas.width = 1900; canvas.height = 1400;
+    const context = canvas.getContext("2d"), pixels = context.createImageData(canvas.width, canvas.height);
+    let seed = 987654321;
+    for (let i = 0; i < pixels.data.length; i += 4) {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      pixels.data[i] = seed & 255; pixels.data[i + 1] = (seed >>> 8) & 255;
+      pixels.data[i + 2] = (seed >>> 16) & 255; pixels.data[i + 3] = 255;
+    }
+    context.putImageData(pixels, 0, 0);
+    canvas.toBlob(blob => {
+      if (!blob) return reject(new Error("Falhou a imagem de teste."));
+      const reader = new FileReader(); reader.onload = () => resolve({ dataUrl: reader.result, size: blob.size });
+      reader.onerror = () => reject(new Error("Falhou a leitura da imagem de teste.")); reader.readAsDataURL(blob);
+    }, "image/png");
+  }));
+  expect(largePhoto.size).toBeGreaterThan(5 * 1024 * 1024);
+  await page.locator('input[name="foto_file"]').setInputFiles({
+    name: "foto-sem-bitmap.png", mimeType: "image/png", buffer: Buffer.from(largePhoto.dataUrl.split(",")[1], "base64"),
+  });
+  await page.getByRole("button", { name: "Guardar", exact: true }).click();
+  await expect(page).toHaveURL(/#\/equipa\/jogador\/\d+$/);
+  const saved = await page.evaluate(async () => {
+    const player = (await DB.listar("jogadores")).find(row => row.nome === "Foto Sem Bitmap E2E");
+    const media = await HeadCoachMedia.listForSubject("player", player.id);
+    const photo = media.find(item => item.note === "Foto de perfil do atleta");
+    return { player, photo };
+  });
+  expect(saved.player.foto).toMatch(/^data:image\/jpeg;base64,/);
+  expect(saved.photo.data_url).toBe(saved.player.foto);
+  expect(saved.photo.size).toBeLessThan(5 * 1024 * 1024);
+  expect(saved.photo.sync_dirty).toBe(true);
 });

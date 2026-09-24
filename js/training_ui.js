@@ -94,7 +94,7 @@ async function viewExercises(){
   const exercises = await tuExercises();
   const html = '<div class="section-head"><div><h2>Biblioteca de exercícios</h2><p>Exercícios reutilizáveis no workspace</p></div>'+
     '<div class="toolbar"><a class="btn secondary" href="#/treinos">Treinos</a><a class="btn accent" href="#/exercicios/novo">Novo exercício</a></div></div>'+
-    '<div class="exercise-filter-bar"><input data-action="exercise-filter" placeholder="Pesquisar exercício, objetivo ou tag"><label class="favorite-filter"><input type="checkbox" data-action="exercise-favorites"> Só favoritos</label></div>'+
+    '<div class="exercise-filter-bar"><input data-action="exercise-filter" aria-label="Pesquisar exercícios" placeholder="Pesquisar exercício, objetivo ou tag"><label class="favorite-filter"><input type="checkbox" data-action="exercise-favorites"> Só favoritos</label></div>'+
     (exercises.length?'<div class="exercise-grid">'+exercises.map(tuExerciseCard).join("")+'</div>':'<div class="empty">Ainda não existem exercícios Vision Coach nesta biblioteca.</div>');
   setView("Exercícios",html,"Planos");
 }

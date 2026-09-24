@@ -1039,6 +1039,53 @@ function fileToDataURL(file,maxBytes){
     reader.readAsDataURL(file);
   });
 }
+async function preparePlayerPhoto(file){
+  var maxInputBytes=15*1024*1024,maxStoredBytes=5*1024*1024;
+  if(!file||!file.size)return null;
+  if(file.size>maxInputBytes)throw new Error("A fotografia excede 15 MB. Escolhe uma versão mais pequena.");
+  if(!String(file.type||"").startsWith("image/"))throw new Error("Escolhe um ficheiro de imagem para a foto do atleta.");
+  var commonImageType=/^image\/(?:jpeg|png|webp)$/i.test(file.type||"");
+  if(file.size<=maxStoredBytes&&commonImageType)return{file:file,dataUrl:await fileToDataURL(file,maxStoredBytes)};
+  var bitmap=null,objectUrl=null;
+  if(typeof createImageBitmap==="function")try{bitmap=await createImageBitmap(file);}catch(_){}
+  if(!bitmap){
+    try{
+      objectUrl=URL.createObjectURL(file);
+      bitmap=await new Promise(function(resolve,reject){
+        var image=new Image();
+        image.onload=function(){
+          if(!image.naturalWidth||!image.naturalHeight){reject(new Error("A imagem não tem dimensões válidas."));return;}
+          resolve({width:image.naturalWidth,height:image.naturalHeight,draw:function(context,w,h){context.drawImage(image,0,0,w,h);},close:function(){image.src="";}});
+        };
+        image.onerror=function(){reject(new Error("O telemóvel não conseguiu descodificar este formato de imagem. Exporta a foto como JPEG ou PNG e tenta novamente."));};
+        image.src=objectUrl;
+      });
+    }catch(error){
+      if(objectUrl)URL.revokeObjectURL(objectUrl);
+      throw error;
+    }
+  }
+  try{
+    var scale=Math.min(1,1600/Math.max(bitmap.width,bitmap.height)),canvas=document.createElement("canvas"),blob=null;
+    for(var pass=0;pass<3;pass++){
+      canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+      var context=canvas.getContext("2d");
+      if(!context)throw new Error("O telemóvel não conseguiu preparar a fotografia.");
+      context.fillStyle="#fff";context.fillRect(0,0,canvas.width,canvas.height);
+      if(bitmap.draw)bitmap.draw(context,canvas.width,canvas.height);else context.drawImage(bitmap,0,0,canvas.width,canvas.height);
+      for(var quality=0.82;quality>=0.46;quality-=0.12){
+        blob=await new Promise(function(resolve){canvas.toBlob(resolve,"image/jpeg",quality);});
+        if(blob&&blob.size<=maxStoredBytes)break;
+      }
+      if(blob&&blob.size<=maxStoredBytes)break;
+      scale*=0.72;
+    }
+    if(!blob||blob.size>maxStoredBytes)throw new Error("Não foi possível reduzir a fotografia para sincronização.");
+    var safeName=String(file.name||"atleta").replace(/\.[^.]+$/,"")+".jpg";
+    var optimized=typeof File==="function"?new File([blob],safeName,{type:"image/jpeg",lastModified:Date.now()}):blob;
+    return{file:optimized,dataUrl:await fileToDataURL(optimized,maxStoredBytes)};
+  }finally{bitmap.close?.();if(objectUrl)URL.revokeObjectURL(objectUrl);}
+}
 function splitSubject(value){
   var raw=String(value||"");
   if(raw.indexOf(":")<0) return {type:null,id:null};
@@ -1546,7 +1593,16 @@ app.addEventListener("submit",async function(event){
     return go("#/equipa");
   }
   if(type==="player"){
+    if(form.dataset.saving==="true")return;
+    form.dataset.saving="true";
+    var playerSubmit=form.querySelector('button[type="submit"]');
+    if(playerSubmit){playerSubmit.disabled=true;playerSubmit.setAttribute("aria-busy","true");}
+    try{
     var previousPlayer=id?await DB.obter("jogadores",id):null;
+    var photoFile=fd.get("foto_file"),preparedPhoto=null;
+    if(photoFile&&photoFile.size){
+      try{preparedPhoto=await preparePlayerPhoto(photoFile);}catch(error){alert("A fotografia não foi guardada: "+error.message);return;}
+    }
     var nextAvailability=PlayerStatus.normalize(fd.get("estado_disponibilidade"));
     var playerId=await saveRecord("jogadores",id,{
       team_id:DEFAULT_TEAM_ID,
@@ -1558,49 +1614,25 @@ app.addEventListener("submit",async function(event){
       notas:fd.get("notas")||null
     });
     var savedPlayer=await DB.obter("jogadores",playerId);
-    var photoFile=fd.get("foto_file");
-    if(photoFile&&photoFile.size){
-      if(!String(photoFile.type||"").startsWith("image/")){
-        alert("Escolhe um ficheiro de imagem para a foto do atleta.");
-        return;
-      }
-      var localPhoto=await fileToDataURL(photoFile,5*1024*1024);
-      await DB.atualizar("jogadores",Object.assign({},savedPlayer,{foto:localPhoto}));
+    if(preparedPhoto){
+      photoFile=preparedPhoto.file;
+      var localPhoto=preparedPhoto.dataUrl;
+      var localPhotoId=await HeadCoachMedia.create({
+        team_id:DEFAULT_TEAM_ID,
+        subject_type:"player",
+        subject_id:playerId,
+        type:"photo",
+        title:"Foto · "+fd.get("nome"),
+        data_url:localPhoto,
+        file_name:photoFile.name||null,
+        mime_type:photoFile.type||null,
+        size:photoFile.size,
+        note:"Foto de perfil do atleta"
+      });
+      var localPhotoItem=await DB.obter("media_items",localPhotoId);
+      await DB.atualizar("jogadores",Object.assign({},savedPlayer,{foto:localPhoto,profile_media_ref:localPhotoItem.sync_id}));
       savedPlayer=await DB.obter("jogadores",playerId);
-      var saveLocalPlayerPhoto=async function(){
-        await HeadCoachMedia.create({
-          team_id:DEFAULT_TEAM_ID,
-          subject_type:"player",
-          subject_id:playerId,
-          type:"photo",
-          title:"Foto · "+fd.get("nome"),
-          data_url:localPhoto,
-          file_name:photoFile.name||null,
-          mime_type:photoFile.type||null,
-          size:photoFile.size,
-          note:"Foto de perfil do atleta"
-        });
-      };
-      var uploadError=null,uploadedRemotely=false;
-      try{
-        if(await RemoteWorkspace.canUpload()){
-          await RemoteWorkspace.uploadFileMedia(photoFile,{
-            subject_type:"player",
-            subject_id:playerId,
-            type:"photo",
-            title:"Foto · "+fd.get("nome"),
-            note:"Foto de perfil do atleta"
-          });
-          uploadedRemotely=true;
-        }
-      }catch(error){uploadError=error;}
-      if(!uploadedRemotely&&!uploadError) await saveLocalPlayerPhoto();
-      if(uploadError&&!uploadError.remoteMediaSaved){
-        await saveLocalPlayerPhoto();
-        alert("A fotografia ficou guardada neste dispositivo e será sincronizada quando a ligação estiver disponível.");
-      }else if(uploadError){
-        alert("A fotografia chegou ao workspace remoto, mas este dispositivo não confirmou a cópia local. Abre a app com Internet para a sincronizar.");
-      }
+      RemoteWorkspace.scheduleSync(0);
       await logHuman("updated_player_photo","Atualizou foto do atleta · "+fd.get("nome"),"player",savedPlayer.sync_id||playerId);
     }
     if(id&&previousPlayer&&PlayerStatus.normalize(previousPlayer.estado_disponibilidade)!==nextAvailability){
@@ -1609,6 +1641,8 @@ app.addEventListener("submit",async function(event){
     }
     await logHuman(id?"updated_player":"created_player",(id?"Atualizou jogador · ":"Adicionou jogador · ")+fd.get("nome"),"player",playerId);
     return go("#/equipa/jogador/"+playerId);
+    }catch(error){alert("Não foi possível guardar o jogador: "+error.message);return;}
+    finally{delete form.dataset.saving;if(playerSubmit){playerSubmit.disabled=false;playerSubmit.removeAttribute("aria-busy");}}
   }
   if(type==="player-goal"){
     var playerId=Number(id),player=await DB.obter("jogadores",playerId),evidenceRefs=fd.getAll("evidence_refs").map(function(value){var split=value.split(":");return{type:split.shift(),id:split.join(":")};}),goalId=fd.get("goal_id")||crypto.randomUUID();

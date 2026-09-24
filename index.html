@@ -42,7 +42,7 @@
           <h1 id="titulo">Vision Coach</h1>
         </div>
         <div class="topbar-actions">
-          <span id="badge-off" class="offline-badge" hidden>Offline</span>
+          <span id="badge-off" class="offline-badge" role="status" aria-live="polite" hidden>Offline</span>
           <a class="topbar-settings" href="#/definicoes" aria-label="Definições e ligação" title="Definições e ligação">⚙</a>
           <button class="icon-button" id="quick-capture" type="button" aria-label="Registar observação">+</button>
         </div>
@@ -133,7 +133,13 @@
       hasActiveSession(){try{return activeWorkInMemory.size>0||JSON.parse(sessionStorage.getItem(activeWorkKey)||"[]").length>0;}catch(_){return true;}}
     };
     const badge = document.getElementById("badge-off");
-    const syncNetworkBadge = () => { badge.hidden = navigator.onLine; };
+    let syncPending = false;
+    const syncNetworkBadge = () => {
+      badge.hidden = navigator.onLine && !syncPending;
+      badge.textContent = navigator.onLine ? "Sincronização pendente" : "Offline";
+    };
+    window.addEventListener("visioncoach:sync-failed", () => { syncPending = true; syncNetworkBadge(); });
+    window.addEventListener("visioncoach:sync-complete", () => { syncPending = false; syncNetworkBadge(); });
     window.addEventListener("online", syncNetworkBadge);
     window.addEventListener("offline", syncNetworkBadge);
     syncNetworkBadge();

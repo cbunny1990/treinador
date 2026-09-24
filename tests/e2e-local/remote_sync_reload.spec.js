@@ -277,9 +277,9 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
     expect(mobileConflict.remote).toBe("Edição offline no PC");
 
     const photoPlayerSyncId = crypto.randomUUID();
-    const profilePhotoSyncId = crypto.randomUUID();
+    let profilePhotoSyncId;
     const profilePhotoBytes = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7RxycAAAAASUVORK5CYII=";
-    const photoPlayerId = await page.evaluate(async (syncId) => {
+    await page.evaluate(async (syncId) => {
       const id = await DB.criar("jogadores", {
         team_id: DEFAULT_TEAM_ID, sync_id: syncId, nome: "Atleta de foto PWA", plantel_ativo: true,
       });
@@ -287,14 +287,40 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
       if (result.conflicts.some((item) => item.sync_id === syncId)) throw new Error(JSON.stringify(result.conflicts));
       return id;
     }, photoPlayerSyncId);
-    await context.setOffline(true);
-    const localPhotoId = await page.evaluate(({ playerId, syncId, bytes }) => DB.criar("media_items", {
-      team_id: DEFAULT_TEAM_ID, subject_type: "player", subject_id: playerId,
-      sync_id: syncId, type: "photo", title: "Foto de perfil original",
-      note: "Foto de perfil do atleta", file_name: "perfil.png", mime_type: "image/png", data_url: bytes,
-    }), { playerId: photoPlayerId, syncId: profilePhotoSyncId, bytes: profilePhotoBytes });
-    await context.setOffline(false);
-    const photoPush = await page.evaluate(async ({ syncId, localId }) => {
+    const phonePlayerId = await phone.evaluate(async (syncId) => {
+      const result = await RemoteWorkspace.syncNow();
+      if (result.conflicts.some((item) => item.sync_id === syncId)) throw new Error(JSON.stringify(result.conflicts));
+      return (await DB.listar("jogadores")).find((item) => item.sync_id === syncId)?.id;
+    }, photoPlayerSyncId);
+    expect(phonePlayerId).toBeTruthy();
+    await phone.goto("/#/equipa/jogador/" + phonePlayerId + "/editar");
+    await expect(phone.getByLabel("Foto do atleta")).toBeVisible();
+    await mobileContext.setOffline(true);
+    await phone.locator('input[name="foto_file"]').setInputFiles({
+      name: "perfil.png", mimeType: "image/png", buffer: Buffer.from(profilePhotoBytes.split(",")[1], "base64"),
+    });
+    await phone.getByRole("button", { name: "Guardar", exact: true }).click();
+    await expect(phone).toHaveURL(new RegExp("#/equipa/jogador/" + phonePlayerId + "$"));
+    const queuedPhoto = await phone.evaluate(async (playerId) => {
+      const player = await DB.obter("jogadores", playerId);
+      const photo = (await HeadCoachMedia.listForSubject("player", playerId))
+        .find((item) => item.note === "Foto de perfil do atleta");
+      return { playerDirty: player.sync_dirty, playerPhoto: player.foto, ref: player.profile_media_ref,
+        id: photo?.id, syncId: photo?.sync_id, dataUrl: photo?.data_url, dirty: photo?.sync_dirty,
+        fileName: photo?.file_name, mimeType: photo?.mime_type };
+    }, phonePlayerId);
+    expect(queuedPhoto.playerDirty).toBe(true);
+    expect(queuedPhoto.playerPhoto).toMatch(/^data:image\/png;base64,/);
+    expect(queuedPhoto.syncId).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(queuedPhoto.ref).toBe(queuedPhoto.syncId);
+    expect(queuedPhoto.dataUrl).toBe(queuedPhoto.playerPhoto);
+    expect(queuedPhoto.dirty).toBe(true);
+    expect(queuedPhoto.fileName).toBe("perfil.png");
+    expect(queuedPhoto.mimeType).toBe("image/png");
+    const localPhotoId = queuedPhoto.id;
+    profilePhotoSyncId = queuedPhoto.syncId;
+    await mobileContext.setOffline(false);
+    const photoPush = await phone.evaluate(async ({ syncId, localId }) => {
       const result = await RemoteWorkspace.syncNow();
       return { conflicts: result.conflicts.filter((item) => item.sync_id === syncId), local: await DB.obter("media_items", localId) };
     }, { syncId: profilePhotoSyncId, localId: localPhotoId });
@@ -308,6 +334,18 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
     const publicPhoto = await fetch(`${url}/storage/v1/object/public/team-media/${remotePhoto.data.storage_path}`);
     expect(publicPhoto.ok).toBe(false);
 
+    const desktopPhotoState = await page.evaluate(async ({ syncId, playerSyncId }) => {
+      const result = await RemoteWorkspace.syncNow();
+      const photo = (await DB.listar("media_items")).find((item) => item.sync_id === syncId);
+      const player = (await DB.listar("jogadores")).find((item) => item.sync_id === playerSyncId);
+      return { conflicts: result.conflicts.filter((item) => item.sync_id === syncId),
+        photoUrl: photo?.url, playerPhoto: player?.foto, ref: player?.profile_media_ref };
+    }, { syncId: profilePhotoSyncId, playerSyncId: photoPlayerSyncId });
+    expect(desktopPhotoState.conflicts).toEqual([]);
+    expect(desktopPhotoState.photoUrl).toMatch(/\/storage\/v1\/object\/sign\/team-media\//);
+    expect(desktopPhotoState.playerPhoto).toMatch(/\/storage\/v1\/object\/sign\/team-media\//);
+    expect(desktopPhotoState.ref).toBe(profilePhotoSyncId);
+
     const phonePhotoState = await phone.evaluate(async ({ syncId, playerSyncId }) => {
       const result = await RemoteWorkspace.syncNow();
       const media = (await DB.listar("media_items")).find((item) => item.sync_id === syncId);
@@ -316,10 +354,10 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
       return { mediaConflicts, title: media?.title, dataUrl: media?.data_url, url: media?.url, playerPhoto: player?.foto, storagePath: media?.storage_path };
     }, { syncId: profilePhotoSyncId, playerSyncId: photoPlayerSyncId });
     expect(phonePhotoState.mediaConflicts).toEqual([]);
-    expect(phonePhotoState.title).toBe("Foto de perfil original");
-    expect(phonePhotoState.dataUrl).toBeUndefined();
+    expect(phonePhotoState.title).toBe("Foto · Atleta de foto PWA");
+    expect(phonePhotoState.dataUrl).toMatch(/^data:image\/png;base64,/);
     expect(phonePhotoState.url).toMatch(/\/storage\/v1\/object\/sign\/team-media\//);
-    expect(phonePhotoState.playerPhoto).toMatch(/\/storage\/v1\/object\/sign\/team-media\//);
+    expect(phonePhotoState.playerPhoto).toMatch(/^data:image\/png;base64,/);
     expect(phonePhotoState.storagePath).toBe(remotePhoto.data.storage_path);
 
     await mobileContext.setOffline(true);

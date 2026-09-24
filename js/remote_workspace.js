@@ -285,6 +285,12 @@ function remoteEmitSync(result) {
     window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", { detail: result || {} }));
   } catch (_) {}
 }
+function remoteEmitSyncFailure(result) {
+  if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return;
+  try {
+    window.dispatchEvent(new CustomEvent("visioncoach:sync-failed", { detail: result || {} }));
+  } catch (_) {}
+}
 function remoteEmitRealtimeStatus(result) {
   if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return;
   try {
@@ -394,8 +400,9 @@ const RemoteWorkspace = {
         if (!status.signedIn) return;
         await this.syncNow();
       } catch (error) {
-        console.warn("Remote sync adiado:", error.message);
-        this._scheduleSyncRetry();
+        console.warn("Remote sync adiado; será repetida automaticamente.");
+        const retryInMs = this._scheduleSyncRetry();
+        remoteEmitSyncFailure({ retryInMs, attempt: this._syncRetryAttempt });
       }
     }, delay);
   },
@@ -409,6 +416,7 @@ const RemoteWorkspace = {
       this._syncRetryTimer = null;
       this.scheduleSync(0);
     }, delay);
+    return delay;
   },
 
   _clearSyncRetry() {
