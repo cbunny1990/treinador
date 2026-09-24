@@ -14,6 +14,11 @@ test("Supabase local test runner bounds a stalled CLI status check", () => {
   assert.match(runner, /excedeu 15 segundos a consultar a stack local/);
 });
 
+test("Supabase local runner uses the project's pinned Playwright CLI under Node", () => {
+  assert.match(runner, /spawnSync\(process\.execPath, \["\.\/node_modules\/@playwright\/test\/cli\.js"/);
+  assert.doesNotMatch(runner, /spawnSync\(npx, \["playwright"/);
+});
+
 test("Supabase migration preflight accepts an exact current history", () => {
   const rows = parseMigrationList('Connecting to local database...\n{"migrations":[{"local":"20260924100000","remote":"20260924100000"}]}');
   assert.deepEqual(migrationHistoryDrift(rows), { unapplied: [], unknownApplied: [], mismatched: [] });

@@ -74,10 +74,9 @@ const result = spawnSync(process.execPath, ["--test", "--test-concurrency=1", "t
 
 if (result.status !== 0) process.exit(result.status ?? 1);
 
-const browser = spawnSync(npx, ["playwright", "test", "--config", "playwright.local.config.js", "--reporter=line"], {
+const browser = spawnSync(process.execPath, ["./node_modules/@playwright/test/cli.js", "test", "--config", "playwright.local.config.js", "--reporter=line"], {
   cwd: root,
   stdio: "inherit",
-  shell: process.platform === "win32",
   windowsHide: true,
   env: {
     ...process.env,

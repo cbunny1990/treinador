@@ -1,5 +1,7 @@
 # Próximas fases Vision Coach — 22/09/2026
 
+Revalidação integrada RAG/sincronização (24/09/2026): a stack local padrão foi recusada pelo preflight por histórico divergente, sem aplicar migrations ou reset. Usei a cópia descartável `vision-coach-validation-20260924-run2` (26 migrations, portas próprias): integração Supabase/Auth/RLS/sincronização/RAG 3/3, E2E PC↔PWA offline/religação/conflito/tombstone 1/1 e HTTP Edge MCP 1/1 (`provider_not_configured`, sem envio externo). Corrigi `scripts/test-supabase-local.mjs` para executar o Playwright local fixado no lockfile diretamente com Node, evitando resolução acidental por `npx`; runner focado 4/4. `npm run check`, `npm test` (376 aprovados, 4 integrações locais opcionais ignoradas), Playwright completo 148/148 e `git diff --check` passaram. A stack descartável foi parada com backup dos volumes; nenhuma migration, dado, secret ou função foi alterada no projeto partilhado; sem publicação.
+
 ## Publicação de teste e auditoria remota (24/09/2026)
 
 Atualização (24/09/2026): a v152 foi publicada após autorização explícita. PR #52, commit `563e4a24bf1a43f8b9bd10ab6cb9608ffd926c12`; CI completo passou e Pages confirmou a versão 152. O Head Coach/IA ainda não recebeu a camada RAG no Supabase remoto.
