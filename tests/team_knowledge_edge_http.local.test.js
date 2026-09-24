@@ -71,7 +71,7 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
       },
       {
         id: targetTrainingRef, team_id: teams[0], kind: "training", actor_type: "human",
-        payload: { data: "2026-09-24", status: "ready", session: { status: "not_started", blocks: [{ exercise_ref: exerciseRef, exercise_name: "Apoio após passe" }] } },
+        payload: { data: "2026-09-24", status: "ready", duracao_min: 60, session: { status: "not_started", blocks: [{ exercise_ref: exerciseRef, exercise_name: "Apoio após passe" }] } },
       },
       {
         id: exerciseRef, team_id: teams[0], kind: "exercise", actor_type: "human",
@@ -133,6 +133,8 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     assert.equal(planningContext.schema, "vision-training-planning-context@1");
     assert.equal(planningContext.target_training.ref, targetTrainingRef);
     assert.equal(planningContext.target_training.exercise_count, 1);
+    assert.equal(planningContext.missing_data.target_training_duration, false);
+    assert.equal(planningContext.missing_data.target_training_exercises, false);
     assert.deepEqual(planningContext.recent_trainings.map((row) => row.ref), [completedTrainingRef]);
     assert.ok(planningContext.recent_trainings.every((row) => row.status === "completed"));
     assert.deepEqual(planningContext.recent_exercise_use, [{ exercise_ref: exerciseRef, name: "Apoio após passe", uses: 1, last_used: "2026-09-22" }]);
