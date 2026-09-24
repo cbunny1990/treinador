@@ -114,6 +114,12 @@ test('health privacy filter excludes common cardiovascular, glucose and mental-h
   'The player has hypertension and should avoid intense exercise.',
   'Blood pressure was high at the medical check.',
   'The player reports anxiety and panic attacks.',
+  'O atleta teve uma distensão muscular e uma torção no tornozelo.',
+  'A contractura e a ruptura do ligamento ainda causam dor.',
+  'Regresso após fratura; tem enxaqueca e febre.',
+  'The player has a sprained ankle with pain and swelling.',
+  'The athlete reported vomiting, nausea and dehydration.',
+  'Allergy symptoms after a recent COVID infection.',
  ];
  for(const [index,note] of sensitive.entries()){
   const source=match();source.payload.match_events.events[0].note=note;
@@ -121,6 +127,8 @@ test('health privacy filter excludes common cardiovascular, glucose and mental-h
  }
  const tactical=match();tactical.payload.post_game.analysis.fields.summary='A equipa aplicou pressão alta na construção e recuperou a bola.';
  assert.ok(rag.teamKnowledgeTestAPI.chunkRecord(tactical).some(item=>item.source_path==='post_game.analysis.fields.summary'));
+ const tacticalReason=match();tacticalReason.payload.match_events.events[0].note='A pressão alta do adversário obrigou a equipa a jogar longo.';
+ assert.ok(rag.teamKnowledgeTestAPI.chunkRecord(tacticalReason).some(item=>item.source_path==='match_events.events[0]'),'pressão tática não é um dado de saúde');
 });
 
 test('exercise definitions and game-model principles are not labelled as match observations',()=>{
