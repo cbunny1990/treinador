@@ -56,6 +56,30 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     ]);
     assert.ifError(seededMatches.error);
 
+    const exerciseRef = uuid();
+    const completedTrainingRef = uuid();
+    const unstartedTrainingRef = uuid();
+    const targetTrainingRef = uuid();
+    const seededPlanning = await admin.from("workspace_records").insert([
+      {
+        id: completedTrainingRef, team_id: teams[0], kind: "training", actor_type: "human",
+        payload: { data: "2026-09-22", status: "ready", session: { status: "completed", blocks: [{ exercise_ref: exerciseRef, exercise_name: "Apoio após passe" }] } },
+      },
+      {
+        id: unstartedTrainingRef, team_id: teams[0], kind: "training", actor_type: "human",
+        payload: { data: "2026-09-21", status: "ready", session: { status: "not_started", blocks: [{ exercise_ref: exerciseRef, exercise_name: "Apoio após passe" }] } },
+      },
+      {
+        id: targetTrainingRef, team_id: teams[0], kind: "training", actor_type: "human",
+        payload: { data: "2026-09-24", status: "ready", session: { status: "not_started", blocks: [{ exercise_ref: exerciseRef, exercise_name: "Apoio após passe" }] } },
+      },
+      {
+        id: exerciseRef, team_id: teams[0], kind: "exercise", actor_type: "human",
+        payload: { nome: "Apoio após passe", objetivo: "Criar uma linha de apoio depois do passe." },
+      },
+    ]);
+    assert.ifError(seededPlanning.error);
+
     const token = `vcmcp_${crypto.randomBytes(32).toString("base64url")}`;
     const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
     const connector = await admin.rpc("mcp_connector_create", {
@@ -107,10 +131,15 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     assert.equal(hybridContext.status, 200);
     const planningContext = JSON.parse((await hybridContext.json()).result.content[0].text);
     assert.equal(planningContext.schema, "vision-training-planning-context@1");
-    assert.equal(planningContext.target_training, null);
+    assert.equal(planningContext.target_training.ref, targetTrainingRef);
+    assert.equal(planningContext.target_training.exercise_count, 1);
+    assert.deepEqual(planningContext.recent_trainings.map((row) => row.ref), [completedTrainingRef]);
+    assert.ok(planningContext.recent_trainings.every((row) => row.status === "completed"));
+    assert.deepEqual(planningContext.recent_exercise_use, [{ exercise_ref: exerciseRef, name: "Apoio após passe", uses: 1, last_used: "2026-09-22" }]);
+    assert.match(planningContext.guidance, /não inclui o plano alvo nem sessões por iniciar/);
     assert.equal(planningContext.recent_matches.length, 5);
     assert.equal(planningContext.evidence_status, "provider_not_configured");
-    assert.equal(planningContext.missing_data.target_training, true);
+    assert.equal(planningContext.missing_data.target_training, false);
 
     const rejectedToken = `vcmcp_${crypto.randomBytes(32).toString("base64url")}`;
     const rejected = await mcpRequest(rejectedToken, "tools/list");
