@@ -121,6 +121,7 @@ test("aviso do PWA bloqueia atualização enquanto decorre uma sessão de treino
 test("aviso do PWA continua bloqueado fora do quadro enquanto decorre um jogo", async ({ page }) => {
   await page.goto("/#/calendario");
   const id = await page.evaluate(async () => {
+    RemoteWorkspace.scheduleSync = () => {};
     const refs = [];
     for (let number = 1; number <= 5; number++) {
       const ref = crypto.randomUUID(); refs.push(ref);
