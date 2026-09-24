@@ -105,6 +105,15 @@ test('RAG indexes only player development notes, redacts the athlete name and ex
  const withName=match();withName.payload.match_events.events[0].note='Passe intercetado por Maria Silva';const redacted=rag.teamKnowledgeTestAPI.chunkRecord(withName,{redactNames:['Maria Silva']});assert.doesNotMatch(redacted.find(x=>x.source_path==='match_events.events[0]').content,/Maria Silva/);
 });
 
+test('RAG redacts athlete names and filters health terms in chunk labels as well as text',()=>{
+ const training={id:SOURCE,team_id:TEAM,kind:'training',updated_at:'v1',payload:{data:'2026-09-24',session:{blocks:[{exercise_name:'Apoio orientado da Maria Silva',exercise_snapshot:{objetivo:'Apoiar depois do passe.'}}]}}};
+ const chunks=rag.teamKnowledgeTestAPI.chunkRecord(training,{redactNames:['Maria Silva']});
+ const block=chunks.find(chunk=>chunk.source_path==='session.blocks[0]');
+ assert.doesNotMatch(block.title,/Maria|Silva/i);assert.doesNotMatch(block.content,/Maria|Silva/i);
+ const titledHealth={id:SOURCE,team_id:TEAM,kind:'document',updated_at:'v1',payload:{type:'note',title:'Acompanhamento clínico do atleta',body:{summary:'Trabalhar apoio curto após passe.'}}};
+ assert.deepEqual(rag.teamKnowledgeTestAPI.chunkRecord(titledHealth),[],'health-bearing labels must not leak through otherwise safe body text');
+});
+
 test('health privacy filter excludes common cardiovascular, glucose and mental-health wording without blocking tactical high press',()=>{
  const sensitive=[
   'O atleta tem hipertensão e deve evitar esforço intenso.',
