@@ -131,6 +131,26 @@ function remoteConflict(store, local, remote, reason = "version_mismatch") {
     remote_deleted_at: remote?.deleted_at || null,
   };
 }
+function remoteDedupeConflicts(conflicts) {
+  const unique = new Map();
+  for (const conflict of Array.isArray(conflicts) ? conflicts : []) {
+    if (!conflict || typeof conflict !== "object") continue;
+    const key = JSON.stringify([
+      conflict.store || "unknown", conflict.local_id ?? null,
+      conflict.sync_id ?? null, conflict.reason || "unknown",
+    ]);
+    const previous = unique.get(key);
+    if (!previous) unique.set(key, { ...conflict });
+    else {
+      const merged = { ...previous };
+      for (const [name, value] of Object.entries(conflict)) {
+        if (value != null && value !== "") merged[name] = value;
+      }
+      unique.set(key, merged);
+    }
+  }
+  return [...unique.values()];
+}
 function remoteConflictPreview(value) {
   const privateKeys = /^(data_url|foto|signed_url|access_token|refresh_token|token|authorization)$/i;
   const temporaryUrl = /\/storage\/v1\/object\/sign\/|[?&](?:token|access_token|signature|sig|x-amz-(?:signature|credential|security-token)|x-goog-(?:signature|credential|security-token))=/i;
@@ -517,7 +537,7 @@ const RemoteWorkspace = {
       remoteTeamId: config.remoteTeamId || null,
       lastSyncAt: config.lastSyncAt || null,
       realtimeStatus: this._realtimeTeamId === config.remoteTeamId ? this._realtimeStatus : "not_started",
-      conflicts: Array.isArray(config.conflicts) ? config.conflicts : [],
+      conflicts: remoteDedupeConflicts(config.conflicts),
     };
   },
   async signInWithEmail(email) {
@@ -692,6 +712,44 @@ const RemoteWorkspace = {
     if (!data?.team_id) return row.remote_updated_at ? null : true;
     await DB.atualizar(store, { ...row, remote_team_id: data.team_id }, { remote: true });
     return data.team_id === selectedRemoteTeamId;
+  },
+  async _bindRemoteTeams(client, store, rows, selectedRemoteTeamId) {
+    const table = store === "media_items" ? "media_assets" : store === "activity_items" ? "activity_log" : "workspace_records";
+    const candidates = rows.filter((row) => !row.remote_team_id && remoteIsUuid(row.sync_id));
+    const remoteTeams = new Map();
+    for (let start = 0; start < candidates.length; start += 100) {
+      const ids = [...new Set(candidates.slice(start, start + 100).map((row) => row.sync_id))];
+      if (!ids.length) continue;
+      const { data, error } = await client.from(table).select("id,team_id").in("id", ids);
+      if (error) throw error;
+      for (const item of data || []) if (remoteIsUuid(item.id) && item.team_id) remoteTeams.set(item.id, item.team_id);
+    }
+    const bound = [], conflicts = [];
+    for (const row of rows) {
+      if (row.remote_team_id) {
+        if (row.remote_team_id === selectedRemoteTeamId) bound.push(row);
+        continue;
+      }
+      if (row.sync_id && !remoteIsUuid(row.sync_id)) {
+        if (!row.remote_updated_at) bound.push(row);
+        else conflicts.push(row);
+        continue;
+      }
+      if (!row.sync_id) {
+        if (!row.remote_updated_at) bound.push(row);
+        else conflicts.push(row);
+        continue;
+      }
+      const remoteTeamId = remoteTeams.get(row.sync_id);
+      if (!remoteTeamId) {
+        if (!row.remote_updated_at) bound.push(row);
+        else conflicts.push(row);
+        continue;
+      }
+      await DB.atualizar(store, { ...row, remote_team_id: remoteTeamId }, { remote: true });
+      if (remoteTeamId === selectedRemoteTeamId) bound.push({ ...row, remote_team_id: remoteTeamId });
+    }
+    return { rows: bound, conflicts };
   },
   async _localBySyncId(store) {
     const rows = await DB.listar(store);
@@ -977,13 +1035,9 @@ const RemoteWorkspace = {
       let rows = (await DB.listar(store))
         .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID)
         .filter((x) => store !== "exercicios" || x.workspace_v2 || x.sync_id);
-      const scopedRows = [];
-      for (const row of rows) {
-        const belongs = await this._bindRemoteTeam(client, store, row, remoteTeamId);
-        if (belongs) scopedRows.push(row.remote_team_id ? row : (await DB.obter(store, row.id)));
-        else if (belongs === null) addConflict(remoteConflict(store, row, null, remoteIdentityConflictReason(row)));
-      }
-      rows = scopedRows.filter(Boolean);
+      const boundRows = await this._bindRemoteTeams(client, store, rows, remoteTeamId);
+      rows = boundRows.rows;
+      for (const row of boundRows.conflicts) addConflict(remoteConflict(store, row, null, remoteIdentityConflictReason(row)));
       let localBySyncId = new Map(rows.filter((x) => x.sync_id).map((x) => [x.sync_id, x]));
 
       for (const remote of remoteRows.filter((row) => row.deleted_at)) {
@@ -999,13 +1053,9 @@ const RemoteWorkspace = {
       rows = (await DB.listar(store))
         .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID)
         .filter((x) => store !== "exercicios" || x.workspace_v2 || x.sync_id);
-      const scopedCurrentRows = [];
-      for (const row of rows) {
-        const belongs = await this._bindRemoteTeam(client, store, row, remoteTeamId);
-        if (belongs) scopedCurrentRows.push(row.remote_team_id ? row : (await DB.obter(store, row.id)));
-        else if (belongs === null) addConflict(remoteConflict(store, row, null, remoteIdentityConflictReason(row)));
-      }
-      rows = scopedCurrentRows.filter(Boolean);
+      const boundCurrentRows = await this._bindRemoteTeams(client, store, rows, remoteTeamId);
+      rows = boundCurrentRows.rows;
+      for (const row of boundCurrentRows.conflicts) addConflict(remoteConflict(store, row, null, remoteIdentityConflictReason(row)));
       for (const original of rows) {
         let local = await this._ensureSyncId(store, original);
         let remote = remoteMap.get(local.sync_id);
@@ -1207,12 +1257,9 @@ const RemoteWorkspace = {
     const result = { pushed: 0, pulled: 0, conflicts: [] };
     const localCandidates = (await DB.listar("activity_items"))
       .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID);
-    const locals = [];
-    for (const row of localCandidates) {
-      const belongs = await this._bindRemoteTeam(client, "activity_items", row, remoteTeamId);
-      if (belongs) locals.push(row.remote_team_id ? row : (await DB.obter("activity_items", row.id)));
-      else if (belongs === null) result.conflicts.push(remoteConflict("activity_items", row, null, remoteIdentityConflictReason(row)));
-    }
+    const localBinding = await this._bindRemoteTeams(client, "activity_items", localCandidates, remoteTeamId);
+    const locals = localBinding.rows;
+    result.conflicts.push(...localBinding.conflicts.map((row) => remoteConflict("activity_items", row, null, remoteIdentityConflictReason(row))));
 
     for (const original of locals) {
       const local = await this._ensureSyncId("activity_items", original);
@@ -1363,12 +1410,9 @@ const RemoteWorkspace = {
 
     const mediaCandidates = (await DB.listar("media_items"))
       .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID);
-    let locals = [];
-    for (const row of mediaCandidates) {
-      const belongs = await this._bindRemoteTeam(client, "media_items", row, remoteTeamId);
-      if (belongs) locals.push(row.remote_team_id ? row : (await DB.obter("media_items", row.id)));
-      else if (belongs === null) result.conflicts.push(remoteConflict("media_items", row, null, remoteIdentityConflictReason(row)));
-    }
+    const localBinding = await this._bindRemoteTeams(client, "media_items", mediaCandidates, remoteTeamId);
+    let locals = localBinding.rows;
+    result.conflicts.push(...localBinding.conflicts.map((row) => remoteConflict("media_items", row, null, remoteIdentityConflictReason(row))));
     let localMap = new Map(locals.filter((x) => x.sync_id).map((x) => [x.sync_id, x]));
     for (const remote of [...remoteMap.values()].filter((row) => row.deleted_at)) {
       const local = localMap.get(remote.id);
@@ -1671,12 +1715,7 @@ const RemoteWorkspace = {
       let rows = (await DB.listar(store))
         .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID)
         .filter((x) => store !== "exercicios" || x.workspace_v2 || x.sync_id);
-      const scopedRows = [];
-      for (const row of rows) {
-        const belongs = await this._bindRemoteTeam(client, store, row, remoteTeamId);
-        if (belongs) scopedRows.push(row.remote_team_id ? row : (await DB.obter(store, row.id)));
-      }
-      rows = scopedRows.filter(Boolean);
+      rows = (await this._bindRemoteTeams(client, store, rows, remoteTeamId)).rows;
       for (const original of rows) {
         let local = original;
         if (!remoteIsUuid(local.sync_id)) {
@@ -1705,12 +1744,7 @@ const RemoteWorkspace = {
     const remoteMediaIds = new Set((remoteMediaRes.data || []).map((x) => x.id));
     let mediaRows = (await DB.listar("media_items"))
       .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID);
-    const scopedMediaRows = [];
-    for (const row of mediaRows) {
-      const belongs = await this._bindRemoteTeam(client, "media_items", row, remoteTeamId);
-      if (belongs) scopedMediaRows.push(row.remote_team_id ? row : (await DB.obter("media_items", row.id)));
-    }
-    mediaRows = scopedMediaRows.filter(Boolean);
+    mediaRows = (await this._bindRemoteTeams(client, "media_items", mediaRows, remoteTeamId)).rows;
     for (const original of mediaRows) {
       let local = original;
       if (!remoteIsUuid(local.sync_id)) {
@@ -1736,7 +1770,7 @@ const RemoteWorkspace = {
       pushed: (first.pushed || 0) + (second.pushed || 0),
       pulled: (first.pulled || 0) + (second.pulled || 0),
       deleted: (first.deleted || 0) + (second.deleted || 0),
-      conflicts: [...(first.conflicts || []), ...(second.conflicts || [])],
+      conflicts: remoteDedupeConflicts([...(first.conflicts || []), ...(second.conflicts || [])]),
     };
     localStorage.setItem("treinador.workspace.consolidated.v1", new Date().toISOString());
     return result;
@@ -1804,8 +1838,9 @@ const RemoteWorkspace = {
       result.pushed += part.pushed || 0;
       result.pulled += part.pulled || 0;
       result.deleted += part.deleted || 0;
-      for (const conflict of (part.conflicts || [])) result.conflicts.push(conflict);
+      result.conflicts.push(...(part.conflicts || []));
     }
+    result.conflicts = remoteDedupeConflicts(result.conflicts);
 
     const lastSyncAt = new Date().toISOString();
     const completed = { ...result, lastSyncAt };
@@ -1827,6 +1862,68 @@ const RemoteWorkspace = {
       if (!conflict.remote_updated_at) throw new Error("Não foi possível confirmar a versão remota atual.");
       await DB.modificar("sync_tombstones", tombstone.id, (item) => ({ ...item, expected_updated_at: conflict.remote_updated_at }));
     } else throw new Error("Escolhe manter a versão remota ou confirmar a eliminação.");
+    return this.syncNow();
+  },
+
+  async previewInvalidIdentityRecovery(storeName, localId) {
+    const config = remoteLoadConfig();
+    const conflict = (config.conflicts || []).find((item) => item.store === storeName
+      && String(item.local_id) === String(localId) && item.reason === "invalid_local_sync_id");
+    if (!conflict) throw new Error("Este conflito já mudou. Sincroniza novamente antes de procurar uma correspondência.");
+    if (!REMOTE_STORE_KINDS[storeName]) return { status: "unsupported_identity" };
+    const local = (await DB.listar(storeName)).find((item) => String(item.id) === String(localId)
+      && item.sync_id === conflict.sync_id && item.remote_updated_at === conflict.expected_updated_at);
+    if (!local) throw new Error("A cópia local já mudou. Sincroniza novamente antes de procurar uma correspondência.");
+    if (!remoteText(local.external_key, 500)) return { status: "no_stable_key" };
+    const remoteTeamId = config.remoteTeamId;
+    if (!remoteTeamId || (local.remote_team_id && local.remote_team_id !== remoteTeamId)) return { status: "team_mismatch" };
+    const client = await this.init();
+    const kind = REMOTE_STORE_KINDS[storeName];
+    const { data, error } = await client.from("workspace_records")
+      .select("id,kind,payload,updated_at,deleted_at")
+      .eq("team_id", remoteTeamId).eq("kind", kind)
+      .eq("payload->>external_key", local.external_key).is("deleted_at", null).limit(3);
+    if (error) throw error;
+    const candidates = (data || []).filter((item) => item.kind === kind && !item.deleted_at
+      && remoteIdentityKey(kind, item.payload) === remoteIdentityKey(kind, local));
+    if (!candidates.length) return { status: "no_match", local: remoteConflictPreview(remotePayload(local)) };
+    if (candidates.length !== 1) return { status: "ambiguous", candidate_count: candidates.length };
+    const candidate = candidates[0];
+    return {
+      status: "unique_match", store: storeName, local_id: local.id,
+      invalid_sync_id: local.sync_id, local_updated_at: local.sync_local_updated_at || null,
+      expected_remote_updated_at: local.remote_updated_at || null,
+      candidate: { id: candidate.id, updated_at: candidate.updated_at, current_version: candidate.updated_at === local.remote_updated_at,
+        payload: remoteConflictPreview(await this._hydratePayload(kind, candidate.payload, remoteTeamId)) },
+      local: remoteConflictPreview(remotePayload(local)),
+    };
+  },
+
+  async confirmInvalidIdentityRecovery(storeName, localId, candidateId, expectedLocalUpdatedAt, expectedRemoteUpdatedAt) {
+    const preview = await this.previewInvalidIdentityRecovery(storeName, localId);
+    if (preview.status !== "unique_match" || preview.candidate.id !== candidateId
+      || preview.candidate.updated_at !== expectedRemoteUpdatedAt
+      || (preview.local_updated_at || "") !== (expectedLocalUpdatedAt || "")) {
+      throw new Error("A correspondência ou uma das versões mudou. Analisa novamente antes de a ligar.");
+    }
+    const store = preview.store;
+    const actualLocalId = preview.local_id;
+    let updated;
+    const apply = (current) => {
+      if (String(current.id) !== String(actualLocalId) || current.sync_id !== preview.invalid_sync_id
+        || (current.remote_updated_at || "") !== (preview.expected_remote_updated_at || "")
+        || (current.sync_local_updated_at || "") !== (preview.local_updated_at || "")) {
+        throw new Error("A cópia local mudou durante a reconciliação. Volta a analisar o conflito.");
+      }
+      updated = { ...current, sync_id: candidateId, remote_team_id: remoteLoadConfig().remoteTeamId };
+      return updated;
+    };
+    if (typeof DB.modificar === "function") await DB.modificar(store, actualLocalId, apply, { remote: true });
+    else {
+      const current = (await DB.listar(store)).find((item) => String(item.id) === String(localId));
+      if (!current) throw new Error("A cópia local já não existe.");
+      await DB.atualizar(store, apply(current), { remote: true });
+    }
     return this.syncNow();
   },
 
@@ -1914,7 +2011,70 @@ const RemoteWorkspace = {
     };
   },
 
-  async resolveVersionConflict(syncId, storeName, resolution, expectedRemote, expectedLocal, fieldChoices = null) {
+  async previewIndependentConflictBatch() {
+    const conflicts = remoteDedupeConflicts(remoteLoadConfig().conflicts || [])
+      .filter((item) => item.reason === "version_mismatch" && item.sync_id && item.store);
+    const reviewed = await Promise.all(conflicts.map(async (conflict) => {
+      try {
+        const versions = await this.readVersionConflict(conflict.sync_id, conflict.store);
+        if (!versions.merge_suggestion) return {
+          sync_id: conflict.sync_id, store: conflict.store, display_name: conflict.display_name || null,
+          mergeable: false, reason: versions.merge_unavailable || "As versões exigem decisão campo a campo.",
+        };
+        return {
+          sync_id: conflict.sync_id, store: conflict.store, display_name: conflict.display_name || null,
+          mergeable: true, expected_remote: versions.remote_updated_at, expected_local: versions.local_updated_at,
+          local_changes: versions.merge_suggestion.local_changes,
+          remote_changes: versions.merge_suggestion.remote_changes,
+          payload: versions.merge_suggestion.payload,
+        };
+      } catch (error) {
+        return {
+          sync_id: conflict.sync_id, store: conflict.store, display_name: conflict.display_name || null,
+          mergeable: false, reason: error?.message || "Não foi possível comparar as versões atuais.",
+        };
+      }
+    }));
+    return {
+      examined: conflicts.length,
+      safe: reviewed.filter((item) => item.mergeable),
+      needs_review: reviewed.filter((item) => !item.mergeable),
+    };
+  },
+
+  async resolveIndependentConflictBatch(previews) {
+    if (!Array.isArray(previews) || !previews.length || previews.length > 50) throw new Error("Escolhe entre 1 e 50 combinações revistas.");
+    const seen = new Set();
+    for (const item of previews) {
+      const key = `${item?.store}|${item?.sync_id}`;
+      if (!item?.mergeable || !remoteIsUuid(item.sync_id) || !REMOTE_STORE_KINDS[item.store]
+        || !item.expected_remote || !item.expected_local || seen.has(key)) {
+        throw new Error("A pré-visualização em lote é inválida ou repetida. Analisa novamente os conflitos.");
+      }
+      seen.add(key);
+    }
+    let applied = 0;
+    try {
+      for (const item of previews) {
+        await this.resolveVersionConflict(item.sync_id, item.store, "merge_non_overlapping",
+          item.expected_remote, item.expected_local, null, { deferSync: true });
+        applied++;
+      }
+    } catch (error) {
+      if (applied) {
+        try {
+          const sync = await this.syncNow();
+          error.message = `Foram preparadas ${applied} de ${previews.length} combinações e sincronizadas as versões ainda atuais. ${sync.conflicts?.length || 0} conflito(s) continuam preservados. A combinação seguinte foi recusada: ${error.message}`;
+        } catch (syncError) {
+          error.message = `Foram preparadas localmente ${applied} de ${previews.length} combinações; continuam marcadas como pendentes e não foram descartadas. Falhou a validação seguinte: ${error.message}. Sincronização pendente: ${syncError.message}`;
+        }
+      }
+      throw error;
+    }
+    return this.syncNow();
+  },
+
+  async resolveVersionConflict(syncId, storeName, resolution, expectedRemote, expectedLocal, fieldChoices = null, options = {}) {
     if (!['keep_local', 'keep_remote', 'merge_non_overlapping', 'merge_manual_fields'].includes(resolution)) throw new Error("Escolhe como queres resolver as versões.");
     const reviewed = await this.readVersionConflict(syncId, storeName);
     if (reviewed.remote_updated_at !== expectedRemote || reviewed.local_updated_at !== expectedLocal) {
@@ -1979,7 +2139,7 @@ const RemoteWorkspace = {
           remote_team_id: remoteTeamId,
         };
       }, { remote: true });
-      return this.syncNow();
+      return options.deferSync === true ? { applied: true, conflicts: [] } : this.syncNow();
     }
     if (resolution === "keep_local") {
       await DB.modificar(store, local.id, (current) => {
@@ -2121,6 +2281,7 @@ if (typeof module !== "undefined" && module.exports) {
     remoteActivityMatches,
     remoteSyncRetryDelay,
     remoteConflictPreview,
+    remoteDedupeConflicts,
     remoteRowBelongsToTeam,
     remoteConflict,
     remoteProjectRef,

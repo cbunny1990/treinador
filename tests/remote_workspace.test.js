@@ -19,6 +19,7 @@ const {
   remoteActivityMatches,
   remoteSyncRetryDelay,
   remoteConflictPreview,
+  remoteDedupeConflicts,
   remoteRowBelongsToTeam,
   RemoteWorkspace,
   remoteProjectRef,
@@ -27,6 +28,14 @@ const {
   remoteRecordRow,
   remoteActivityRow,
 } = require("../js/remote_workspace.js");
+
+test("conflitos repetidos nas passagens da consolidação aparecem uma só vez", () => {
+  const conflict = { store: "jogos", local_id: 4, sync_id: "match-1", reason: "version_mismatch", remote_updated_at: "v2" };
+  const distinct = { store: "jogos", local_id: 5, sync_id: "match-2", reason: "version_mismatch", remote_updated_at: "v3" };
+  assert.deepEqual(remoteDedupeConflicts([conflict, { ...conflict, remote_updated_at: null }, distinct, { ...conflict, reason: "duplicate_identity" }]), [
+    conflict, distinct, { ...conflict, reason: "duplicate_identity" },
+  ]);
+});
 
 test("configuração remota exige https, exceto HTTP em loopback para desenvolvimento local", () => {
   assert.equal(remoteConfigValid({ url: "https://abc.supabase.co", publishableKey: "sb_publishable_test" }), true);
@@ -1121,7 +1130,7 @@ function createSharedRemoteWorkspace() {
   let revision = 0;
   const stamp = () => `v${++revision}`;
   const matches = (row, filters) => filters.every(([op, key, value]) =>
-    op === "eq" ? row[key] === value : (row[key] ?? null) === value
+    op === "eq" ? row[key] === value : op === "in" ? value.includes(row[key]) : (row[key] ?? null) === value
   );
   return {
     rows,
@@ -1131,6 +1140,7 @@ function createSharedRemoteWorkspace() {
           filters: [], action: "select", patch: null, input: null,
           select() { return this; },
           eq(key, value) { this.filters.push(["eq", key, value]); return this; },
+          in(key, values) { this.filters.push(["in", key, values]); return this; },
           is(key, value) { this.filters.push(["is", key, value]); return this; },
           insert(input) { this.action = "insert"; this.input = input; return this; },
           update(patch) { this.action = "update"; this.patch = patch; return this; },
@@ -1726,6 +1736,136 @@ test("edições concorrentes em dois dispositivos produzem conflito sem overwrit
     assert.equal(Object.hasOwn(combinedLocal, "observacao"), false);
   });
   } finally {
+    globalThis.localStorage = originalStorage;
+    RemoteWorkspace.syncNow = originalSyncNow;
+  }
+});
+
+test("consolidação verifica equipas em lotes e preserva conflitos sem versão remota", async () => {
+  const teamA = "22222222-2222-4222-8222-222222222222";
+  const syncA = "11111111-1111-4111-8111-111111111111", syncB = "33333333-3333-4333-8333-333333333333";
+  const originalDB = globalThis.DB;
+  const saved = [];
+  let remoteQueries = 0;
+  globalThis.DB = { async atualizar(store, row) { saved.push({ store, ...row }); return row; } };
+  const client = { from(table) {
+    assert.equal(table, "workspace_records");
+    return { select() { return this; }, in(key, ids) {
+      assert.equal(key, "id"); remoteQueries++;
+      assert.deepEqual(ids.sort(), [syncA, syncB].sort());
+      return Promise.resolve({ data: [{ id: syncA, team_id: teamA }, { id: syncB, team_id: "44444444-4444-4444-8444-444444444444" }], error: null });
+    } };
+  } };
+  const rows = [
+    { id: 1, sync_id: syncA }, { id: 2, sync_id: syncB },
+    { id: 3, sync_id: "invalid", remote_updated_at: "v2" },
+    { id: 4, sync_id: "local-sentinel" }, { id: 5, sync_id: null, remote_updated_at: "v1" },
+  ];
+  try {
+    const result = await RemoteWorkspace._bindRemoteTeams(client, "jogos", rows, teamA);
+    assert.deepEqual(result.rows.map((row) => row.id), [1, 4]);
+    assert.equal(result.rows[0].remote_team_id, teamA);
+    assert.deepEqual(result.conflicts.map((row) => row.id), [3, 5]);
+    assert.equal(remoteQueries, 1, "all valid identities are checked with one scoped request");
+    assert.equal(saved.length, 2, "identities from both teams are recorded to prevent future ambiguity");
+    assert.equal(saved.find((row) => row.id === 2).remote_team_id, "44444444-4444-4444-8444-444444444444");
+  } finally { globalThis.DB = originalDB; }
+});
+
+test("identidade inválida só se religa após comparação única por chave externa e confirmação", async () => {
+  const remoteId = "55555555-5555-4555-8555-555555555555", team = "22222222-2222-4222-8222-222222222222";
+  const originals = { DB: globalThis.DB, localStorage: globalThis.localStorage, init: RemoteWorkspace.init, syncNow: RemoteWorkspace.syncNow };
+  let local = { id: 17, team_id: "default", sync_id: "default", remote_updated_at: "v1", sync_local_updated_at: "local-v2", sync_dirty: true, external_key: "match-17", adversario: "Rivais" };
+  const remote = { id: remoteId, team_id: team, kind: "match", payload: { external_key: "match-17", adversario: "Rivais" }, updated_at: "v1", deleted_at: null };
+  let syncCalls = 0;
+  globalThis.localStorage = { getItem(key) { return key === "treinador.remote.supabase.v1" ? JSON.stringify({ remoteTeamId: team, conflicts: [{ store: "jogos", local_id: 17, sync_id: "default", reason: "invalid_local_sync_id", expected_updated_at: "v1" }] }) : null; }, setItem() {} };
+  globalThis.DB = { async listar() { return [{ ...local }]; }, async modificar(_store, id, update) { assert.equal(id, 17); local = update({ ...local }); return local; } };
+  RemoteWorkspace.init = async () => ({ from(table) {
+    assert.equal(table, "workspace_records");
+    const filters = [];
+    const query = { select() { return this; }, eq(key, value) { filters.push([key, value]); return this; }, is() { return this; }, limit() { return this; }, then(resolve) { return Promise.resolve({ data: filters.some(([key, value]) => key === "payload->>external_key" && value !== "match-17") ? [] : [remote], error: null }).then(resolve); } };
+    return query;
+  } });
+  RemoteWorkspace.syncNow = async () => { syncCalls++; return { conflicts: [] }; };
+  try {
+    const preview = await RemoteWorkspace.previewInvalidIdentityRecovery("jogos", 17);
+    assert.equal(preview.status, "unique_match");
+    assert.equal(preview.candidate.id, remoteId);
+    const result = await RemoteWorkspace.confirmInvalidIdentityRecovery("jogos", "17", remoteId, "local-v2", "v1");
+    assert.deepEqual(result.conflicts, []);
+    assert.equal(local.sync_id, remoteId);
+    assert.equal(local.remote_updated_at, "v1");
+    assert.equal(local.sync_dirty, true, "linking identity keeps pending local edits intact");
+    assert.equal(syncCalls, 1);
+  } finally {
+    globalThis.DB = originals.DB; globalThis.localStorage = originals.localStorage;
+    RemoteWorkspace.init = originals.init; RemoteWorkspace.syncNow = originals.syncNow;
+  }
+});
+
+test("pré-visualização e resolução agrupada sincronizam só combinações independentes e uma vez", async () => {
+  const originalStorage = globalThis.localStorage, originalSyncNow = RemoteWorkspace.syncNow;
+  try { await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    useDevice(0);
+    const ids = [];
+    for (const [key, payload] of [
+      ["batch-independent-1", { adversario: "Rivais 1", data: "2026-10-01", nota_tatica: "Base", resultado: "0-0" }],
+      ["batch-independent-2", { adversario: "Rivais 2", data: "2026-10-02", local: "Campo velho", observacao: "Base" }],
+      ["batch-overlap", { adversario: "Rival inicial", data: "2026-10-03", nota_tatica: "Base" }],
+    ]) ids.push(await devices[0].criar("jogos", { team_id: "default", ...payload, external_key: key, sync_dirty: true }));
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+
+    useDevice(1);
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    const phoneRows = await devices[1].listar("jogos");
+    for (const [key, change] of [
+      ["batch-independent-1", { nota_tatica: "Nota do telemóvel" }],
+      ["batch-independent-2", { local: "Campo novo" }],
+      ["batch-overlap", { adversario: "Rival do telemóvel" }],
+    ]) {
+      const row = phoneRows.find((item) => item.external_key === key);
+      await devices[1].atualizar("jogos", { ...row, ...change, sync_dirty: true });
+    }
+    await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+
+    useDevice(0);
+    const pcRows = await devices[0].listar("jogos");
+    for (const [key, change] of [
+      ["batch-independent-1", { resultado: "2-1" }],
+      ["batch-independent-2", { observacao: "Nota do PC" }],
+      ["batch-overlap", { adversario: "Rival do PC" }],
+    ]) {
+      const row = pcRows.find((item) => item.external_key === key);
+      await devices[0].atualizar("jogos", { ...row, ...change, sync_dirty: true });
+    }
+    const detected = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(detected.conflicts.length, 3);
+    const conflictStorage = new Map([["treinador.remote.supabase.v1", JSON.stringify({ remoteTeamId, conflicts: detected.conflicts })]]);
+    globalThis.localStorage = { getItem: (key) => conflictStorage.get(key) || null, setItem: (key, value) => conflictStorage.set(key, value) };
+    const beforePreview = remote.rows.map((row) => ({ id: row.id, payload: { ...row.payload } }));
+    const preview = await RemoteWorkspace.previewIndependentConflictBatch();
+    assert.equal(preview.examined, 3);
+    assert.equal(preview.safe.length, 2);
+    assert.equal(preview.needs_review.length, 1);
+    assert.equal(preview.needs_review[0].sync_id, detected.conflicts.find((item) => item.local_id === ids[2]).sync_id);
+    assert.deepEqual(remote.rows.map((row) => ({ id: row.id, payload: row.payload })), beforePreview, "a pré-visualização não escreve no remoto");
+
+    let syncCalls = 0;
+    RemoteWorkspace.syncNow = async () => { syncCalls++; return RemoteWorkspace._syncRecords(remoteTeamId, "coach"); };
+    const applied = await RemoteWorkspace.resolveIndependentConflictBatch(preview.safe);
+    assert.equal(syncCalls, 1);
+    assert.equal(applied.pushed, 2);
+    assert.equal(applied.conflicts.length, 1, "a versão com campos sobrepostos fica para decisão explícita");
+    assert.equal(remote.rows.length, 3, "nenhum registo duplicado foi criado");
+    const merged1 = remote.rows.find((row) => row.payload.adversario === "Rivais 1");
+    assert.equal(merged1.payload.nota_tatica, "Nota do telemóvel");
+    assert.equal(merged1.payload.resultado, "2-1");
+    const merged2 = remote.rows.find((row) => row.payload.adversario === "Rivais 2");
+    assert.equal(merged2.payload.local, "Campo novo");
+    assert.equal(merged2.payload.observacao, "Nota do PC");
+    const stillPending = await devices[0].obter("jogos", ids[2]);
+    assert.equal(stillPending.sync_dirty, true);
+  }); } finally {
     globalThis.localStorage = originalStorage;
     RemoteWorkspace.syncNow = originalSyncNow;
   }

@@ -9,6 +9,7 @@
  function feedback(text){const p=document.querySelector('[data-event-feedback]');if(p){p.hidden=false;p.textContent=text;}}
  function statsTable(match){
   const t=E.stats(match),c=t.counts,usageEvents=M.state(match).events;
+  if(!t.events_available)return '<h3 class="section">Estatísticas do jogo</h3><p class="empty section">Estatísticas indisponíveis: ainda não existe um registo de lances. Zero só é apresentado quando há uma lista de lances guardada.</p>';
   const row=(label,count)=>'<tr><td>'+esc(label)+'</td><td><strong>'+count+'</strong></td><td>'+esc(t.provenance.counts)+'</td></tr>';
   let rows=row('Golos a favor',c.goal_for)+row('Golos sofridos',c.goal_against)+row('Remates à baliza · total',t.shots.on)+row('Remates à baliza · nossa equipa',t.shots.own_on)+row('Remates à baliza · adversário',t.shots.against_on)+row('Remates à baliza · lado não indicado',t.shots.unknown_side_on)+row('Remates para fora · total',t.shots.off)+row('Remates para fora · nossa equipa',t.shots.own_off)+row('Remates para fora · adversário',t.shots.against_off)+row('Remates para fora · lado não indicado',t.shots.unknown_side_off)+row('Cantos a favor',c.corner_for)+row('Cantos contra',c.corner_against)+'<tr><td>Substituições realizadas</td><td><strong>'+usageEvents.filter(e=>e.type==='substitute'&&!e.voided_at).length+'</strong></td><td>Registo de utilização</td></tr>'+row('Perdas de bola',t.losses.total)+row('Recuperações de bola',t.recoveries.total)+row('Bolas em profundidade',t.through_balls)+row('Bolas no pé do avançado',t.striker_foots)+row('Notas livres',t.free_notes);
   const join=tally=>Object.entries(tally).map(([k,n])=>esc(k==='none'?'Sem motivo':(E.lossReasons[k]||E.zones[k]||k))+' · '+n).join(' · ');
@@ -62,6 +63,7 @@
  function resultNotice(match){
   if(match.golos_favor==null||match.golos_contra==null)return '';
   const t=E.stats(match),forN=Number(match.golos_favor),againstN=Number(match.golos_contra);
+  if(!t.events_available)return '<p class="notice">O resultado foi introduzido manualmente. Não é possível compará-lo com golos dos lances porque ainda não existe um registo de lances.</p>';
   if(t.goals.for!==forN||t.goals.against!==againstN)return '<p class="notice">Golos contados nos lances: '+t.goals.for+'–'+t.goals.against+'. Resultado registado manualmente na ficha: '+forN+'–'+againstN+'. O resultado mantém o valor da ficha; corrige onde estiver errado.</p>';
   return '';
  }
@@ -128,7 +130,7 @@
   const editId=form.dataset.eventEditId,type=fd.get('type');
   const minute=String(fd.get('at_min')||'');
   if(editId&&!confirm('Guardar as alterações a este lance?'))return;
-  const atNumber=Number(minute.replace(',','.'));
+  const atNumber=editId?Number(minute.replace(',','.')):Math.round(M.replay(current,Date.now()).total_ms/60000*10)/10;
   const payload={type:editId?'edit':'record',id:editId||crypto.randomUUID(),at_ms:Math.round(atNumber*10)/10*60000,...(!editId?{event_type:type}:{})};
   const sided=editId?(E.state(current).events.find(e=>e.id===editId)?.type||''):type;
   const side=E.sidedTypes.includes(sided)?(fd.get('side')||null):null;

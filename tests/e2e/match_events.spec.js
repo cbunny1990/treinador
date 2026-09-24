@@ -47,6 +47,14 @@ test('events blocked before start, quick record, counted stats and result notice
  expect((await page.evaluate(id=>DB.obter('jogos',id),f.id)).visual_match.events.filter(e=>!e.voided_at&&e.type==='substitute')).toHaveLength(1);
  expect(errors).toEqual([]);
 });
+test('match without a saved event registry shows unknown statistics, not zeros',async({page})=>{
+ const f=await seed(page);const stats=page.locator('[data-match-events]');
+ await expect(stats).toContainText('Estatísticas indisponíveis: ainda não existe um registo de lances.');
+ await expect(stats).not.toContainText('Golos a favor');
+ await page.evaluate(async id=>{await DB.modificar('jogos',id,row=>({...row,match_events:{schema:'vision-match-events@1',revision:0,events:[],possession:{kind:'unknown',value:null,updated_at:null}}}));await MatchVisualUI.view(id);},f.id);
+ await expect(stats.locator('table')).toContainText('Golos a favor');
+ await expect(stats.locator('tbody')).toContainText('0');
+});
 test('offline recording, pause-gated edit and delete, possession provenance',async({page,context})=>{
  const f=await seed(page);await start(page);
  const form=page.locator('[data-event-form="record"]');
@@ -73,6 +81,13 @@ test('offline recording, pause-gated edit and delete, possession provenance',asy
  await poss.getByRole('button',{name:'Guardar posse',exact:true}).click();
  await expect(page.locator('[data-match-events]')).toContainText('Estimada (introduzida por ti)');
  await expect(context.request!==null).toBeTruthy();await context.setOffline(false);
+});
+test('new event uses the current clock at save despite a stale form minute',async({page})=>{
+ const f=await seed(page);await start(page);await page.evaluate(()=>window._matchTime+=120000);
+ await page.getByRole('button',{name:'Perda de bola',exact:true}).click();const form=page.locator('[data-event-form="record"]');
+ await expect(form.locator('[name="at_min"]')).toHaveValue('2');await form.locator('[name="at_min"]').fill('1');await form.locator('[name="note"]').fill('Perda após preencher os detalhes');
+ await page.evaluate(()=>window._matchTime+=180000);await form.getByRole('button',{name:'Registar lance',exact:true}).click();await saved(page);
+ const event=await page.evaluate(id=>DB.obter('jogos',id).then(row=>row.match_events.events[0]),f.id);expect(event.at_ms).toBe(300000);
 });
 test('sync refresh does not replace an event form with unsaved coach text',async({page})=>{
  await seed(page);await start(page);

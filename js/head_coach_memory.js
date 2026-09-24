@@ -110,7 +110,7 @@ const HeadCoachMemory = {
     return team;
   },
   async list(teamId = HEAD_COACH_DEFAULT_TEAM_ID, filters = {}) {
-    let items = (await DB.listar("memory_items")).filter((m) => m.team_id === teamId && DB.visivelNoWorkspaceAtivo(m));
+    let items = await DB.porIndice("memory_items", "team_id", teamId);
     if (!filters.includeArchived) items = items.filter((m) => m.status === "active");
     if (filters.kind) items = items.filter((m) => m.kind === filters.kind);
     if (filters.subjectType && filters.subjectId != null) items = items.filter((m) =>

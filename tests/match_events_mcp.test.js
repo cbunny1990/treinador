@@ -18,7 +18,8 @@ function fixture(){const match={id:MATCH,team_id:'team',kind:'match',updated_at:
  const advance=ms=>{nowMs+=ms;return nowMs;};
  return {match,rows,calls,admin,call,startUsage,advance};
 }
-test('five tools, read-only get, no invented events',async()=>{const f=fixture(),out=await f.call('get_match_events');assert.equal(api.MATCH_EVENTS_TOOLS.length,5);assert.equal(out.events.length,0);assert.equal(out.statistics.event_count,0);assert.equal(f.calls.length,0);});
+test('five tools, read-only get, absent events stay unknown',async()=>{const f=fixture(),out=await f.call('get_match_events');assert.equal(api.MATCH_EVENTS_TOOLS.length,5);assert.equal(out.events.length,0);assert.equal(out.statistics.events_available,false);assert.equal(out.statistics.event_count,null);assert.equal(f.calls.length,0);});
+test('explicit empty event list returns counted zeros',async()=>{const f=fixture();f.match.payload.match_events={schema:'vision-match-events@1',revision:0,events:[],possession:{kind:'unknown',value:null,updated_at:null}};const out=await f.call('get_match_events');assert.equal(out.statistics.events_available,true);assert.equal(out.statistics.event_count,0);assert.equal(out.statistics.counts.goal_for,0);});
 test('scopes, exact identity and stale revision enforced',async()=>{
  const f=fixture();
  await assert.rejects(api.executeMatchEventsTool(f.admin,{...c,scopes:['read']},'record_match_event',{id:MATCH,event_type:'shot_on',event_id:'a',confirmed:true}),/scope_write/);

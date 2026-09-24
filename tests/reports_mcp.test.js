@@ -44,7 +44,7 @@ test('match report MCP is read-only and exposes registered evidence with provena
 test('match-sheet report excludes post-match analysis but keeps missing data explicit',async()=>{
  const f=fixture();f.match.payload.match_events.events=[];f.match.payload.golos_favor=null;f.match.payload.golos_contra=null;f.match.payload.visual_match={schema:'vision-match-visual@1',revision:0,status:'not_started',period:1,elapsed_ms:0,roster:[],events:[]};
  const out=await api.executeReportTool(f.admin,c,'get_match_report',{external_key:'cup-final',report_type:'match_sheet'});
- assert.equal(Object.hasOwn(out,'analysis'),false);assert.equal(out.missing_data.result,true);assert.equal(out.missing_data.events,true);assert.equal(out.missing_data.usage,true);
+ assert.equal(Object.hasOwn(out,'analysis'),false);assert.equal(out.missing_data.result,true);assert.equal(out.missing_data.events,false);assert.equal(out.missing_data.registered_events_empty,true);assert.equal(out.missing_data.usage,true);
 });
 test('report MCP enforces scope, team isolation and one exact match identity',async()=>{
  const f=fixture();
@@ -93,7 +93,7 @@ test('athlete and team reports expose explicit unknown minutes, exact team scope
  const admin={from(table){assert.equal(table,'workspace_records');const filters=[];const query={select(){return this},eq(k,v){filters.push([k,v]);return this},is(k,v){filters.push([k,v]);return this},in(k,v){filters.push([k,v]);return this},then(resolve){const data=rows.filter(r=>filters.every(([k,v])=>{if(k==='payload->>external_key')return r.payload.external_key===v;if(k==='payload->>type')return v.includes(r.payload.type);return Array.isArray(v)?v.includes(r[k]):r[k]===v;})).map(r=>structuredClone(r));return Promise.resolve({data,error:null}).then(resolve)}};return query;},async rpc(){writes++;throw Error('read-only')}};
  const tool=api.REPORT_TOOLS.find(x=>x.name==='get_player_report');assert.equal(tool.annotations.readOnlyHint,true);
  const athlete=await api.executeReportTool(admin,c,'get_player_report',{external_key:'ana',from_date:'2026-09-01'});
- assert.equal(athlete.player.id,playerId);assert.equal(athlete.participation.summary.total_minutes_ms,null);assert.equal(athlete.participation.match_records[0].minutes_ms,null);assert.equal(athlete.participation.training_records.length,0);assert.equal(athlete.missing_data.recorded_minutes,true);
+ assert.equal(athlete.player.id,playerId);assert.equal(athlete.participation.summary.total_minutes_ms,null);assert.equal(athlete.participation.match_records[0].minutes_ms,null);assert.equal(athlete.participation.training_records.length,0);assert.equal(athlete.missing_data.recorded_minutes,true);assert.equal(athlete.missing_data.partial_recorded_minutes,false);assert.equal(athlete.missing_data.matches_without_recorded_minutes,1);
  const team=await api.executeReportTool(admin,c,'get_team_report',{});assert.equal(team.athletes.length,1);assert.equal(team.athletes[0].participation.total_minutes_ms,null);assert.equal(team.athletes[0].participation.training_records,0);assert.equal(writes,0);
  const season=await api.executeReportTool(admin,c,'get_team_report',{season_id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'});assert.equal(season.period.season.name,'2026/27');assert.equal(season.athletes.length,1);
  await assert.rejects(api.executeReportTool(admin,{...c,scopes:[]},'get_team_report',{}),/scope_read/);

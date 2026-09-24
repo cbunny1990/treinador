@@ -9,13 +9,18 @@ const started=()=>act(plan(),'start',0,{confirmed:true});
 const rec=(r,type,at_ms,args={},opts={})=>evt(r,'record',opts.now??1200000,{id:args.id||crypto.randomUUID(),event_type:type,at_ms,...args},opts);
 
 test('events require started usage; planned match cannot collect counts',()=>{
- const r=plan();assert.throws(()=>rec(r,'shot_on',60000),/depois de iniciar o cronómetro/);assert.equal(E.stats(r).event_count,0);
+ const r=plan(),stats=E.stats(r);assert.throws(()=>rec(r,'shot_on',60000),/depois de iniciar o cronómetro/);assert.equal(stats.events_available,false);assert.equal(stats.event_count,null);assert.equal(stats.counts,null);
 });
 
 test('manually entered match result keeps provenance separate from counted event goals',()=>{
- const missing=E.stats(plan());assert.deepEqual(missing.recorded_result,{for:null,against:null,provenance:'desconhecida'});
+ const missing=E.stats(plan());assert.deepEqual(missing.recorded_result,{for:null,against:null,provenance:'desconhecida'});assert.equal(missing.events_available,false);assert.equal(missing.goals,null);
  const entered=E.stats({...plan(),golos_favor:2,golos_contra:1});assert.deepEqual(entered.recorded_result,{for:2,against:1,provenance:'introduzida_manual'});assert.equal(entered.provenance.result,'introduzida_manual');
- assert.equal(entered.goals.for,0);assert.equal(entered.goals.against,0);
+ assert.equal(entered.goals,null);
+});
+
+test('an explicitly saved empty event list means counted zero, while absence means unknown',()=>{
+ const saved={...plan(),match_events:{schema:'vision-match-events@1',revision:0,events:[],possession:{kind:'unknown',value:null,updated_at:null}}};
+ const stats=E.stats(saved);assert.equal(stats.events_available,true);assert.equal(stats.event_count,0);assert.equal(stats.counts.goal_for,0);assert.deepEqual(stats.goals,{for:0,against:0});assert.equal(stats.provenance.counts,'contada');
 });
 
 test('recording each type stores minute, player, zone, reason and note with provenance',()=>{

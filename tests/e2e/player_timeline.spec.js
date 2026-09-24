@@ -3,6 +3,12 @@
 const { test, expect } = require("@playwright/test");
 test.use({ serviceWorkers: "block" });
 
+test("ficha do atleta percorre jogos e treinos por cursor sem carregar os históricos completos",async({page})=>{
+  await page.goto("/");await page.waitForFunction(()=>typeof router==="function");
+  const fixture=await page.evaluate(async()=>{RemoteWorkspace.scheduleSync=()=>{};const ref=crypto.randomUUID(),playerId=await DB.criar("jogadores",{team_id:DEFAULT_TEAM_ID,sync_id:ref,nome:"Atleta histórico extenso",estado_disponibilidade:"disponivel"}),payload=Array.from({length:80},(_,i)=>({minute:i,note:"large player history payload ".repeat(4)}));let selectedMatchId=null,selectedTrainingId=null;for(let i=0;i<40;i++){const date=new Date(Date.UTC(2035,0,1+i)).toISOString().slice(0,10),match=await DB.criar("jogos",{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:date,adversario:"Histórico jogo "+i,notas:JSON.stringify(payload),visual_match:{events:payload,roster:i===39?[{ref}]:[]},callup:{player_ids:i===39?[ref]:[]}}),training=await DB.criar("treinos",{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:date,objetivo:"Histórico treino "+i,blocos:payload,session:{notes:payload,attendance:i===39?[{player_ref:ref,status:"present"}]:[]}});if(i===39){selectedMatchId=match;selectedTrainingId=training;}}window.playerHistoryCursorCalls={matches:0,trainings:0};const cursor=DB.percorrerIndice.bind(DB);DB.percorrerIndice=function(store,...args){if(store==="jogos")window.playerHistoryCursorCalls.matches++;if(store==="treinos")window.playerHistoryCursorCalls.trainings++;return cursor(store,...args);};const read=DB.porIndice.bind(DB);DB.porIndice=function(store,...args){if(store==="jogos"||store==="treinos")throw new Error("A ficha tentou materializar o histórico inteiro: "+store);return read(store,...args);};location.hash="#/equipa/jogador/"+playerId;return{playerId,selectedMatchId,selectedTrainingId};});
+  await expect(page.locator("#app").getByRole("heading",{name:"Atleta histórico extenso"})).toBeVisible();await expect(page.locator("#player-timeline")).toContainText("Histórico jogo 39");await expect(page.locator("#player-timeline")).toContainText("Histórico treino 39");await expect(page.locator("#player-timeline a[href='#/equipa/jogo/"+fixture.selectedMatchId+"']")).toBeVisible();await expect(page.locator("#player-timeline a[href='#/sessao/"+fixture.selectedTrainingId+"']")).toBeVisible();await expect(page.locator('#player-goals input[name="evidence_refs"][value^="match:"]')).toHaveCount(40);await expect(page.locator('#player-goals input[name="evidence_refs"][value^="training:"]')).toHaveCount(40);const calls=await page.evaluate(()=>window.playerHistoryCursorCalls);expect(calls.matches).toBeGreaterThanOrEqual(3);expect(calls.trainings).toBeGreaterThanOrEqual(3);await expect(page.locator("#app")).not.toContainText("large player history payload");
+});
+
 test("ficha do atleta reúne participação e evolução numa cronologia com ligações", async ({ page }) => {
   await page.goto("/#/equipa");
   await page.waitForFunction(() => typeof PlayerGoals !== "undefined" && typeof VisionMatchVisual !== "undefined");
@@ -48,11 +54,16 @@ test("ficha do atleta reúne participação e evolução numa cronologia com lig
   await expect(timeline).toContainText("Observação cronológica");
   await expect(timeline).toContainText("Presença: Presente");
   await expect(timeline).toContainText("Jogo · Jogo cronológico");
+  await expect(timeline).toContainText("Evidência ligada · Treino · Apoio após passe");
+  await expect(timeline).toContainText("Evidência ligada · Jogo · Jogo cronológico");
+  await expect(timeline).toContainText("esta associação não confirma que foi trabalhado");
   await expect(timeline).toContainText("Saiu aos 10 min");
   await expect(timeline).toContainText("Utilização registada: 10:00");
   const dates = await timeline.locator("time").evaluateAll(nodes => nodes.map(node => node.dateTime));
   expect(dates).toEqual([...dates].sort((a, b) => b.localeCompare(a)));
   await expect(timeline.getByRole("link", { name: "Abrir origem" })).toHaveCount(3);
+  await expect(timeline.getByRole("link", { name: "Abrir evidência" })).toHaveCount(2);
+  await expect(timeline.getByRole("link", { name: "Abrir exercício" })).toHaveCount(1);
   await timeline.getByRole("button", { name: "Ver objetivo" }).first().click();
   await expect(page.locator("#player-goal-" + fixture.goalId)).toBeInViewport();
   const goal = page.locator("#player-goal-" + fixture.goalId);

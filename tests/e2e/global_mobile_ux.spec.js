@@ -72,13 +72,37 @@ test("aviso do PWA é anunciado e fica acessível acima da navegação móvel", 
   });
   const notice = page.getByRole("status").filter({ hasText: "Atualização disponível" });
   await expect(notice).toBeVisible();
-  await expect(page.getByRole("button", { name: "Atualizar app" })).toBeVisible();
+  const updateButton = page.getByRole("button", { name: "Atualizar app" });
+  await expect(updateButton).toBeDisabled();
   await expect(nameField).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v126"))).toBeNull();
+  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v151"))).toBeNull();
   const position = await notice.evaluate(element => {
     const rect = element.getBoundingClientRect();
     return { fixed: getComputedStyle(element).position, bottom: rect.bottom, navTop: document.querySelector(".bottom-nav").getBoundingClientRect().top };
   });
   expect(position.fixed).toBe("fixed");
   expect(position.bottom).toBeLessThan(position.navTop);
+});
+
+test("aviso do PWA bloqueia atualização enquanto decorre uma sessão de treino", async ({ page }) => {
+  await page.goto("/#/treinos");
+  const id = await page.evaluate(async () => {
+    const trainingId = await DB.criar("treinos", {
+      team_id: DEFAULT_TEAM_ID, data: "2026-09-24", objetivo: "Sessão em curso",
+      blocos: [{ order: 0, block_id: "one", exercise_ref: crypto.randomUUID(), exercise_name: "Ativação", duration_min: 8 }],
+    });
+    go("#/sessao/" + trainingId);
+    return trainingId;
+  });
+  await expect(page.getByRole("button", { name: "Iniciar treino", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Iniciar treino", exact: true }).click();
+  await expect.poll(() => page.evaluate(trainingId => DB.obter("treinos", trainingId).then(row => row.session.status), id)).toBe("running");
+  await page.waitForFunction(() => !!navigator.serviceWorker?.controller);
+  await page.evaluate(() => {
+    navigator.serviceWorker.dispatchEvent(new Event("controllerchange"));
+    navigator.serviceWorker.dispatchEvent(new Event("controllerchange"));
+  });
+  await expect(page.getByRole("status").filter({ hasText: "Atualização disponível" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Atualizar app" })).toBeDisabled();
+  await expect.poll(() => page.evaluate(trainingId => DB.obter("treinos", trainingId).then(row => row.session.status), id)).toBe("running");
 });

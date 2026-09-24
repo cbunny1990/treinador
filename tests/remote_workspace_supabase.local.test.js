@@ -6,6 +6,8 @@ const crypto = require("node:crypto");
 const { createClient } = require("@supabase/supabase-js");
 const { RemoteWorkspace } = require("../js/remote_workspace.js");
 const MatchVisual = require("../js/match_visual.js");
+const MatchAnalysis = require("../js/match_analysis.js");
+const MatchEvidence = require("../js/match_evidence.js");
 
 const url = process.env.VISION_COACH_SUPABASE_LOCAL_URL || "";
 const anonKey = process.env.VISION_COACH_SUPABASE_LOCAL_ANON_KEY || "";
@@ -133,7 +135,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     }).select("id");
     assert.ok(forbiddenInsert.error, "RLS must reject a write to another team's workspace.");
 
-    const refs = { player: crypto.randomUUID(), liveMatch: crypto.randomUUID(), deletedMatch: crypto.randomUUID(), historyMatch: crypto.randomUUID(), historyTraining: crypto.randomUUID(), exercise: crypto.randomUUID(), proposal: crypto.randomUUID(), pcDeletedProposal: crypto.randomUUID(), photo: crypto.randomUUID(), latestPhoto: crypto.randomUUID(), lossEvent: crypto.randomUUID() };
+    const refs = { player: crypto.randomUUID(), liveMatch: crypto.randomUUID(), evidenceMatch: crypto.randomUUID(), videoMoment: crypto.randomUUID(), deletedVideoMoment: crypto.randomUUID(), deletedMatch: crypto.randomUUID(), historyMatch: crypto.randomUUID(), historyTraining: crypto.randomUUID(), exercise: crypto.randomUUID(), proposal: crypto.randomUUID(), pcDeletedProposal: crypto.randomUUID(), photo: crypto.randomUUID(), latestPhoto: crypto.randomUUID(), lossEvent: crypto.randomUUID() };
     globalThis.DEFAULT_TEAM_ID = "local-coach";
     globalThis.mediaSubjectKey = (team, type, id) => `${team}|${type}|${id}`;
     globalThis.DB = devices[0];
@@ -184,6 +186,22 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     participationMatch = MatchVisual.apply(participationMatch, { type: "start", confirmed: true, expected_revision: 0 }, { controller_id: "local-integration", players: matchPlayers, now: matchStart });
     participationMatch = MatchVisual.apply(participationMatch, { type: "pause", expected_revision: 1 }, { controller_id: "local-integration", players: matchPlayers, now: matchStart + 600_000 });
     await devices[0].criar("jogos", participationMatch);
+    let evidenceMatch = {
+      team_id: "local-coach", sync_id: refs.evidenceMatch, remote_team_id: teamId, sync_dirty: true,
+      external_key: "local-sync-evidence-analysis", adversario: "Evidência e análise", data: "2026-09-03",
+    };
+    evidenceMatch = MatchAnalysis.save(evidenceMatch, { fields: { summary: "Análise inicial no PC" } }, {
+      expected_revision: 0, actor: "Treinador", now: "2026-09-03T12:00:00.000Z",
+    });
+    evidenceMatch = MatchEvidence.apply(evidenceMatch, { type: "add", expected_revision: 0, item: {
+      id: refs.videoMoment, url: "https://example.test/jogo.mp4", seconds: 125, category: "goal",
+      description: "Golo registado no PC", relation_type: "statistic", relation_ref: "goals.for",
+    } }, { now: "2026-09-03T12:01:00.000Z" });
+    evidenceMatch = MatchEvidence.apply(evidenceMatch, { type: "add", expected_revision: 1, item: {
+      id: refs.deletedVideoMoment, url: "https://example.test/jogo.mp4", seconds: 240, category: "chance",
+      description: "Momento a remover no telemóvel", relation_type: "none",
+    } }, { now: "2026-09-03T12:02:00.000Z" });
+    await devices[0].criar("jogos", evidenceMatch);
     const exerciseId = await devices[0].criar("exercicios", {
       team_id: "local-coach", sync_id: refs.exercise, remote_team_id: teamId, sync_dirty: true,
       workspace_v2: true, external_key: "local-sync-passe-apoio", nome: "Passe + apoio",
@@ -206,7 +224,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
       body: JSON.stringify({ objective: "Apoio defensivo", agent_proposal: { status: "proposed" } }), status: "ready", target_date: "2026-09-03",
     });
     const firstPush = await RemoteWorkspace._syncRecords(teamId, owner.user.id);
-    assert.equal(firstPush.pushed, 14);
+    assert.equal(firstPush.pushed, 15);
     const pcLegacyPlayerRef = (await devices[0].listar("jogos")).find((row) => row.external_key === "local-sync-legacy-player-ref");
     assert.deepEqual(pcLegacyPlayerRef.callup.player_ids, [refs.player]);
     assert.equal(pcLegacyPlayerRef.lineup.goalkeeper_id, refs.player);
@@ -238,7 +256,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     RemoteWorkspace.init = async () => coach.client;
     await devices[1].criar("sync_tombstones", { store: "seed", sync_id: "force-distinct-local-ids" });
     const pulled = await RemoteWorkspace._syncRecords(teamId, coach.user.id);
-    assert.equal(pulled.pulled, 14);
+    assert.equal(pulled.pulled, 15);
     const activityPulled = await RemoteWorkspace._syncActivity(teamId, coach.user.id);
     assert.equal(activityPulled.pulled, 1);
     assert.equal(activityPulled.conflicts.length, 0);
@@ -247,6 +265,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.deepEqual(phoneActivity.metadata._vision_coach_unresolved_origin, savedActivity.data.metadata._vision_coach_unresolved_origin);
     const phonePlayer = (await devices[1].listar("jogadores")).find((row) => row.sync_id === refs.player);
     const phoneLive = (await devices[1].listar("jogos")).find((row) => row.sync_id === refs.liveMatch);
+    const phoneEvidenceMatch = (await devices[1].listar("jogos")).find((row) => row.sync_id === refs.evidenceMatch);
     const phoneLegacyId = (await devices[1].listar("jogos")).find((row) => row.external_key === "local-sync-legacy-default-id");
     const phoneLegacyPlayerRef = (await devices[1].listar("jogos")).find((row) => row.external_key === "local-sync-legacy-player-ref");
     const phoneDeleted = (await devices[1].listar("jogos")).find((row) => row.sync_id === refs.deletedMatch);
@@ -271,6 +290,9 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.equal(phoneLive.visual_match.period, 2);
     assert.equal(phoneLive.visual_match.second_half_started_at_ms, 600_000);
     assert.equal(phoneLive.visual_match.status, "paused");
+    assert.equal(MatchAnalysis.fromMatch(phoneEvidenceMatch).fields.summary, "Análise inicial no PC");
+    assert.equal(MatchEvidence.state(phoneEvidenceMatch).moments.length, 2);
+    assert.equal(MatchEvidence.state(phoneEvidenceMatch).moments[0].id, refs.videoMoment);
     const mcp = await import("../supabase/functions/vision-coach-mcp/player_goals.mjs");
     const participation = await mcp.executePlayerGoalTool(admin, { id: "local-head-coach", team_id: teamId, scopes: ["read"] }, "get_player_participation_history", { id: refs.player });
     assert.equal(participation.summary.training_records, 1);
@@ -281,10 +303,18 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.equal(participation.training_records[0].attendance, "present");
 
     await devices[1].atualizar("jogos", { ...phoneLive, nota_tatica: "Editado no telemóvel", sync_dirty: true });
+    let editedEvidenceMatch = MatchEvidence.apply(phoneEvidenceMatch, { type: "edit", id: refs.videoMoment, expected_revision: 2, item: {
+      seconds: 128, description: "Momento revisto no telemóvel",
+    } }, { now: "2026-09-03T12:03:00.000Z" });
+    editedEvidenceMatch = MatchEvidence.apply(editedEvidenceMatch, { type: "delete", id: refs.deletedVideoMoment, expected_revision: 3, confirmed: true }, { now: "2026-09-03T12:04:00.000Z" });
+    editedEvidenceMatch = MatchAnalysis.save(editedEvidenceMatch, {
+      fields: { ...MatchAnalysis.fromMatch(editedEvidenceMatch).fields, summary: "Análise revista no telemóvel" },
+    }, { expected_revision: 1, actor: "Treinador", now: "2026-09-03T12:05:00.000Z" });
+    await devices[1].atualizar("jogos", { ...editedEvidenceMatch, sync_dirty: true });
     await devices[1].atualizar("workspace_documents", { ...phoneProposal, body: JSON.stringify({ ...JSON.parse(phoneProposal.body), coach_review: "Rever apoio no próximo treino" }), sync_dirty: true });
     await devices[1].atualizar("treinos", { ...phoneHistoryTraining, session: { ...phoneHistoryTraining.session, attendance: [{ ...phoneHistoryTraining.session.attendance[0], status: "late" }] }, sync_dirty: true });
     const phonePush = await RemoteWorkspace._syncRecords(teamId, coach.user.id);
-    assert.equal(phonePush.pushed, 3);
+    assert.equal(phonePush.pushed, 4);
     globalThis.DB = devices[0];
     RemoteWorkspace.init = async () => owner.client;
     const stalePc = await devices[0].obter("jogos", liveId);
@@ -292,16 +322,27 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     const conflict = await RemoteWorkspace._syncRecords(teamId, owner.user.id);
     assert.equal(conflict.pushed, 0);
     assert.equal(conflict.conflicts.some((item) => item.sync_id === refs.liveMatch && item.reason === "version_mismatch"), true);
-    assert.equal(conflict.pulled, 2, "As edições da proposta e da presença feitas no telemóvel devem regressar ao PC apesar do conflito noutro registo.");
+    assert.equal(conflict.pulled, 3, "As edições da proposta, presença, análise e evidências feitas no telemóvel devem regressar ao PC apesar do conflito noutro registo.");
     const pcProposal = (await devices[0].listar("workspace_documents")).find((row) => row.sync_id === refs.proposal);
     assert.equal(JSON.parse(pcProposal.body).coach_review, "Rever apoio no próximo treino");
     const pcHistoryTraining = (await devices[0].listar("treinos")).find((row) => row.sync_id === refs.historyTraining);
     assert.equal(pcHistoryTraining.session.attendance[0].status, "late");
+    const pcEvidenceMatch = (await devices[0].listar("jogos")).find((row) => row.sync_id === refs.evidenceMatch);
+    assert.equal(MatchAnalysis.fromMatch(pcEvidenceMatch).fields.summary, "Análise revista no telemóvel");
+    const pcVideoMoments = MatchEvidence.state(pcEvidenceMatch).moments;
+    assert.equal(pcVideoMoments.length, 1, "A eliminação de um momento de vídeo deve sincronizar como edição do jogo, sem recriar o momento.");
+    assert.equal(pcVideoMoments[0].id, refs.videoMoment);
+    assert.equal(pcVideoMoments[0].seconds, 128);
+    assert.equal(pcVideoMoments[0].description, "Momento revisto no telemóvel");
     const currentRemote = await admin.from("workspace_records").select("payload").eq("id", refs.liveMatch).single();
     assert.ifError(currentRemote.error);
     assert.equal(currentRemote.data.payload.nota_tatica, "Editado no telemóvel");
     assert.equal(currentRemote.data.payload.visual_match.period, 2);
     assert.equal(currentRemote.data.payload.visual_match.second_half_started_at_ms, 600_000);
+    const remoteEvidenceMatch = await admin.from("workspace_records").select("payload").eq("id", refs.evidenceMatch).single();
+    assert.ifError(remoteEvidenceMatch.error);
+    assert.equal(MatchAnalysis.fromMatch(remoteEvidenceMatch.data.payload).fields.summary, "Análise revista no telemóvel");
+    assert.equal(MatchEvidence.state(remoteEvidenceMatch.data.payload).moments.length, 1);
 
     globalThis.DB = devices[0];
     const photoData = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7RxycAAAAASUVORK5CYII=";

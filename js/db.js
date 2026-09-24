@@ -266,6 +266,45 @@ const DB = {
     const rows = await _prom(os.index(indice).getAll(valor));
     return store === "teams" ? rows : rows.filter(_visibleInSelectedRemoteWorkspace);
   },
+  async percorrerIndice(store, indice, valor, visitar) {
+    if (typeof visitar !== "function") throw new TypeError("É necessário indicar como processar cada registo.");
+    const os = await _tx(store, "readonly");
+    return new Promise((resolve, reject) => {
+      let count = 0;
+      const request = os.index(indice).openCursor(IDBKeyRange.only(valor));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) { resolve(count); return; }
+        try {
+          if (store === "teams" || _visibleInSelectedRemoteWorkspace(cursor.value)) {
+            visitar(cursor.value);
+            count++;
+          }
+          cursor.continue();
+        } catch (error) {
+          reject(error);
+          try { os.transaction.abort(); } catch (_) {}
+        }
+      };
+      request.onerror = () => reject(request.error || new Error("Não foi possível percorrer o índice local."));
+      os.transaction.onabort = () => reject(os.transaction.error || new Error("A leitura local foi interrompida."));
+    });
+  },
+  async contarPorIndice(store, indice, valor) {
+    const os = await _tx(store, "readonly");
+    return new Promise((resolve, reject) => {
+      let count = 0;
+      const request = os.index(indice).openCursor(IDBKeyRange.only(valor));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) { resolve(count); return; }
+        if (store === "teams" || _visibleInSelectedRemoteWorkspace(cursor.value)) count++;
+        cursor.continue();
+      };
+      request.onerror = () => reject(request.error || new Error("Não foi possível contar registos locais."));
+      os.transaction.onabort = () => reject(os.transaction.error || new Error("A contagem local foi interrompida."));
+    });
+  },
   visivelNoWorkspaceAtivo(row) { return _visibleInSelectedRemoteWorkspace(row); },
   // Exportar/importar toda a base de dados (cópia de segurança).
   async exportarTudo() {
