@@ -135,7 +135,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     }).select("id");
     assert.ok(forbiddenInsert.error, "RLS must reject a write to another team's workspace.");
 
-    const refs = { player: crypto.randomUUID(), liveMatch: crypto.randomUUID(), evidenceMatch: crypto.randomUUID(), videoMoment: crypto.randomUUID(), deletedVideoMoment: crypto.randomUUID(), deletedMatch: crypto.randomUUID(), historyMatch: crypto.randomUUID(), historyTraining: crypto.randomUUID(), exercise: crypto.randomUUID(), proposal: crypto.randomUUID(), pcDeletedProposal: crypto.randomUUID(), photo: crypto.randomUUID(), latestPhoto: crypto.randomUUID(), lossEvent: crypto.randomUUID() };
+    const refs = { player: crypto.randomUUID(), liveMatch: crypto.randomUUID(), evidenceMatch: crypto.randomUUID(), videoMoment: crypto.randomUUID(), deletedVideoMoment: crypto.randomUUID(), deletedMatch: crypto.randomUUID(), historyMatch: crypto.randomUUID(), historyTraining: crypto.randomUUID(), exercise: crypto.randomUUID(), proposal: crypto.randomUUID(), pcDeletedProposal: crypto.randomUUID(), playerArchive: crypto.randomUUID(), photo: crypto.randomUUID(), latestPhoto: crypto.randomUUID(), lossEvent: crypto.randomUUID() };
     globalThis.DEFAULT_TEAM_ID = "local-coach";
     globalThis.mediaSubjectKey = (team, type, id) => `${team}|${type}|${id}`;
     globalThis.DB = devices[0];
@@ -223,8 +223,13 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
       external_key: "local-sync-team-goal-pc-delete", type: "team_goal", title: "Proposta a apagar no PC",
       body: JSON.stringify({ objective: "Apoio defensivo", agent_proposal: { status: "proposed" } }), status: "ready", target_date: "2026-09-03",
     });
+    await devices[0].criar("workspace_documents", {
+      team_id: "local-coach", sync_id: refs.playerArchive, remote_team_id: teamId, sync_dirty: true,
+      external_key: "player-archive:local-coach:" + refs.player, type: "player_archive", title: "Histórico · Atleta sintético",
+      body: JSON.stringify({ schema: "vision-player-archive@1", team_id: "local-coach", player: { ref: refs.player, name: "Atleta sintético", number: 7, age_group: "Sub-8" }, development_goals: { schema: "vision-player-goals@1", revision: 2, items: [{ id: crypto.randomUUID(), title: "Apoio após passe", started_at: "2026-09-01", status: "continue", notes: "Preservar histórico", evidence_refs: [{ type: "match", id: refs.evidenceMatch }], exercise_refs: [refs.exercise], history: [{ title: "Apoio após passe", status: "active", updated_at: "2026-09-02T12:00:00.000Z" }] }] }, archived_at: "2026-09-03T12:00:00.000Z" }), status: "archived",
+    });
     const firstPush = await RemoteWorkspace._syncRecords(teamId, owner.user.id);
-    assert.equal(firstPush.pushed, 15);
+    assert.equal(firstPush.pushed, 16);
     const pcLegacyPlayerRef = (await devices[0].listar("jogos")).find((row) => row.external_key === "local-sync-legacy-player-ref");
     assert.deepEqual(pcLegacyPlayerRef.callup.player_ids, [refs.player]);
     assert.equal(pcLegacyPlayerRef.lineup.goalkeeper_id, refs.player);
@@ -256,7 +261,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     RemoteWorkspace.init = async () => coach.client;
     await devices[1].criar("sync_tombstones", { store: "seed", sync_id: "force-distinct-local-ids" });
     const pulled = await RemoteWorkspace._syncRecords(teamId, coach.user.id);
-    assert.equal(pulled.pulled, 15);
+    assert.equal(pulled.pulled, 16);
     const activityPulled = await RemoteWorkspace._syncActivity(teamId, coach.user.id);
     assert.equal(activityPulled.pulled, 1);
     assert.equal(activityPulled.conflicts.length, 0);
@@ -273,6 +278,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     const phoneExercise = (await devices[1].listar("exercicios")).find((row) => row.sync_id === refs.exercise);
     const phoneProposal = (await devices[1].listar("workspace_documents")).find((row) => row.sync_id === refs.proposal);
     const phonePcDeletedProposal = (await devices[1].listar("workspace_documents")).find((row) => row.sync_id === refs.pcDeletedProposal);
+    const phonePlayerArchive = (await devices[1].listar("workspace_documents")).find((row) => row.sync_id === refs.playerArchive);
     assert.notEqual(phonePlayer.id, playerId);
     assert.notEqual(phoneLive.id, liveId);
     assert.notEqual(phoneLegacyId.id, legacySyncId);
@@ -285,6 +291,10 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.equal(phoneHistoryTraining.session.blocks[0].exercise_ref, phoneExercise.sync_id);
     assert.equal(JSON.parse(phoneProposal.body).agent_proposal.status, "proposed");
     assert.equal(JSON.parse(phonePcDeletedProposal.body).agent_proposal.status, "proposed");
+    assert.equal(phonePlayerArchive.type, "player_archive");
+    assert.equal(phonePlayerArchive.status, "archived");
+    assert.equal(JSON.parse(phonePlayerArchive.body).development_goals.items[0].history[0].status, "active");
+    assert.equal(JSON.parse(phonePlayerArchive.body).development_goals.items[0].evidence_refs[0].id, refs.evidenceMatch);
     assert.equal(phoneLive.match_events.events[0].id, refs.lossEvent);
     assert.equal(phoneLive.match_events.events[0].note, "Passe interceptado no PC");
     assert.equal(phoneLive.visual_match.period, 2);
