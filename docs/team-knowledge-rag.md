@@ -1,5 +1,7 @@
 # Vision Coach — pesquisa RAG da equipa
 
+Revalidação integrada local (25/09/2026): na stack descartável `vision-coach-validation-20260924-run2`, as migrations da branch estavam alinhadas (26) e passaram os testes Supabase Auth/PostgREST/RLS/Realtime/sincronização/RAG 3/3, incluindo isolamento de equipa; E2E PC↔PWA offline/religação/conflito/tombstone 1/1. A Edge Function `vision-coach-mcp` atual da branch passou o teste HTTP 1/1: contrato/tools, contexto híbrido, recusa de token e provider ausente sem transmissão externa. O provider não foi configurado; os testes usaram apenas dados sintéticos. Stack parada, volumes preservados. Nada foi escrito no projeto partilhado nem publicado.
+
 ## Estado atual — 24/09/2026
 
 A implementação foi validada em stack Supabase descartável isolada: 26 migrations desde base vazia, `db lint` sem erros em `public,private`, integração Supabase 3/3, Edge HTTP 1/1 e E2E offline/religação PC↔PWA 1/1. A stack foi parada sem tocar no projeto Supabase partilhado. RAG permanece inativo nesse ambiente: as migrations e a Edge Function não foram publicadas e o secret do provider não foi configurado. A ativação fica para depois da revisão do treinador. A verificação em aparelhos físicos PC↔telemóvel também continua por fazer; a emulação e a stack local não a substituem.
