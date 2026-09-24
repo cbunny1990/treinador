@@ -30,10 +30,11 @@
   }
   async function view(id){
     const turn=++generation,raw=await DB.obter('treinos',id);
-    if(!raw){state=null;return setView('Treino indisponível','<div class="notice">Este treino foi apagado ou não está neste dispositivo.</div>','Treino');}
+    if(!raw){root.VisionAppReloadGuard?.setSession('training',id,false);state=null;return setView('Treino indisponível','<div class="notice">Este treino foi apagado ou não está neste dispositivo.</div>','Treino');}
     const rosterRows=await players(),all=await tuExercises();
     if(turn!==generation||!location.hash.startsWith('#/sessao/'))return;
     state=raw;const t=TrainingPlanner.normalizeTraining(raw),s=M.normalize(raw.session),sum=M.summary(s),roster=M.roster(rosterRows,s),mine=owns(s);
+    root.VisionAppReloadGuard?.setSession('training',id,['running','paused'].includes(s.status));
     const b=s.blocks[s.active_index],exercise=b?tuExerciseByRef(all,b.exercise_ref):null;
     const statusText=!navigator.onLine?'Guardado neste dispositivo · envio pendente até regressar a Internet':raw.sync_dirty?'Guardado neste dispositivo · sincronização pendente':'Sem alterações locais pendentes';
     let html='<div data-training-session="'+id+'"><section class="panel hero-main"><div class="kicker">'+fmtDate(t.data)+' · '+e(t.hora||'')+'</div><h2>Treino em campo</h2><p class="lead">'+e(t.objetivo)+'</p><div class="toolbar section"><span class="badge '+(s.status==='running'?'ready':'')+'">'+M.states[s.status]+'</span><a class="btn secondary" href="#/consulta/'+id+'">Consultar exercícios</a><a class="btn secondary" href="#/treinos/'+id+'">Ficha do treino</a></div><p class="hint" data-session-sync>'+statusText+'</p><p class="notice" data-session-feedback role="status" hidden></p><div class="notice" data-session-remote hidden>Existem alterações recebidas. Guarda ou copia as notas antes de atualizar. '+button('refresh','Atualizar sessão')+'</div></section>';

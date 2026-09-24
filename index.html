@@ -95,17 +95,17 @@
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
         let hadController = !!navigator.serviceWorker.controller;
-        const serviceWorkerVersion = 151;
+        const serviceWorkerVersion = 152;
         const registration = await navigator.serviceWorker.register("sw.js?v="+serviceWorkerVersion).catch(() => null);
         if(!registration) return;
         registration.update().catch(() => {});
         navigator.serviceWorker.addEventListener("controllerchange", () => {
           if(!hadController){hadController=true;return;}
-          if(document.querySelector('form, [data-training-session], [data-match-visual]')){
+          if(hasUnsavedOrOpenSession()||window.VisionAppReloadGuard.hasActiveSession()){
           if(!document.getElementById('sw-update-notice')){
             const notice=document.createElement('div');notice.id='sw-update-notice';notice.className='notice sw-update-notice';notice.setAttribute('role','status');notice.setAttribute('aria-live','polite');notice.append('Atualização disponível. Termina ou guarda o trabalho em curso para poderes atualizar. ');
             const reload=document.createElement('button');reload.type='button';reload.className='btn secondary';reload.textContent='Atualizar app';
-            const syncSafety=()=>{reload.disabled=!!document.querySelector('form, [data-training-session], [data-match-visual]');};
+            const syncSafety=()=>{reload.disabled=hasUnsavedOrOpenSession()||window.VisionAppReloadGuard.hasActiveSession();};
             reload.addEventListener('click',()=>{syncSafety();if(!reload.disabled)location.reload();});
             notice.append(reload);document.body.appendChild(notice);syncSafety();
             new MutationObserver(syncSafety).observe(document.body,{childList:true,subtree:true});
@@ -118,6 +118,19 @@
         });
       });
     }
+    const activeWorkKey="vision-active-session-guards-v1";
+    const hasUnsavedOrOpenSession=()=>!!document.querySelector('form, [data-training-session], [data-match-visual]')||location.hash.startsWith('#/sessao/')||location.hash.startsWith('#/jogo-visual/');
+    const activeWorkInMemory=new Set();
+    window.VisionAppReloadGuard={
+      setSession(kind,id,inUse){
+        try{
+          const key=String(kind)+":"+String(id),items=new Set(JSON.parse(sessionStorage.getItem(activeWorkKey)||"[]"));
+          if(inUse){items.add(key);activeWorkInMemory.add(key);}else{items.delete(key);activeWorkInMemory.delete(key);}
+          if(items.size)sessionStorage.setItem(activeWorkKey,JSON.stringify([...items]));else sessionStorage.removeItem(activeWorkKey);
+        }catch(_){if(inUse)activeWorkInMemory.add(String(kind)+":"+String(id));else activeWorkInMemory.delete(String(kind)+":"+String(id));}
+      },
+      hasActiveSession(){try{return activeWorkInMemory.size>0||JSON.parse(sessionStorage.getItem(activeWorkKey)||"[]").length>0;}catch(_){return true;}}
+    };
     const badge = document.getElementById("badge-off");
     const syncNetworkBadge = () => { badge.hidden = navigator.onLine; };
     window.addEventListener("online", syncNetworkBadge);
