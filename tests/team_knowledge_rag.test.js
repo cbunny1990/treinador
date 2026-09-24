@@ -236,6 +236,23 @@ test('health-related search query stays out of embeddings and returns no echoed 
  assert.deepEqual(db.calls,[]);assert.deepEqual(db.fromCalls,[]);assert.deepEqual(provider.requests,[]);assert.doesNotMatch(JSON.stringify(result),/tonturas|tosse/i);
 });
 
+test('athlete names are redacted from RAG query embeddings and lexical search',async()=>{
+ const athlete={id:PLAYER,team_id:TEAM,kind:'player',updated_at:'2026-09-24T10:00:00.000Z',payload:{nome:'Maria Silva',development_goals:{items:[]}}};
+ const db=fakeAdmin([match(),athlete]),provider=fakeProvider(),query='O que fez Maria na linha Silva?';
+ const result=await rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query},{provider});
+ const safeQuery='O que fez atleta na linha atleta?';
+ assert.equal(provider.requests.at(-1).input[0],safeQuery,'the original name must never reach embeddings');
+ assert.equal(db.calls.find(call=>call.name==='search_team_knowledge_chunks').args.p_query,safeQuery,'lexical matching uses the same redacted query');
+ assert.equal(result.query,safeQuery);assert.doesNotMatch(JSON.stringify(result),/Maria Silva/i);
+});
+
+test('RAG fails closed when it cannot load roster names for query redaction',async()=>{
+ const calls=[],provider=fakeProvider(),admin={async rpc(name,args){calls.push({name,args});return {data:[]};}};
+ await assert.rejects(rag.executeTeamKnowledgeTool(admin,connector,'search_team_knowledge',{query:'O que fez Maria Silva?'},{provider}),/query_privacy_metadata_unavailable/);
+ assert.deepEqual(provider.requests,[],'an unredacted athlete name must not reach the embedding provider');
+ assert.deepEqual(calls.map(call=>call.name),['claim_team_knowledge_jobs']);
+});
+
 test('full reindex requires explicit write approval and remains scoped to connector team',async()=>{
  const db=fakeAdmin(),readOnly={...connector,scopes:['read']},write={...connector,scopes:['read','write']};
  await assert.rejects(rag.executeTeamKnowledgeTool(db,readOnly,'reindex_team_knowledge',{confirmed:true}),/scope_write_required/);
