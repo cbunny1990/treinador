@@ -8,7 +8,7 @@ test('service worker activates without original exercise images and caches them 
 
   const images = visuals.approved.map(({ src, bytes }) => ({ path: src, bytes }));
   const initial = await page.evaluate(async () => {
-    const shell = await caches.open('vision-coach-v161');
+    const shell = await caches.open('vision-coach-v162');
     const images = await caches.open('vision-coach-approved-exercises-v1');
     return {
       teamCrestCached: !!(await shell.match(new URL('./assets/teams/14529_imgbank.png', location.href))),
