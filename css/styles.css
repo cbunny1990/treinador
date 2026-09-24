@@ -336,6 +336,7 @@ tr:last-child td{border-bottom:0}
 [data-match-visual] input,[data-match-visual] select,[data-match-form] input,[data-match-form] select{min-height:44px}
 [data-match-form] .btn{min-height:44px}
 [data-match-visual] [hidden]{display:none!important}
+[data-search-page] [hidden]{display:none!important}
 [data-match-visual] td{font-variant-numeric:tabular-nums}
 .match-event-quick{grid-template-columns:repeat(4,minmax(0,1fr))}
 .match-event-quick .btn{min-height:48px;text-align:center;white-space:normal}
