@@ -131,13 +131,13 @@
  });
  async function history(player){
   if(!player.sync_id)return '';
-  const rows=await DB.porIndice('jogos','team_id',DEFAULT_TEAM_ID),records=[];
-  for(const row of rows){
+  const records=[];
+  await DB.percorrerIndice('jogos','team_id',DEFAULT_TEAM_ID,row=>{
    const state=M.state(row),ref=String(player.sync_id),called=(row.callup?.player_ids||[]).some(x=>String(x)===ref),started=!!state.started_at,initial=started?state.initial_slots||M.initialSlots(row):null,starter=!!initial&&Object.values(initial).some(x=>String(x)===ref),events=state.events.filter(x=>!x.voided_at),entries=events.filter(x=>x.type==='substitute'&&String(x.in_ref)===ref).length,exits=events.filter(x=>x.type==='substitute'&&String(x.out_ref)===ref).length,rostered=state.roster.some(x=>String(x.ref)===ref);
-   if(!called&&!rostered&&!starter&&!entries&&!exits)continue;
+   if(!called&&!rostered&&!starter&&!entries&&!exits)return;
    const played=started&&(rostered||starter||entries>0||exits>0),usage=played?M.replay(row).players.find(x=>String(x.ref)===ref):null;
    records.push({row,called,started,starter:played&&starter,entries,exits,played,usage,positions:played?M.positionsPlayed(row,ref).map(role=>M.roles[role]):[]});
-  }
+  });
   records.sort((a,b)=>String(b.row.data).localeCompare(String(a.row.data)));
   const calledCount=records.filter(x=>x.called).length,starterCount=records.filter(x=>x.starter).length,entryCount=records.reduce((n,x)=>n+x.entries,0),exitCount=records.reduce((n,x)=>n+x.exits,0),known=records.filter(x=>x.usage),total=known.reduce((n,x)=>n+x.usage.elapsed_ms,0);
   const summary='<div class="grid cols-4"><div class="panel metric"><div class="metric-label">Convocações</div><div class="metric-value">'+calledCount+'</div></div><div class="panel metric"><div class="metric-label">Titularidades</div><div class="metric-value">'+starterCount+'</div></div><div class="panel metric"><div class="metric-label">Entradas · saídas</div><div class="metric-value">'+entryCount+' · '+exitCount+'</div></div><div class="panel metric"><div class="metric-label">Minutos registados</div><div class="metric-value">'+(known.length?M.format(total):'—')+'</div></div></div>';

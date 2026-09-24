@@ -6,9 +6,13 @@ Abre **Workspace → Semana e evolução**. Cada plano usa a segunda-feira como 
 
 Só pode existir um plano ativo por semana. Editar exige a mesma revisão e `updated_at` lidos inicialmente. Se outro dispositivo alterar o registo, a gravação é recusada e a versão local permanece no formulário para o treinador comparar.
 
+Os planos aparecem do mais recente para o mais antigo e identificam a semana atual, a seguinte e as anteriores. A segunda-feira é a referência da semana.
+
 ## Objetivos da equipa
 
 Cada objetivo preserva separadamente facto observado, interpretação, hipótese, avaliação e decisão do treinador. O estado segue `identificado → planeado → trabalhado → observado → avaliado → melhorou / continua`. Para marcar como trabalhado ou avaliado, associa pelo menos um treino ou jogo; exercícios podem ser associados por UUID estável e são preservados ao editar. `Avaliado`, `Melhorou` e `Continua` exigem texto de avaliação e decisão explícita do treinador. A ficha mostra ligações para as sessões que originaram o objetivo, exercícios utilizados e evidências, além da avaliação e decisão guardadas. Os planos semanais mostram os nomes das sessões associadas, a relação planeada e a avaliação final. Nenhum estado é inferido automaticamente.
+
+As sessões relacionadas/de origem (`sessions`) são distintas das sessões em que o treinador confirma que trabalhou o foco (`worked_sessions`). Uma associação, uma sessão planeada ou um exercício relacionado não contam como trabalho realizado. Para avançar a `Trabalhado`, `Observado`, `Avaliado`, `Melhorou` ou `Continua`, o treinador assinala pelo menos uma sessão concluída; a app e o MCP verificam o registo concluído na equipa autorizada. A ficha apresenta a contagem e as sessões correspondentes. Objetivos anteriores à separação mostram “trabalho sem contagem em registo antigo”; as associações antigas não são convertidas automaticamente em trabalho.
 
 O campo de avaliação foi acrescentado sem substituir os objetivos existentes: documentos antigos são lidos com avaliação vazia e mantêm histórico e revisões. Para avançar a `Avaliado`, `Melhorou` ou `Continua`, o treinador precisa de preencher a avaliação separada e a decisão; preencher o campo não avança o estado automaticamente.
 

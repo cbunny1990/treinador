@@ -1,6 +1,6 @@
 const {test,expect}=require('@playwright/test');test.use({serviceWorkers:'block'});
 test('player history distinguishes call-up from recorded starts, entries, exits and minutes',async({page})=>{
- await page.goto('/#/equipa');await page.waitForFunction(()=>typeof VisionMatchVisual!=='undefined'&&typeof DB!=='undefined');
+ await page.goto('/#/equipa');await page.waitForFunction(()=>typeof VisionMatchVisual!=='undefined'&&typeof DB!=='undefined'&&typeof RemoteWorkspace!=='undefined');
  const fixture=await page.evaluate(async()=>{
   RemoteWorkspace.scheduleSync=()=>{};const refs=Array.from({length:6},()=>crypto.randomUUID()),players=refs.map((sync_id,i)=>({sync_id,nome:i===0?'Atleta Histórico':'Colega '+i,numero:i+1,estado_disponibilidade:'disponivel'}));
   const playerId=await DB.criar('jogadores',{team_id:DEFAULT_TEAM_ID,sync_id:refs[0],nome:'Atleta Histórico',estado_disponibilidade:'disponivel'});

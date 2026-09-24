@@ -13,7 +13,7 @@ module.exports = defineConfig({
     serviceWorkers: "allow",
   },
   webServer: {
-    command: "python -m http.server 18765 --bind 127.0.0.1",
+    command: "node scripts/test-server.mjs",
     url: "http://127.0.0.1:18765",
     cwd: __dirname,
     reuseExistingServer: false,

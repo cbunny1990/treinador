@@ -100,13 +100,21 @@
   row.match_events=s;return row;
  }
  function stats(match){
-  const s=state(match),count=k=>s.events.filter(e=>e.type===k).length;
+  const s=state(match),eventsAvailable=Array.isArray(match?.match_events?.events),count=k=>s.events.filter(e=>e.type===k).length;
   const by=(key,filter,missing=null)=>s.events.filter(filter).reduce((acc,e)=>{const value=e[key]||missing;if(value)acc[value]=(acc[value]||0)+1;return acc;},{});
   const shot=(type,side)=>s.events.filter(e=>e.type===type&&e.side===side).length;
+  const result={for:match?.golos_favor??null,against:match?.golos_contra??null,provenance:match?.golos_favor!=null&&match?.golos_contra!=null?'introduzida_manual':'desconhecida'};
+  if(!eventsAvailable)return {
+   events_available:false,event_count:null,origin:'Sem registo de lances',recorded_result:result,
+   counts:null,goals:null,shots:null,losses:null,recoveries:null,through_balls:null,striker_foots:null,free_notes:null,
+   possession:s.possession,
+   provenance:{counts:'desconhecida',losses:'desconhecida',recoveries:'desconhecida',minutes:'desconhecida',result:result.provenance,possession:{measured:'medida',estimated:'estimada',unknown:'desconhecida'}}
+  };
   return {
+   events_available:true,
    event_count:s.events.length,
    origin:'Contada nos lances registados',
-   recorded_result:{for:match?.golos_favor??null,against:match?.golos_contra??null,provenance:match?.golos_favor!=null&&match?.golos_contra!=null?'introduzida_manual':'desconhecida'},
+   recorded_result:result,
    counts:Object.fromEntries(Object.keys(TYPES).map(k=>[k,count(k)])),
    goals:{for:count('goal_for'),against:count('goal_against')},
    shots:{on:count('shot_on'),off:count('shot_off'),own_on:shot('shot_on','propia'),against_on:shot('shot_on','adversaria'),unknown_side_on:count('shot_on')-shot('shot_on','propia')-shot('shot_on','adversaria'),own_off:shot('shot_off','propia'),against_off:shot('shot_off','adversaria'),unknown_side_off:count('shot_off')-shot('shot_off','propia')-shot('shot_off','adversaria')},

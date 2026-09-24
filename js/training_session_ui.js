@@ -79,8 +79,9 @@
   }
   async function history(player){
     if(!player.sync_id)return '';
-    const trainings=await DB.porIndice('treinos','team_id',DEFAULT_TEAM_ID);
-    const records=trainings.map(t=>({t,a:t.session?.attendance?.find(a=>a.player_ref===player.sync_id)})).filter(x=>x.a&&x.a.status!=='unknown').sort((a,b)=>String(b.t.data).localeCompare(String(a.t.data)));
+    const records=[];
+    await DB.percorrerIndice('treinos','team_id',DEFAULT_TEAM_ID,t=>{const a=t.session?.attendance?.find(a=>a.player_ref===player.sync_id);if(a&&a.status!=='unknown')records.push({t:{id:t.id,data:t.data},a});});
+    records.sort((a,b)=>String(b.t.data).localeCompare(String(a.t.data)));
     if(!records.length)return '<section class="section"><h2>Presenças em treinos</h2><p class="empty">Ainda sem presenças registadas.</p></section>';
     return '<section class="section"><h2>Presenças em treinos</h2><p class="meta">'+records.filter(x=>['present','late'].includes(x.a.status)).length+' presenças/atrasos em '+records.length+' sessões com registo.</p><div class="list">'+records.map(({t,a})=>'<a class="list-item row" href="#/sessao/'+t.id+'"><span class="grow">'+fmtDate(t.data)+'</span><span class="badge">'+e(M.attendance[a.status])+'</span></a>').join('')+'</div></section>';
   }

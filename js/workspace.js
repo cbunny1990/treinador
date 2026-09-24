@@ -110,6 +110,56 @@ function workspaceTimeline(data) {
   });
   return rows.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
 }
+function workspaceTimelineRecentPush(rows, row, limit) {
+  const date = String(row.date || "");
+  let low = 0, high = rows.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (String(rows[middle].date || "") >= date) low = middle + 1;
+    else high = middle;
+  }
+  if (low >= limit) return;
+  rows.splice(low, 0, row);
+  if (rows.length > limit) rows.pop();
+}
+async function workspaceRecentTimeline(teamId, limit = 100) {
+  const activity = [], documents = [], memory = [], matches = [], trainings = [];
+  const maxRows = Math.max(1, Math.min(500, Number(limit) || 100));
+  await Promise.all([
+    DB.percorrerIndice("activity_items", "team_id", teamId, (item) => workspaceTimelineRecentPush(activity, {
+      type: "activity", date: item.created_at, title: item.summary || item.action,
+      actor: item.actor, actor_label: item.actor_label,
+      ref: { metadata: item.metadata && typeof item.metadata === "object" ? { _vision_coach_unresolved_origin: item.metadata._vision_coach_unresolved_origin } : {} },
+    }, 50)),
+    DB.percorrerIndice("workspace_documents", "team_id", teamId, (item) => {
+      if (item.status === "archived") return;
+      workspaceTimelineRecentPush(documents, {
+        type: "document", date: item.updated_at || item.created_at, title: item.title,
+        actor: item.updated_by || item.created_by, actor_label: item.updated_by_label || item.created_by_label,
+        ref: { id: item.id, type: item.type },
+      }, maxRows);
+    }),
+    DB.percorrerIndice("memory_items", "team_id", teamId, (item) => {
+      if (item.status !== "active") return;
+      workspaceTimelineRecentPush(memory, {
+        type: "memory", date: item.occurred_at || item.created_at, title: item.title,
+        actor: item.metadata?.actor || "human", actor_label: item.metadata?.actor_label || item.source?.label || "Treinador",
+        ref: { id: item.id },
+      }, maxRows);
+    }),
+    DB.percorrerIndice("jogos", "team_id", teamId, (item) => workspaceTimelineRecentPush(matches, {
+      type: "match", date: item.data, title: "Jogo · " + (item.adversario || "Adversário"),
+      actor: item.sync_actor_type || "human", actor_label: item.sync_actor_label || "Equipa", ref: { id: item.id },
+    }, maxRows)),
+    DB.percorrerIndice("treinos", "team_id", teamId, (item) => workspaceTimelineRecentPush(trainings, {
+      type: "training", date: item.data, title: "Treino · " + (item.escalao || ""),
+      actor: item.sync_actor_type || "human", actor_label: item.sync_actor_label || "Equipa", ref: { id: item.id },
+    }, maxRows)),
+  ]);
+  return activity.concat(documents, memory, matches, trainings)
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")))
+    .slice(0, maxRows);
+}
 const WorkspaceStore = {
   async listDocuments(teamId = WORKSPACE_DEFAULT_TEAM_ID, filters = {}) {
     let rows = (await DB.porIndice("workspace_documents", "team_id", teamId)).sort(workspaceSortDesc);
@@ -169,6 +219,9 @@ const WorkspaceStore = {
     return (await DB.porIndice("activity_items", "team_id", teamId))
       .sort(workspaceSortDesc).slice(0, Math.max(1, Math.min(200, Number(limit) || 30)));
   },
+  async recentTimeline(teamId = WORKSPACE_DEFAULT_TEAM_ID, limit = 100) {
+    return workspaceRecentTimeline(teamId, limit);
+  },
   async captureObservation(input) {
     const actor = wsActor(input?.actor);
     const itemId = await HeadCoachMemory.create({
@@ -188,30 +241,95 @@ const WorkspaceStore = {
     });
     return itemId;
   },
-  async buildSnapshot(teamId = WORKSPACE_DEFAULT_TEAM_ID) {
+  async summarizeOperationalRecords(teamId, today) {
+    const pendingReviews = [];
+    const pendingTrainingProposals = [];
+    const matchProposals = new Map();
+    let pendingReviewCount = 0;
+    let nextMatch = null;
+    let nextTraining = null;
+    await Promise.all([
+      DB.percorrerIndice("jogos", "team_id", teamId, (match) => {
+        const date = wsDate(match.data);
+        if (date >= today && !["cancelado", "concluido"].includes(String(match.estado || "").toLowerCase())
+          && (!nextMatch || date < wsDate(nextMatch.data))) nextMatch = match;
+        const analysis = VisionMatchAnalysis.fromMatch(match);
+        const proposal = analysis.agent_proposal;
+        if (proposal?.status !== "proposed") return;
+        const key = match.sync_id ? "uuid:" + String(match.sync_id) : "local:" + String(match.id);
+        const stamp = String(match.updated_at || match.sync_local_updated_at || "");
+        const previous = matchProposals.get(key);
+        if (!previous || stamp >= previous.stamp) matchProposals.set(key, {
+          kind: "match", id: match.id, sync_id: match.sync_id || null, date: match.data,
+          title: "Jogo vs " + (match.adversario || "adversário"), stamp,
+          freshness: VisionMatchAnalysis.proposalFreshness(match),
+        });
+      }),
+      DB.percorrerIndice("treinos", "team_id", teamId, (training) => {
+        const date = wsDate(training.data);
+        if (date >= today && training.status !== "completed" && training.session?.status !== "completed"
+          && (!nextTraining || date < wsDate(nextTraining.data))) nextTraining = training;
+        const review = training.review || training.session?.review;
+        if ((training.status === "completed" || training.session?.status === "completed") && review?.status !== "done") {
+          pendingReviewCount++;
+          if (pendingReviews.length < 4) pendingReviews.push({
+            id: training.id, data: training.data, objetivo: training.objetivo,
+          });
+        }
+        if (training.continuity?.proposal?.status === "draft") pendingTrainingProposals.push({
+          kind: "training", id: training.id, date: training.data,
+          title: training.continuity.proposal.objective || training.objetivo || "Proposta de treino",
+        });
+      }),
+    ]);
+    const allMatchProposals = Array.from(matchProposals.values());
+    return {
+      next_match: nextMatch,
+      next_training: nextTraining,
+      pending_reviews: pendingReviews,
+      pending_reviews_count: pendingReviewCount,
+      pending_training_proposals: pendingTrainingProposals,
+      pending_match_proposals: allMatchProposals.filter((item) => item.freshness.fresh),
+      stale_match_proposals: allMatchProposals.filter((item) => !item.freshness.fresh),
+    };
+  },
+  async buildSnapshot(teamId = WORKSPACE_DEFAULT_TEAM_ID, options = {}) {
     const today = wsDate(wsNow());
-    const [team, players, matches, trainings, memory, documents, media, activity] = await Promise.all([
+    const includeArchivedDocuments = options.includeArchivedDocuments === true;
+    const countMediaOnly = options.countMediaOnly === true;
+    const compactOperationalRecords = options.compactOperationalRecords === true;
+    const [team, players, matches, trainings, memory, documentRows, mediaRows, activity, operationalSummary] = await Promise.all([
       HeadCoachMemory.ensureTeam(),
       DB.porIndice("jogadores", "team_id", teamId),
-      DB.porIndice("jogos", "team_id", teamId),
-      DB.porIndice("treinos", "team_id", teamId),
+      compactOperationalRecords ? Promise.resolve(null) : DB.porIndice("jogos", "team_id", teamId),
+      compactOperationalRecords ? Promise.resolve(null) : DB.porIndice("treinos", "team_id", teamId),
       HeadCoachMemory.list(teamId, { includeArchived: false }),
-      this.listDocuments(teamId),
-      DB.porIndice("media_items", "team_id", teamId),
+      this.listDocuments(teamId, { includeArchived: includeArchivedDocuments }),
+      countMediaOnly ? DB.contarPorIndice("media_items", "team_id", teamId) : DB.porIndice("media_items", "team_id", teamId),
       this.listActivity(teamId, 50),
+      compactOperationalRecords ? this.summarizeOperationalRecords(teamId, today) : Promise.resolve(null),
     ]);
+    const documents = includeArchivedDocuments ? documentRows.filter((row) => row.status !== "archived") : documentRows;
+    const media = countMediaOnly ? [] : mediaRows;
+    const mediaCount = countMediaOnly ? mediaRows : media.length;
     const activePlayers = players.filter((player) => player?.plantel_ativo !== false);
-    const futureMatches = matches.filter((m) => wsDate(m.data) >= today && !["cancelado", "concluido"].includes(String(m.estado || "").toLowerCase())).sort((a, b) => String(a.data).localeCompare(String(b.data)));
-    const futureTrainings = trainings.filter((t) => wsDate(t.data) >= today && t.status !== "completed" && t.session?.status !== "completed").sort((a, b) => String(a.data).localeCompare(String(b.data)));
-    const data = { team, players: activePlayers, matches, trainings, memory, documents, media, activity };
+    const futureMatches = compactOperationalRecords ? null : matches.filter((m) => wsDate(m.data) >= today && !["cancelado", "concluido"].includes(String(m.estado || "").toLowerCase())).sort((a, b) => String(a.data).localeCompare(String(b.data)));
+    const futureTrainings = compactOperationalRecords ? null : trainings.filter((t) => wsDate(t.data) >= today && t.status !== "completed" && t.session?.status !== "completed").sort((a, b) => String(a.data).localeCompare(String(b.data)));
+    const data = {
+      team, players: activePlayers, memory, documents, media, activity,
+      ...(compactOperationalRecords ? {} : { matches, trainings }),
+    };
     return {
       ...data,
-      next_match: futureMatches[0] || null,
-      next_training: futureTrainings[0] || null,
+      ...(operationalSummary || {}),
+      media_count: mediaCount,
+      ...(includeArchivedDocuments ? { documents_including_archived: documentRows } : {}),
+      next_match: operationalSummary ? operationalSummary.next_match : futureMatches[0] || null,
+      next_training: operationalSummary ? operationalSummary.next_training : futureTrainings[0] || null,
       priorities: workspacePriority(memory),
       recent_documents: documents.slice(0, 4),
       recent_activity: activity.slice(0, 6),
-      timeline: workspaceTimeline(data).slice(0, 100),
+      ...(options.includeTimeline === false ? {} : { timeline: workspaceTimeline(data).slice(0, 100) }),
       agent_access: "not_connected",
     };
   },
