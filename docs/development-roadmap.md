@@ -1,5 +1,13 @@
 # Próximas fases Vision Coach — 22/09/2026
 
+## Publicação de teste e auditoria remota (24/09/2026)
+
+O PR #51 foi integrado no commit `4bc40ef2043243cae125b041cbb7ee4d33a806f3`; GitHub Pages confirmou `built`, a app serviu o cache PWA `vision-coach-v151` e o Workspace carregou em modo de leitura os dados remotos atuais. Nenhum registo, migration, secret ou imagem foi alterado nesta verificação. O projeto Supabase continua com 17 migrations, a extensão `vector` disponível mas não instalada, e `vision-coach-mcp` na versão 7; portanto a camada RAG ainda não está ativa no backend.
+
+Auditoria remota das tabelas internas: `private.agent_request_log` e `private.mcp_connector_tokens` continuam com RLS desligado, mas a query de privilégios confirmou que `anon` e `authenticated` não têm `USAGE` em `private` (anon) nem privilégios diretos de tabela para SELECT/INSERT/UPDATE/DELETE. `service_role` mantém os privilégios de backend necessários. A migration local `20260923140620_enable_private_internal_table_rls.sql` revoga privilégios comuns e ativa RLS sem políticas; ainda não aplicada no projeto. Revisão/decisão explícita necessária antes de qualquer escrita Supabase.
+
+Correção local seguinte (24/09/2026): o bloqueio de reload da PWA agora mantém um marcador por sessão de treino/jogo na aba, mesmo depois de navegar para outra rota; o marcador só sai quando a sessão termina ou deixa de existir. Também impede o reload durante o carregamento inicial das rotas de sessão. E2E cobre bloqueio e libertação do botão para treino e jogo. Validação: `npm run check`; `npm test` (363 passaram, 4 integrações locais ignoradas); Playwright completo 142/142; `git diff --check`. Cache PWA local v152. Ainda não publicado; Supabase, dados e imagens aprovadas não foram alterados.
+
 ## Camada RAG do Head Coach — implementação local em revisão
 
 O plano de integração está em [`team-knowledge-rag.md`](team-knowledge-rag.md). Reaproveita `workspace_records` e o MCP autenticado, com pesquisa lexical+pgvector, chunks com provenance/revisão, trigger/fila incremental e filtros por equipa/data/jogo/treino/atleta/tipo. O conteúdo estruturado continua nas consultas determinísticas. Pesquisa não cria memória, hipótese, plano nem decisão.

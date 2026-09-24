@@ -2,6 +2,7 @@ const { test, expect } = require('@playwright/test');
 
 test('biblioteca guarda montagem e passos para consulta e plano exportado', async ({ page }) => {
   await page.goto('/#/exercicios/novo');
+  await page.evaluate(() => { RemoteWorkspace.scheduleSync = () => {}; });
   await page.getByLabel('Nome').fill('Circuito montagem E2E');
   await page.getByLabel('Montagem / organização do exercício').fill('Quatro cones num quadrado de 12 metros.');
   await page.getByLabel('Passo a passo · um passo por linha').fill('Conduzir até ao cone.\nPassar ao colega.\nMudar de posição.');
