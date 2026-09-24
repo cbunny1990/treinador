@@ -30,7 +30,7 @@ test("schema remoto ativa RLS nas tabelas privadas", () => {
 
 test("tabelas internas revogam grants da API normal e ativam RLS", () => {
   const internalTables = fs.readFileSync(
-    path.join(migrationDir, "20260923140620_enable_private_internal_table_rls.sql"),
+    path.join(migrationDir, "20260924144849_enable_private_internal_table_rls.sql"),
     "utf8"
   );
   assert.match(internalTables, /revoke all on table private\.agent_request_log, private\.mcp_connector_tokens\s+from public, anon, authenticated/i);
