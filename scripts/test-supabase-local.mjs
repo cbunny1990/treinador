@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { migrationDriftMessage, migrationHistoryDrift, parseMigrationList } from "./supabase-migration-preflight.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const supabaseWorkdir = resolve(root, process.env.VISION_COACH_SUPABASE_LOCAL_WORKDIR || ".");
@@ -18,6 +19,31 @@ if (status.error || status.status !== 0) {
     ? "A CLI Supabase excedeu 15 segundos a consultar a stack local. Verifica o Docker Desktop/engine e volta a executar este teste.\n"
     : "Supabase local não está disponível. Inicia a stack com `npx supabase start` e volta a executar este teste.\n");
   process.exit(status.status || 1);
+}
+
+const migrationStatus = spawnSync(npx, ["--yes", "supabase@2.117.0", "migration", "list", "--local", "--output-format", "json", "--workdir", supabaseWorkdir], {
+  cwd: root,
+  encoding: "utf8",
+  shell: process.platform === "win32",
+  windowsHide: true,
+  timeout: 15_000,
+});
+if (migrationStatus.error || migrationStatus.status !== 0) {
+  process.stderr.write(migrationStatus.error?.code === "ETIMEDOUT"
+    ? "A CLI Supabase excedeu 15 segundos ao verificar o histórico da stack local.\n"
+    : "Não foi possível verificar o histórico de migrations Supabase local; os testes não foram iniciados.\n");
+  process.exit(migrationStatus.status || 1);
+}
+let migrationDrift;
+try {
+  migrationDrift = migrationHistoryDrift(parseMigrationList(migrationStatus.stdout));
+} catch (error) {
+  process.stderr.write(error.message + "\n");
+  process.exit(1);
+}
+if (migrationDrift.unapplied.length || migrationDrift.unknownApplied.length || migrationDrift.mismatched.length) {
+  process.stderr.write(migrationDriftMessage(migrationDrift));
+  process.exit(1);
 }
 
 const values = Object.fromEntries(status.stdout.split(/\r?\n/).flatMap((line) => {
