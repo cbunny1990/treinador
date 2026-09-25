@@ -132,6 +132,15 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     assert.deepEqual(result.results, []);
     assert.match(result.message, /Não foi enviada informação da equipa a nenhum provider/);
 
+    const sensitiveSearch = await mcpRequest(token, "tools/call", {
+      name: "search_team_knowledge", arguments: { query: "Como adaptar o treino para uma atleta com dislexia?" },
+    });
+    assert.equal(sensitiveSearch.status, 200);
+    const sensitiveResult = JSON.parse((await sensitiveSearch.json()).result.content[0].text);
+    assert.equal(sensitiveResult.retrieval_status, "sensitive_query_not_sent");
+    assert.equal(sensitiveResult.answer_mode, "structured_data_only");
+    assert.doesNotMatch(JSON.stringify(sensitiveResult), /dislexia/i);
+
     const hybridContext = await mcpRequest(token, "tools/call", {
       name: "get_training_planning_context", arguments: { target_date: "2026-09-24", question: "O que correu mal nos jogos recentes?" },
     });

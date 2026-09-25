@@ -187,6 +187,15 @@ test('health privacy filter excludes common cardiovascular, glucose and mental-h
   'The athlete experienced shortness of breath while training.',
   'O relatório clínico assinala dispneia.',
   'The player reported dyspnea during the match.',
+  'O jogador teve uma convulsão durante o jogo.',
+  'The athlete has dyslexia and needs support.',
+  'A atleta tem deficiência auditiva.',
+  'A atleta relatou alterações no ciclo menstrual.',
+  'The player disclosed a pregnancy.',
+  'O atleta está em acompanhamento de anorexia.',
+  'The player disclosed substance abuse.',
+  'Registar consumo de álcool antes do treino.',
+  'The athlete has a neurodevelopmental disorder.',
   'The player has swelling in the knee.',
   'Allergy symptoms after exercise.',
   'Recent COVID infection.',
@@ -283,11 +292,13 @@ test('RAG validates exact team/scope/filters and searches only with the authoriz
  await assert.rejects(rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query:'ok',from:'2026-09-30',to:'2026-09-01'},{provider}),/invalid_knowledge_date_range/);
 });
 
-test('health-related search query stays out of embeddings and returns no echoed text',async()=>{
- const db=fakeAdmin([]),provider=fakeProvider(),query='A atleta tem tonturas e tosse após o treino?';
- const result=await rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query},{provider});
- assert.equal(result.retrieval_status,'sensitive_query_not_sent');assert.equal(result.answer_mode,'structured_data_only');assert.equal(result.evidence_status,'sensitive_query_not_sent');assert.deepEqual(result.results,[]);
- assert.deepEqual(db.calls,[]);assert.deepEqual(db.fromCalls,[]);assert.deepEqual(provider.requests,[]);assert.doesNotMatch(JSON.stringify(result),/tonturas|tosse/i);
+test('health-related search queries stay out of embeddings and return no echoed text',async()=>{
+ for(const query of ['A atleta tem tonturas e tosse após o treino?','O que fazer com uma jogadora com dislexia?','Como adaptar o treino à menstruação?','O que fazer com um jogador com deficiência auditiva?','A atleta pode treinar após consumo de álcool?']){
+  const db=fakeAdmin([]),provider=fakeProvider();
+  const result=await rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query},{provider});
+  assert.equal(result.retrieval_status,'sensitive_query_not_sent',query);assert.equal(result.answer_mode,'structured_data_only');assert.equal(result.evidence_status,'sensitive_query_not_sent');assert.deepEqual(result.results,[]);
+  assert.deepEqual(db.calls,[],query);assert.deepEqual(db.fromCalls,[],query);assert.deepEqual(provider.requests,[],query);assert.doesNotMatch(JSON.stringify(result),/tonturas|tosse|dislexia|menstrua|defici[eê]ncia|álcool/i);
+ }
 });
 
 test('athlete names are redacted from RAG query embeddings and lexical search',async()=>{
