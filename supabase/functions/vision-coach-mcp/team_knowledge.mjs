@@ -48,7 +48,7 @@ const EVENT_LABELS={goal_for:'Golo a favor',goal_against:'Golo sofrido',shot_on:
 const REASON_LABELS={pass:'passe errado',reception:'receção',dribble:'condução',decision:'decisão',pressure:'pressão adversária',duel:'duelo',other:'outro'};
 const ZONE_LABELS={def_e:'defesa esquerda',def_c:'defesa central',def_d:'defesa direita',med_e:'meio-campo esquerdo',med_c:'meio-campo central',med_d:'meio-campo direito',ata_e:'ataque esquerdo',ata_c:'ataque central',ata_d:'ataque direito'};
 const SENSITIVE_PERSONAL_TEXT=/(?:lesao|lesionad|injur|fratur|fractur|tendin|entors|torc(?:ao|eu|ido)\b|sprain|strain|ligament|concuss|contus|bruis|distens|estiram|contractur|ruptur|luxac|dislocat|inflamac|edema|swelling|cirurg|operac|fisioterap|reabilitac|diagnost|tratament|medic|clinic|pacient|patient|prontuario|ficha medica|medical record|saude|doenca|sintoma|dor muscular|dor no\s|dor de\s|\bpain\b|alerg|allerg|asma|epilep|diabet|cardiac|heartbeat|heart beat|palpit|arritm|arrhythm|respirator|falta de ar|shortness of breath|breathless|dispnei|dyspn|atestado|baixa medica|hipertens|hypertens|hipotens|hypotens|pressao arterial|tensao arterial|blood pressure|arterial pressure|hipoglicem|hiperglicem|hypoglyc|hyperglyc|glicemia|glucose|blood sugar|saude mental|mental health|ansiedade|ansioso|ansiosa|anxiet|depress|tdah|adhd|bipolar|esquizofren|schizophren|autismo|autista|autism|ataque de panico|panic attack|fobia|phobia|caibr|cramp|tontur|dizz|desmai|faint|convuls|seizur|dislex|dyslex|neurodiverg|neurodevelopmental (?:disorder|condition)|transtorno (?:do )?neurodesenvolvimento|learning disability|intellectual disability|deficiencia (?:intelectual|motora|auditiva|visual)|menstr|ciclo menstrual|period pain|gravidez|gravid|pregnan|obes|anorex|bulim|transtorno alimentar|disturbio alimentar|eating disorder|uso de alcool|consumo de alcool|alcohol use|uso de drog|drug use|substance abuse|abuso de substancias|tosse|cough|febr|fever|vomit|nause|diarre|diarrh|cefale|headache|enxaquec|migraine|desidrat|dehydrat|covid|varicela|chickenpox)/i;
-const containsSensitivePersonalText=value=>SENSITIVE_PERSONAL_TEXT.test(String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase());
+export const containsSensitivePersonalText=value=>SENSITIVE_PERSONAL_TEXT.test(String(value||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase());
 
 function splitLong(textValue, maxChars=1800, overlap=220) {
   const input=text(textValue,50000).replace(/\r/g,'');
@@ -203,7 +203,7 @@ export function chunkRecord(row,{maxChars=1800,overlap=220,redactNames=[],ageGro
   return result;
 }
 
-function redactionTerms(names){
+export function redactionTerms(names){
   const terms=new Set();
   for(const value of arr(names)){
     const name=text(value,160).normalize('NFC');
@@ -212,7 +212,7 @@ function redactionTerms(names){
   }
   return [...terms].sort((a,b)=>b.length-a.length);
 }
-function redactNamesFromText(value,terms){
+export function redactNamesFromText(value,terms){
   let safe=String(value||'').normalize('NFC');
   for(const term of terms){
     const pattern=new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(term)}(?=$|[^\\p{L}\\p{N}])`,'giu');
@@ -248,7 +248,7 @@ function rememberTeamRedactionNames(admin,teamId,names){
   if(!teams){teams=new Map();TEAM_REDACTION_NAMES_BY_ADMIN.set(admin,teams);}
   teams.set(teamId,Promise.resolve(names));
 }
-async function getTeamRedactionNames(admin,teamId){
+export async function getTeamRedactionNames(admin,teamId){
   let teams=TEAM_REDACTION_NAMES_BY_ADMIN.get(admin);
   if(!teams){teams=new Map();TEAM_REDACTION_NAMES_BY_ADMIN.set(admin,teams);}
   if(!teams.has(teamId)){

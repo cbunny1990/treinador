@@ -2,7 +2,7 @@ const test=require('node:test'),assert=require('node:assert/strict');let api;
 test.before(async()=>{api=await import('../supabase/functions/vision-coach-mcp/match_analysis.mjs');});
 const c={id:'connector',team_id:'team',scopes:['read','write']};
 const MATCH='99999999-9999-4999-8999-999999999999';
-function fixture(){const match={id:MATCH,team_id:'team',kind:'match',updated_at:'v0',deleted_at:null,payload:{adversario:'Teste',post_game:{analysis:{revision:0,fields:{observations:'Facto escrito pelo treinador'}}}}},rows=[match],calls=[];const admin={from(){const filters=[];let max=Infinity;return{select(){return this;},eq(k,v){filters.push(r=>(k==='payload->>external_key'?r.payload.external_key:r[k])===v);return this;},is(k,v){return this.eq(k,v);},order(){return this;},limit(n){max=n;return this;},then(resolve){return Promise.resolve({data:rows.filter(r=>filters.every(f=>f(r))).slice(0,max).map(r=>structuredClone(r))}).then(resolve);}}},async rpc(n,args){calls.push(args);match.payload=structuredClone(args.p_payload);match.updated_at='v1';return{data:{ok:true}};}};return{match,rows,calls,admin,call:(name,args={})=>api.executeMatchAnalysisTool(admin,c,name,{id:MATCH,expected_updated_at:match.updated_at,expected_revision:0,...args})};}
+function fixture(){const match={id:MATCH,team_id:'team',kind:'match',updated_at:'v0',deleted_at:null,payload:{adversario:'Teste',post_game:{analysis:{revision:0,fields:{observations:'Facto escrito pelo treinador'}}}}},rows=[match],calls=[];const admin={from(){const filters=[];let max=Infinity,start=0;return{select(){return this;},eq(k,v){filters.push(r=>(k==='payload->>external_key'?r.payload.external_key:r[k])===v);return this;},is(k,v){return this.eq(k,v);},order(){return this;},limit(n){max=n;return this;},range(from,to){start=from;max=to-from+1;return this;},then(resolve){return Promise.resolve({data:rows.filter(r=>filters.every(f=>f(r))).slice(start,start+max).map(r=>structuredClone(r))}).then(resolve);}}},async rpc(n,args){calls.push(args);match.payload=structuredClone(args.p_payload);match.updated_at='v1';return{data:{ok:true}};}};return{match,rows,calls,admin,call:(name,args={})=>api.executeMatchAnalysisTool(admin,c,name,{id:MATCH,expected_updated_at:match.updated_at,expected_revision:0,...args})};}
 test('read returns unknown score and event counts as null without inferred data or photos',async()=>{const f=fixture(),out=await f.call('get_match_analysis');assert.equal(out.result,null);assert.equal(out.statistics.events_available,false);assert.equal(out.statistics.event_count,null);assert.equal(out.statistics.counts,null);assert.equal(f.calls.length,0);});
 test('proposal requires explicit confirmation/current revision and remains separate from coach text',async()=>{const f=fixture();const proposal={summary:'Possível melhoria',hypotheses:['Hipótese'],next_priority:'Apoio',evidence_ids:[]};await assert.rejects(f.call('prepare_match_analysis',{confirmed:false,proposal}),/schema|confirmation/i);await f.call('prepare_match_analysis',{confirmed:true,proposal});assert.equal(f.match.payload.post_game.analysis.fields.observations,'Facto escrito pelo treinador');assert.equal(f.match.payload.post_game.analysis.agent_proposal.prepared_by,'Head Coach');assert.equal(f.match.payload.post_game.analysis.agent_proposal.source_analysis_revision,0);assert.equal(f.match.payload.post_game.analysis.agent_proposal.source_events_revision,0);assert.equal(f.calls.length,1);});
 test('MCP enforces write scope, team, exact match and current revision',async()=>{const f=fixture(),proposal={summary:'',hypotheses:[],next_priority:'',evidence_ids:[]};await assert.rejects(api.executeMatchAnalysisTool(f.admin,{...c,scopes:['read']},'prepare_match_analysis',{id:MATCH,confirmed:true,expected_updated_at:'v0',expected_revision:0,proposal}),/scope_write/);await assert.rejects(api.executeMatchAnalysisTool(f.admin,{...c,team_id:'other'},'get_match_analysis',{id:MATCH}),/not_found/);await assert.rejects(f.call('prepare_match_analysis',{confirmed:true,expected_revision:4,proposal}),/revision_conflict/);assert.equal(f.calls.length,0);});
@@ -66,6 +66,108 @@ test('Jev relation judgment rereads exact current citations and never writes a p
     assert.equal(result.coach_review_required, true);
     assert.equal(result.writes_performed, false);
     assert.equal(f.calls.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDeno === undefined) delete globalThis.Deno;
+    else globalThis.Deno = originalDeno;
+  }
+});
+
+test('Jev receives athlete-name-redacted citations and claim from the authorized team roster', async () => {
+  const f = fixture(), trainingId = '88888888-8888-4888-8888-888888888888';
+  f.match.payload.adversario = 'Pedro United';
+  f.match.payload.post_game.analysis.fields = { observations: 'Pedro perdeu bola na saída.' };
+  f.rows.push({ id: trainingId, team_id: 'team', kind: 'training', updated_at: 't1', deleted_at: null,
+    payload: { review: { status: 'done', continua: 'Pedro ainda precisa de apoio após o passe.' } } });
+  f.rows.push({ id: '77777777-7777-4777-8777-777777777777', team_id: 'team', kind: 'player', updated_at: 'p1', deleted_at: null,
+    payload: { nome: 'Pedro Silva', plantel_ativo: true } });
+  const originalFetch = globalThis.fetch, originalDeno = globalThis.Deno;
+  let request;
+  globalThis.Deno = { env: { get: () => 'test-secret' } };
+  globalThis.fetch = async (_url, options) => {
+    request = JSON.parse(options.body);
+    return { ok: true, async json() { return { model: 'jev-test', answers: { support: { type: 'noul', noul: 0.81 } } }; } };
+  };
+  try {
+    const result = await api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_relation', {
+      claim: 'Pedro perdeu a bola e o treino trabalhou o apoio após o passe.',
+      match_ref: MATCH, match_field: 'analysis.observations', match_expected_updated_at: 'v0',
+      training_ref: trainingId, training_field: 'review.continua', training_expected_updated_at: 't1',
+    });
+    const sent = JSON.stringify(request.state);
+    assert.doesNotMatch(sent, /Pedro|Silva/);
+    assert.match(sent, /atleta/);
+    assert.equal(result.evidence[0].quote, 'Pedro perdeu bola na saída.', 'the authenticated MCP result retains the exact source citation');
+    assert.equal(request.state.match_evidence.quote, 'atleta perdeu bola na saída.');
+    assert.equal(request.state.training_evidence.quote, 'atleta ainda precisa de apoio após o passe.');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDeno === undefined) delete globalThis.Deno;
+    else globalThis.Deno = originalDeno;
+  }
+});
+
+test('Jev relation judgment suppresses sensitive health claims or citations without echoing them', async () => {
+  const f = fixture(), trainingId = '88888888-8888-4888-8888-888888888888';
+  f.match.payload.post_game.analysis.fields = { observations: 'O atleta sofreu fratura e está em tratamento.' };
+  f.rows.push({ id: trainingId, team_id: 'team', kind: 'training', updated_at: 't1', deleted_at: null,
+    payload: { review: { status: 'done', continua: 'Apoio após passe' } } });
+  const originalFetch = globalThis.fetch, originalDeno = globalThis.Deno;
+  let calls = 0;
+  globalThis.Deno = { env: { get: () => 'test-secret' } };
+  globalThis.fetch = async () => { calls++; throw new Error('sensitive citation must not reach Jev'); };
+  try {
+    await assert.rejects(api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_relation', {
+      claim: 'Há um tema comum.', match_ref: MATCH, match_field: 'analysis.observations', match_expected_updated_at: 'v0',
+      training_ref: trainingId, training_field: 'review.continua', training_expected_updated_at: 't1',
+    }), /typesafe_sensitive_content_not_sent/);
+    assert.equal(calls, 0);
+    f.match.payload.post_game.analysis.fields.observations = 'Perda na construção';
+    await assert.rejects(api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_relation', {
+      claim: 'O jogador tem uma lesão e continuou a perder a bola.', match_ref: MATCH, match_field: 'analysis.observations', match_expected_updated_at: 'v0',
+      training_ref: trainingId, training_field: 'review.continua', training_expected_updated_at: 't1',
+    }), /typesafe_sensitive_content_not_sent/);
+    assert.equal(calls, 0);
+    f.match.payload.adversario = 'Atleta lesionado';
+    await assert.rejects(api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_relation', {
+      claim: 'Há um tema comum.', match_ref: MATCH, match_field: 'analysis.observations', match_expected_updated_at: 'v0',
+      training_ref: trainingId, training_field: 'review.continua', training_expected_updated_at: 't1',
+    }), /typesafe_sensitive_content_not_sent/);
+    await assert.rejects(api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_relation', {
+      claim: ' ', match_ref: MATCH, match_field: 'analysis.observations', match_expected_updated_at: 'v0',
+      training_ref: trainingId, training_field: 'review.continua', training_expected_updated_at: 't1',
+    }), /invalid_cross_session_claim/);
+    assert.equal(calls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDeno === undefined) delete globalThis.Deno;
+    else globalThis.Deno = originalDeno;
+  }
+});
+
+test('Jev relation judgment fails closed if the team roster cannot be read for name redaction', async () => {
+  const f = fixture(), trainingId = '88888888-8888-4888-8888-888888888888';
+  f.match.payload.post_game.analysis.fields = { observations: 'Perda na construção' };
+  f.rows.push({ id: trainingId, team_id: 'team', kind: 'training', updated_at: 't1', deleted_at: null,
+    payload: { review: { status: 'done', continua: 'Apoio após passe' } } });
+  const originalFrom = f.admin.from.bind(f.admin), originalFetch = globalThis.fetch, originalDeno = globalThis.Deno;
+  f.admin.from = (table) => {
+    const query = originalFrom(table), originalEq = query.eq.bind(query);
+    query.eq = (key, value) => {
+      if (key === 'kind' && value === 'player') throw new Error('roster unavailable');
+      return originalEq(key, value);
+    };
+    return query;
+  };
+  let calls = 0;
+  globalThis.Deno = { env: { get: () => 'test-secret' } };
+  globalThis.fetch = async () => { calls++; throw new Error('must fail before provider call'); };
+  try {
+    await assert.rejects(api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_relation', {
+      claim: 'Há um tema comum.', match_ref: MATCH, match_field: 'analysis.observations', match_expected_updated_at: 'v0',
+      training_ref: trainingId, training_field: 'review.continua', training_expected_updated_at: 't1',
+    }), /typesafe_privacy_metadata_unavailable/);
+    assert.equal(calls, 0);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalDeno === undefined) delete globalThis.Deno;
