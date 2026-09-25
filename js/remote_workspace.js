@@ -865,11 +865,22 @@ const RemoteWorkspace = {
     return withId.sync_id;
   },
 
-  async _localIdForRemoteRef(subjectType, remoteRef, remoteTeamId = remoteLoadConfig().remoteTeamId) {
+  async _localIdForRemoteRef(subjectType, remoteRef, remoteTeamId = remoteLoadConfig().remoteTeamId, lookupCache = null) {
     if (subjectType === "team") return DEFAULT_TEAM_ID;
     const store = REMOTE_SUBJECT_STORES[subjectType];
     if (!store) return remoteRef;
     if (!remoteTeamId) return String(remoteRef);
+    let cached = lookupCache?.get(store);
+    if (lookupCache && !cached) {
+      cached = new Map();
+      for (const row of await DB.listar(store)) {
+        if (row.sync_id && row.remote_team_id === remoteTeamId && !cached.has(row.sync_id)) {
+          cached.set(row.sync_id, String(row.id));
+        }
+      }
+      lookupCache.set(store, cached);
+    }
+    if (cached) return cached.get(String(remoteRef)) || String(remoteRef);
     const rows = await DB.listar(store);
     const found = rows.find((x) => x.sync_id === remoteRef && x.remote_team_id === remoteTeamId);
     return found ? String(found.id) : remoteRef;
@@ -1518,6 +1529,7 @@ const RemoteWorkspace = {
 
   async _syncMedia(remoteTeamId, userId) {
     const client = await this.init();
+    const localReferenceCache = new Map();
     const remoteRows = await remoteReadTeamRows(client, "media_assets", remoteTeamId);
     let remoteMap = new Map(remoteRows.map((x) => [x.id, x]));
     const result = { pushed: 0, pulled: 0, deleted: 0, conflicts: [] };
@@ -1643,7 +1655,7 @@ const RemoteWorkspace = {
         continue;
       }
       const subjectId = await this._localIdForRemoteRef(
-        remote.subject_type, String(remote.subject_ref), remoteTeamId
+        remote.subject_type, String(remote.subject_ref), remoteTeamId, localReferenceCache
       );
       let url = remote.external_url || null;
       if (!url && remote.storage_path) {

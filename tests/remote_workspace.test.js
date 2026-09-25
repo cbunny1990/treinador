@@ -1479,8 +1479,15 @@ test("sync pagina todos os registos, media e atividade acima do limite de linhas
       file_name: null, mime_type: null, size_bytes: null, actor_type: "human", actor_label: "Treinador",
       created_by: null, created_at: "2026-09-25T10:00:00.000Z", updated_at: `v${index + 1}`, deleted_at: null,
     })));
+    let playerListReads = 0;
+    const list = devices[1].listar.bind(devices[1]);
+    devices[1].listar = async (store) => {
+      if (store === "jogadores") playerListReads++;
+      return list(store);
+    };
     const media = await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
     assert.equal(media.pulled, count);
+    assert.equal(playerListReads, 1, "um UUID de atleta repetido deve ser resolvido com uma leitura por sincronização");
     assert.equal((await devices[1].listar("media_items")).length, count);
 
     const activity = await RemoteWorkspace._syncActivity(remoteTeamId, "coach");
