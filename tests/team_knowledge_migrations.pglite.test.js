@@ -79,7 +79,7 @@ async function fixture() {
   return db;
 }
 
-async function indexSource(db, teamId, sourceId, matchRef, row, chunks = 1) {
+async function indexSource(db, teamId, sourceId, matchRef, row, chunks = 1, contentPrefix = "construction losses detail") {
   assert.ok(row, `expected queued source ${sourceId} to be claimed`);
   const contentChunks = Array.from({ length: chunks }, (_, index) => ({
     source_kind: "match",
@@ -92,7 +92,7 @@ async function indexSource(db, teamId, sourceId, matchRef, row, chunks = 1) {
     category: "observation",
     evidence_type: "coach_observation",
     title: `Match report ${index}`,
-    content: `construction losses detail ${index}`,
+    content: `${contentPrefix} ${index}`,
     content_hash: `hash-${sourceId}-${index}`,
     embedding_model: "test-model",
     embedding: EMBEDDING,
@@ -204,6 +204,42 @@ test("RAG migrations executam em Postgres WASM e preservam limites de equipa e o
   await db.query("delete from public.workspace_records where id=$1", [SOURCE_A2]);
   const hardDeleted = await db.query("select count(*)::int as n from private.team_knowledge_chunks where source_id=$1", [SOURCE_A2]);
   assert.equal(hardDeleted.rows[0].n, 0, "physical deletion removes derived chunks");
+});
+
+test("edição de fonte invalida excertos antigos, coalesce alterações e reindexa sem duplicados", async (t) => {
+  const db = await fixture();
+  t.after(() => db.close());
+
+  const initialClaims = await db.query("select * from public.claim_team_knowledge_jobs($1::uuid, 64)", [TEAM_A]);
+  const initialBySource = new Map(initialClaims.rows.map((row) => [row.source_id, row]));
+  await indexSource(db, TEAM_A, SOURCE_A1, MATCH_A1, initialBySource.get(SOURCE_A1), 1, "apoio antigo na construção");
+  await indexSource(db, TEAM_A, SOURCE_A2, MATCH_A2, initialBySource.get(SOURCE_A2), 1, "outro registo de apoio");
+  assert.equal((await searchKnowledge(db, { matchRef: MATCH_A1, query: "apoio antigo" })).length, 1);
+
+  const firstEditAt = "2026-09-24T10:00:00.000Z";
+  await db.query(`update public.workspace_records set payload=jsonb_set(payload,'{report}','"apoio atualizado uma vez"'),updated_at=$2 where id=$1`, [SOURCE_A1, firstEditAt]);
+  const secondEditAt = "2026-09-24T10:01:00.000Z";
+  await db.query(`update public.workspace_records set payload=jsonb_set(payload,'{report}','"apoio atualizado final"'),updated_at=$2 where id=$1`, [SOURCE_A1, secondEditAt]);
+
+  assert.deepEqual(await searchKnowledge(db, { matchRef: MATCH_A1, query: "apoio antigo" }), [], "old chunks must not leak while the changed source is waiting to reindex");
+  const queued = await db.query("select source_updated_at from private.team_knowledge_jobs where team_id=$1 and source_id=$2", [TEAM_A, SOURCE_A1]);
+  assert.equal(queued.rows.length, 1, "multiple edits coalesce into one pending source job");
+  assert.equal(new Date(queued.rows[0].source_updated_at).toISOString(), secondEditAt, "the pending job points at the newest source revision");
+
+  const changedClaims = await db.query("select * from public.claim_team_knowledge_jobs($1::uuid, 64)", [TEAM_A]);
+  const changedSource = changedClaims.rows.find((row) => row.source_id === SOURCE_A1);
+  assert.ok(changedSource);
+  assert.equal(new Date(changedSource.source_updated_at).toISOString(), secondEditAt);
+  await indexSource(db, TEAM_A, SOURCE_A1, MATCH_A1, changedSource, 1, "apoio atualizado final");
+
+  const oldQueryAfterReindex = await searchKnowledge(db, { matchRef: MATCH_A1, query: "apoio antigo" });
+  assert.equal(oldQueryAfterReindex.length, 1, "the fixed test vector can still return the current chunk semantically");
+  assert.equal(new Date(oldQueryAfterReindex[0].source_updated_at).toISOString(), secondEditAt);
+  assert.match(oldQueryAfterReindex[0].content, /apoio atualizado final/);
+  assert.doesNotMatch(oldQueryAfterReindex[0].content, /apoio antigo/);
+  assert.equal((await searchKnowledge(db, { matchRef: MATCH_A1, query: "apoio atualizado final" })).length, 1);
+  const chunkCount = await db.query("select count(*)::int as n from private.team_knowledge_chunks where team_id=$1 and source_id=$2", [TEAM_A, SOURCE_A1]);
+  assert.equal(chunkCount.rows[0].n, 1, "replacement leaves one current chunk instead of duplicating previous revisions");
 });
 
 test("pesquisa híbrida recupera paráfrase semântica e correspondência lexical, excluindo conteúdo irrelevante", async (t) => {

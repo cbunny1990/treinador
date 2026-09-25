@@ -1,5 +1,7 @@
 # Vision Coach — pesquisa RAG da equipa
 
+Atualização idempotente do índice após editar a origem (25/09/2026): a regressão Postgres WASM confirma que editar duas vezes antes do worker indexar mantém um único job na revisão mais recente; a revisão antiga deixa de aparecer na pesquisa durante a fila e a substituição gera apenas os chunks atuais. Vetores sintéticos iguais podem devolver o texto atual para uma pergunta lexicalmente antiga, por isso o teste valida a revisão e o conteúdo do excerto, sem exigir uma ausência semântica que os dados de teste não conseguem sustentar.
+
 ## Avaliação local de relevância
 
 `npm run eval:team-knowledge-embeddings` prepara quatro perguntas sintéticas em português com três passagens candidatas cada, usa o mesmo adaptador/modelo de embeddings do serviço e calcula `top_1_accuracy` e `mean_reciprocal_rank` por similaridade coseno. Os textos são fictícios e o resultado identifica-se como bateria inicial não revista pelo treinador; não é um gate de qualidade nem altera o retrieval. A execução recusa-se antes da rede se `OPENAI_API_KEY` não estiver configurada. Ao executar com a variável configurada, apenas os 16 textos desta bateria são enviados ao provider; não apontar o script a dados reais.
