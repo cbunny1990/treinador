@@ -1279,6 +1279,31 @@ function countRemoteSnapshotStarts(remote, table) {
     && !query.filters.some(([op, key]) => op === "gt" && key === "id")).length;
 }
 
+test("pull de um histórico extenso percorre o estado local uma vez por módulo, não uma vez por registo", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    const count = 1007;
+    const idAt = (index) => `86000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
+    remote.rows.push(...Array.from({ length: count }, (_, index) => ({
+      id: idAt(index), team_id: remoteTeamId, kind: "match",
+      payload: { adversario: `Adversário ${index + 1}`, external_key: `sync-pull-large-${index + 1}` },
+      actor_type: "human", actor_label: "Treinador", updated_at: `v${index + 1}`, deleted_at: null,
+    })));
+    useDevice(1);
+    let gameListReads = 0;
+    const list = devices[1].listar.bind(devices[1]);
+    devices[1].listar = async (store) => {
+      if (store === "jogos") gameListReads++;
+      return list(store);
+    };
+
+    const result = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(result.pulled, count);
+    assert.equal(gameListReads, 3,
+      "duas leituras antes do pull e um índice local bastam; não se deve copiar a tabela local para cada jogo remoto");
+    assert.equal((await devices[1].listar("jogos")).length, count);
+  }, { maxRows: 250 });
+});
+
 test("sync reutiliza o snapshot quando está limpo e só volta a ler a tabela para rever conflitos", async () => {
   await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
     useDevice(0);

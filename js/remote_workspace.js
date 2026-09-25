@@ -1203,24 +1203,70 @@ const RemoteWorkspace = {
     const pendingDeletes = new Set((await DB.listar("sync_tombstones"))
       .filter((item) => !item.remote_team_id || item.remote_team_id === remoteTeamId)
       .map((item) => `${item.store}|${item.sync_id}`));
+    const localIndexes = new Map();
+    const localIndexFor = async (store, kind) => {
+      if (localIndexes.has(store)) return localIndexes.get(store);
+      const rows = (await DB.listar(store)).filter((row) => remoteRowBelongsToTeam(row, remoteTeamId));
+      const bySyncId = new Map();
+      const byIdentity = new Map();
+      const identityKey = (row) => remoteIdentityKey(kind, row);
+      const add = (row) => {
+        if (row.sync_id) {
+          const matches = bySyncId.get(row.sync_id) || [];
+          matches.push(row);
+          bySyncId.set(row.sync_id, matches);
+        }
+        const key = identityKey(row);
+        if (key) {
+          const matches = byIdentity.get(key) || [];
+          matches.push(row);
+          byIdentity.set(key, matches);
+        }
+      };
+      const remove = (row) => {
+        if (!row) return;
+        const syncMatches = row.sync_id ? bySyncId.get(row.sync_id) : null;
+        if (syncMatches) {
+          const index = syncMatches.findIndex((candidate) => candidate.id === row.id);
+          if (index >= 0) syncMatches.splice(index, 1);
+          if (!syncMatches.length) bySyncId.delete(row.sync_id);
+        }
+        const key = identityKey(row);
+        const identityMatches = key ? byIdentity.get(key) : null;
+        if (identityMatches) {
+          const index = identityMatches.findIndex((candidate) => candidate.id === row.id);
+          if (index >= 0) identityMatches.splice(index, 1);
+          if (!identityMatches.length) byIdentity.delete(key);
+        }
+      };
+      for (const row of rows) add(row);
+      const index = {
+        getBySyncId: (id) => bySyncId.get(id)?.at(-1) || null,
+        getByIdentity: (key) => byIdentity.get(key)?.[0] || null,
+        replace(oldRow, newRow) { remove(oldRow); if (newRow && remoteRowBelongsToTeam(newRow, remoteTeamId)) add(newRow); },
+        remove,
+        add,
+      };
+      localIndexes.set(store, index);
+      return index;
+    };
     for (const remote of remoteMap.values()) {
       const store = REMOTE_KIND_STORES[remote.kind];
       if (!store) continue;
       if (pendingDeletes.has(`${store}|${remote.id}`)) continue;
-      const locals = await DB.listar(store);
-      const localMap = new Map(locals.filter((x) => x.sync_id && remoteRowBelongsToTeam(x, remoteTeamId)).map((x) => [x.sync_id, x]));
+      const localIndex = await localIndexFor(store, remote.kind);
       const identity = remoteIdentityKey(remote.kind, remote.payload);
-      const identityLocal = identity
-        ? locals.find((row) => remoteRowBelongsToTeam(row, remoteTeamId) && remoteIdentityKey(remote.kind, row) === identity)
-        : null;
-      let local = localMap.get(remote.id) || identityLocal;
+      let local = localIndex.getBySyncId(remote.id) || localIndex.getByIdentity(identity);
       if (remote.deleted_at) {
         if (!local) continue;
         if (remoteDeletionConflictsWithLocalEdit(local, remote)) {
           addConflict(remoteConflict(store, local, remote, "remote_deleted_local_dirty"));
           continue;
         }
-        if (await this._applyRemoteDeletion(store, local, remote, addConflict)) result.deleted++;
+        if (await this._applyRemoteDeletion(store, local, remote, addConflict)) {
+          localIndex.remove(local);
+          result.deleted++;
+        }
         continue;
       }
       if (local?.sync_dirty) {
@@ -1263,21 +1309,33 @@ const RemoteWorkspace = {
       if (local) {
         merged.id = local.id;
         if (local.remote_updated_at === remote.updated_at) {
-          if (!local._sync_base) await DB.modificar(store, local.id, (current) => {
-            if (current.sync_dirty || current.remote_updated_at !== remote.updated_at) return current;
-            return { ...current, _sync_base: remote.payload || {} };
-          }, { remote: true });
+          if (!local._sync_base) {
+            let refreshedLocal = local;
+            await DB.modificar(store, local.id, (current) => {
+              if (current.sync_dirty || current.remote_updated_at !== remote.updated_at) {
+                refreshedLocal = current;
+                return current;
+              }
+              refreshedLocal = { ...current, _sync_base: remote.payload || {} };
+              return refreshedLocal;
+            }, { remote: true });
+            localIndex.replace(local, refreshedLocal);
+          }
           continue;
         }
         const applied = await this._applyPulledRecord(store, local, merged);
         if (!applied.applied) {
+          localIndex.replace(local, applied.current);
           if (applied.current?.sync_dirty && applied.current.remote_updated_at !== remote.updated_at) {
             addConflict(remoteConflict(store, applied.current, remote));
           }
           continue;
         }
+        localIndex.replace(local, merged);
       } else {
-        await DB.criar(store, remoteFreshLocalRecord(merged), { remote: true });
+        const created = remoteFreshLocalRecord(merged);
+        const createdId = await DB.criar(store, created, { remote: true });
+        localIndex.add({ ...created, id: created.id || createdId });
       }
       result.pulled++;
     }
