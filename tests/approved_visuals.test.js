@@ -50,7 +50,9 @@ test('PWA guarda imagens aprovadas sob procura sem bloquear atualização inicia
   assert.ok(html.indexOf('js/team_development.js')<html.indexOf('js/app.js'));
   assert.ok(sw.includes('./js/team_development.js'));
   assert.ok(sw.includes('./js/player_archive.js'),'arquivo do atleta tem de estar disponível na cache offline');
-  assert.match(sw,/vision-coach-v167/);
   const index=fs.readFileSync(path.join(__dirname,"..","index.html"),"utf8");
-  assert.match(index,/const serviceWorkerVersion = 167;/);
+  const cacheVersion=sw.match(/const CACHE = "vision-coach-v(\d+)";/)?.[1];
+  const appVersion=index.match(/const serviceWorkerVersion = (\d+);/)?.[1];
+  assert.ok(cacheVersion,'service worker cache must have a version');
+  assert.equal(appVersion,cacheVersion,'app registration and service worker cache versions must match');
 });

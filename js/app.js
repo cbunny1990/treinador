@@ -112,21 +112,55 @@ function avatarHTML(player,px){
   if(player && player.foto) return '<span class="avatar" '+size+'><img src="'+esc(player.foto)+'" alt=""></span>';
   return '<span class="avatar" '+size+'>'+esc(player && (player.numero||initials(player.nome)))+'</span>';
 }
+function playerProfilePhotoFor(player,items){
+  var photos=(items||[]).filter(function(item){return item.subject_type==="player"&&item.type==="photo"&&String(item.subject_id)===String(player&&player.id)&&String(item.note||"").toLowerCase().includes("foto de perfil");});
+  var pending=player&&player.profile_media_ref&&photos.find(function(item){return item.sync_id===player.profile_media_ref&&item.sync_dirty;});
+  if(pending)return pending;
+  return photos.sort(function(a,b){return String(b.updated_at||b.created_at||"").localeCompare(String(a.updated_at||a.created_at||""))||String(b.sync_id||"").localeCompare(String(a.sync_id||""));})[0]||null;
+}
 async function applyPlayerProfilePhotos(players){
   var media=await DB.porIndice("media_items","team_id",DEFAULT_TEAM_ID);
   var photos=media.filter(function(item){
     return item.subject_type==="player" && item.type==="photo" &&
       String(item.note||"").toLowerCase().includes("foto de perfil");
-  }).sort(function(a,b){
-    return String(b.updated_at||b.created_at||"").localeCompare(String(a.updated_at||a.created_at||""));
   });
   return (players||[]).map(function(player){
-    var photo=photos.find(function(item){return String(item.subject_id)===String(player.id);});
+    var photo=playerProfilePhotoFor(player,photos);
     var src=photo&&(photo.data_url||photo.url);
     if(src)return Object.assign({},player,{foto:src,profile_media_ref:photo.sync_id||null});
     if(!photo&&(player.profile_media_ref||String(player.foto||"").startsWith("data:")||/\/storage\/v1\/object\/sign\/team-media\//i.test(String(player.foto||""))))return Object.assign({},player,{foto:null});
     return player;
   });
+}
+function playerPhotoSyncState(photo){
+  if(!photo)return null;
+  if(photo.sync_dirty)return "pending";
+  if(photo.remote_team_id&&photo.remote_updated_at)return "synced";
+  return "local";
+}
+function playerPhotoSyncMessage(photo,state,failed){
+  if(!photo)return "";
+  if(state==="synced")return "Fotografia sincronizada com o workspace.";
+  if(failed&&photo.sync_dirty)return "A fotografia continua guardada neste dispositivo. A sincronização falhou; consulta Definições.";
+  if(state==="pending")return "Fotografia guardada neste dispositivo; sincronização pendente.";
+  return "Fotografia guardada localmente; sincronização com o workspace não confirmada.";
+}
+async function refreshPlayerPhotoSyncStatus(failed){
+  var status=document.querySelector("[data-player-photo-sync-status]");
+  if(!status)return;
+  var playerId=status.dataset.playerId;
+  try{
+    var currentPlayer=await DB.obter("jogadores",Number(playerId));
+    var photo=playerProfilePhotoFor(currentPlayer,await HeadCoachMedia.listForSubject("player",playerId));
+    var state=playerPhotoSyncState(photo),message=status.querySelector("[data-player-photo-sync-message]"),link=status.querySelector("[data-player-photo-sync-link]");
+    status.dataset.state=state||"missing";
+    if(message)message.textContent=playerPhotoSyncMessage(photo,state,failed);
+    if(link)link.hidden=state==="synced"||!photo;
+  }catch(_){
+    var errorMessage=status.querySelector("[data-player-photo-sync-message]");
+    if(errorMessage)errorMessage.textContent="Não foi possível confirmar o estado de sincronização da fotografia.";
+    status.dataset.state="unknown";
+  }
 }
 function resultText(match){
   if(match && (match.golos_favor==null || match.golos_contra==null)) return "Por jogar";
@@ -252,6 +286,7 @@ if(document.readyState!=="loading") router();
 window.addEventListener("visioncoach:sync-complete",async function(syncEvent){
   remoteSyncFailed=false;
   refreshRemoteIndicator();
+  await refreshPlayerPhotoSyncStatus(false);
   var notice=app.querySelector('.notice[role="status"]');
   if(notice&&notice.textContent.includes("Não foi possível confirmar a sincronização."))notice.remove();
   if(app.querySelector('form[data-form]')) return;
@@ -265,6 +300,7 @@ window.addEventListener("visioncoach:sync-complete",async function(syncEvent){
   skipNextRemoteSync=true;
   await router();
 });
+window.addEventListener("visioncoach:sync-failed",function(){refreshPlayerPhotoSyncStatus(true);});
 window.addEventListener("visioncoach:realtime-status",function(event){
   refreshRemoteIndicator();
   var realtimeHint=document.getElementById("remote-realtime-status");
@@ -593,6 +629,9 @@ async function viewPlayer(id){
   player=(await applyPlayerProfilePhotos([player]))[0];
   var memory=await HeadCoachMemory.list(DEFAULT_TEAM_ID,{subjectType:"player",subjectId:id});
   var media=await HeadCoachMedia.listForSubject("player",id);
+  var profilePhoto=playerProfilePhotoFor(player,media);
+  var photoSyncState=playerPhotoSyncState(profilePhoto);
+  var photoSyncStatus=profilePhoto?'<div class="notice" role="status" data-player-photo-sync-status data-player-id="'+esc(id)+'" data-state="'+esc(photoSyncState)+'"><span data-player-photo-sync-message>'+esc(playerPhotoSyncMessage(profilePhoto,photoSyncState,false))+'</span> <a href="#/definicoes?focus=conflitos" data-player-photo-sync-link '+(photoSyncState==="synced"?"hidden":"")+'>Ver sincronização</a></div>':'';
   var obs=memory.length?'<div class="list">'+memory.slice(0,8).map(function(m){
     return '<div class="list-item"><div class="row"><span class="title grow">'+esc(m.title)+'</span>'+actorBadge(m.metadata&&m.metadata.actor,m.metadata&&m.metadata.actor_label||m.source&&m.source.label)+'</div><div class="body-copy">'+esc(m.content)+'</div><div class="meta">'+fmtDate(m.occurred_at)+'</div></div>';
   }).join("")+'</div>':'<div class="empty">Sem observações deste jogador.</div>';
@@ -606,6 +645,7 @@ async function viewPlayer(id){
   var html='<div class="profile-grid">';
   html+='<section class="panel hero-main"><div class="row">'+avatarHTML(player,64)+'<div class="grow"><div class="kicker">Jogador</div><h2 class="display" style="font-size:28px">'+esc(player.nome)+'</h2><p class="lead">'+esc([player.escalao,player.posicao,player.numero?'#'+player.numero:null].filter(Boolean).join(" · "))+'</p>'+playerBadge+'</div></div><div class="toolbar" style="margin-top:18px"><a class="btn secondary" href="#/equipa/jogador/'+id+'/editar">Editar</a><button class="btn secondary" type="button" data-action="export-player-report" data-id="'+id+'">Exportar relatório PDF</button><a class="btn" href="#/capturar/player/'+id+'">Registar observação</a><a class="btn secondary" href="#/media/novo/player/'+id+'">Adicionar media</a>'+rosterButton+deleteButton+'</div></section>';
   html+='<aside class="panel hero-side"><div class="metric-label">Contexto</div><div class="metric-value">'+memory.length+'</div><div class="metric-sub">registos na memória</div><div class="metric-value" style="margin-top:18px">'+media.length+'</div><div class="metric-sub">itens de media</div></aside></div>';
+  html+=photoSyncStatus;
   html+='<section class="section"><div class="section-head"><div><h2>Últimas observações</h2><p>Contexto usado pelo workspace</p></div></div>'+obs+'</section>';
   html+=await playerTimelineSection(player);
   html+=await playerGoalsSection(player);
@@ -1630,7 +1670,8 @@ app.addEventListener("submit",async function(event){
         note:"Foto de perfil do atleta"
       });
       var localPhotoItem=await DB.obter("media_items",localPhotoId);
-      await DB.atualizar("jogadores",Object.assign({},savedPlayer,{foto:localPhoto,profile_media_ref:localPhotoItem.sync_id}));
+      // Store image bytes once in media_items; the player keeps only the stable media reference.
+      await DB.atualizar("jogadores",Object.assign({},savedPlayer,{foto:null,profile_media_ref:localPhotoItem.sync_id}));
       savedPlayer=await DB.obter("jogadores",playerId);
       RemoteWorkspace.scheduleSync(0);
       await logHuman("updated_player_photo","Atualizou foto do atleta · "+fd.get("nome"),"player",savedPlayer.sync_id||playerId);

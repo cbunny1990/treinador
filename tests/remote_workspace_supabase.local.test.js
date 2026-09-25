@@ -401,7 +401,9 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.equal(latestPhotoPull.pulled, 2, "O PC refresca a URL assinada da foto anterior e recebe a nova foto.");
     const pcLatestPhotoPlayer = await devices[0].obter("jogadores", playerId);
     assert.equal(pcLatestPhotoPlayer.profile_media_ref, refs.latestPhoto);
-    assert.match(pcLatestPhotoPlayer.foto, /\/storage\/v1\/object\/sign\//);
+    assert.equal(pcLatestPhotoPlayer.foto, null, "O perfil não duplica os bytes da imagem; a origem é media_items.");
+    const pcLatestPhotoMedia = (await devices[0].listar("media_items")).find((row) => row.sync_id === refs.latestPhoto);
+    assert.match(pcLatestPhotoMedia.url, /\/storage\/v1\/object\/sign\//);
 
     globalThis.DB = devices[1];
     await devices[1].apagar("media_items", latestPhotoId);
@@ -435,7 +437,9 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.equal(pcPhotoDeletePull.deleted, 1);
     const pcPlayerAfterPhotoDelete = await devices[0].obter("jogadores", playerId);
     assert.equal(pcPlayerAfterPhotoDelete.profile_media_ref, refs.photo);
-    assert.equal(pcPlayerAfterPhotoDelete.foto, photoData, "O PC deve voltar à foto anterior que ainda existe localmente.");
+    assert.equal(pcPlayerAfterPhotoDelete.foto, null, "A foto anterior mantém-se na media sem duplicação no perfil.");
+    const pcOlderPhoto = (await devices[0].listar("media_items")).find((row) => row.sync_id === refs.photo);
+    assert.match(pcOlderPhoto.url, /\/storage\/v1\/object\/sign\//);
     const survivingRemotePhoto = await admin.from("media_assets").select("storage_path,deleted_at").eq("id", refs.photo).single();
     assert.ifError(survivingRemotePhoto.error);
     assert.equal(survivingRemotePhoto.data.deleted_at, null, "A fotografia anterior deve permanecer no Storage.");
@@ -455,8 +459,10 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.equal(phonePhotoDeletePull.deleted, 0);
     const phonePlayerAfterPhotoDelete = await devices[1].obter("jogadores", phonePlayer.id);
     assert.equal(phonePlayerAfterPhotoDelete.profile_media_ref, refs.photo);
-    assert.match(phonePlayerAfterPhotoDelete.foto, /\/storage\/v1\/object\/sign\//);
-    const survivingSignedPhoto = await fetch(phonePlayerAfterPhotoDelete.foto);
+    assert.equal(phonePlayerAfterPhotoDelete.foto, null);
+    const phoneOlderPhoto = (await devices[1].listar("media_items")).find((row) => row.sync_id === refs.photo);
+    assert.match(phoneOlderPhoto.url, /\/storage\/v1\/object\/sign\//);
+    const survivingSignedPhoto = await fetch(phoneOlderPhoto.url);
     assert.equal(survivingSignedPhoto.status, 200);
 
     globalThis.DB = devices[0];

@@ -1601,10 +1601,13 @@ const RemoteWorkspace = {
         item.type === "photo" &&
         String(item.note || "").toLowerCase().includes("foto de perfil")
       )
-      .sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || "")));
+      .sort((a, b) => String(b.updated_at || b.created_at || "").localeCompare(String(a.updated_at || a.created_at || "")) || String(b.sync_id || "").localeCompare(String(a.sync_id || "")));
 
     for (const player of players) {
-      const photo = profilePhotos.find((item) => String(item.subject_id) === String(player.id));
+      const pendingSelectedPhoto = profilePhotos.find((item) =>
+        String(item.subject_id) === String(player.id) && item.sync_id === player.profile_media_ref && item.sync_dirty
+      );
+      const photo = pendingSelectedPhoto || profilePhotos.find((item) => String(item.subject_id) === String(player.id));
       const nextPhoto = photo ? (photo.data_url || photo.url || null) : null;
       const earlierPhotoStillPresent = !player.profile_media_ref || profilePhotos.some((item) => item.sync_id === player.profile_media_ref);
       const newerLocalPhoto = String(player.foto || "").startsWith("data:")
@@ -1615,8 +1618,8 @@ const RemoteWorkspace = {
       if (newerLocalPhoto) continue;
       if (nextPhoto) {
         const photoRef = photo.sync_id || null;
-        if (player.foto !== nextPhoto || player.profile_media_ref !== photoRef) {
-          await this._applyPulledRecord("jogadores", player, { ...player, foto: nextPhoto, profile_media_ref: photoRef });
+        if (player.foto || player.profile_media_ref !== photoRef) {
+          await this._applyPulledRecord("jogadores", player, { ...player, foto: null, profile_media_ref: photoRef });
         }
         continue;
       }

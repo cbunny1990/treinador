@@ -1,6 +1,9 @@
 "use strict";
 
 const { test, expect } = require("@playwright/test");
+const fs = require("node:fs");
+const path = require("node:path");
+const appVersion = fs.readFileSync(path.join(__dirname, "..", "..", "index.html"), "utf8").match(/const serviceWorkerVersion = (\d+);/)?.[1];
 
 test("atividade sincronizada sem origem relacional apresenta a proveniência preservada", async ({ page }) => {
   await page.goto("/");
@@ -1630,7 +1633,7 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
   await expect(page.getByText(/Atualização disponível\. Termina ou guarda o trabalho em curso/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeDisabled();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v167"))).toBeNull();
+  expect(await page.evaluate((version) => sessionStorage.getItem(`vision-sw-reloaded-v${version}`), appVersion)).toBeNull();
 });
 
 test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
@@ -1643,7 +1646,7 @@ test("service worker update after an older cached reload does not stay suppresse
   }).catch(() => {});
   await reloaded;
   await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v167"))).toBe("1");
+  await expect.poll(() => page.evaluate((version) => sessionStorage.getItem(`vision-sw-reloaded-v${version}`), appVersion)).toBe("1");
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {
@@ -1712,16 +1715,62 @@ test("foto do atleta persiste na fila local antes de iniciar a sincronização r
   });
   await page.getByRole("button", { name: "Guardar", exact: true }).click();
   await expect(page).toHaveURL(/#\/equipa\/jogador\/\d+$/);
+  await expect(page.locator("[data-player-photo-sync-status]")).toHaveAttribute("data-state", "pending");
+  await expect(page.locator("[data-player-photo-sync-message]")).toHaveText("Fotografia guardada neste dispositivo; sincronização pendente.");
+  await expect(page.locator("[data-player-photo-sync-link]")).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("visioncoach:sync-failed", { detail: { attempt: 1 } })));
+  await expect(page.locator("[data-player-photo-sync-message]")).toHaveText("A fotografia continua guardada neste dispositivo. A sincronização falhou; consulta Definições.");
   const saved = await page.evaluate(async () => {
     const player = (await DB.listar("jogadores")).find((row) => row.nome === "Foto Upload Recuperação E2E");
     const media = await HeadCoachMedia.listForSubject("player", player.id);
-    return { photo: player.foto, ref: player.profile_media_ref, media: media.find((item) => item.note === "Foto de perfil do atleta"), syncDelays: window.__photoSyncDelays };
+    const displayed = (await applyPlayerProfilePhotos([player]))[0];
+    return { photo: player.foto, displayedPhoto: displayed.foto, ref: player.profile_media_ref, media: media.find((item) => item.note === "Foto de perfil do atleta"), syncDelays: window.__photoSyncDelays };
   });
-  expect(saved.photo).toMatch(/^data:image\/png;base64,/);
+  expect(saved.photo).toBeNull();
+  expect(saved.displayedPhoto).toMatch(/^data:image\/png;base64,/);
+  await expect(page.locator(".hero-main .avatar img")).toHaveAttribute("src", /^data:image\/png;base64,/);
   expect(saved.media.data_url).toMatch(/^data:image\/png;base64,/);
   expect(saved.media.sync_dirty).toBe(true);
   expect(saved.ref).toBe(saved.media.sync_id);
   expect(saved.syncDelays).toContain(0);
+});
+
+test("a UUID local pendente da foto prevalece sobre datas empatadas", async ({ page }) => {
+  await page.goto("/#/equipa");
+  const fixture = await page.evaluate(async () => {
+    const selectedRef = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const tieWinnerRef = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    const playerId = await DB.criar("jogadores", {
+      team_id: DEFAULT_TEAM_ID, nome: "Atleta Foto UUID E2E", profile_media_ref: selectedRef,
+    });
+    const stamp = "2026-09-25T12:00:00.000Z";
+    const dataUrl = (color) => {
+      const canvas = document.createElement("canvas"); canvas.width = 1; canvas.height = 1;
+      const context = canvas.getContext("2d"); context.fillStyle = color; context.fillRect(0, 0, 1, 1);
+      return canvas.toDataURL("image/png");
+    };
+    const currentPhoto = dataUrl("#ef0000"), olderPhoto = dataUrl("#0000ef");
+    const row = (syncId, value) => ({
+      team_id: DEFAULT_TEAM_ID, subject_type: "player", subject_id: String(playerId),
+      subject_key: [DEFAULT_TEAM_ID, "player", playerId].join("|"), type: "photo",
+      title: "Foto · Atleta Foto UUID E2E", note: "Foto de perfil do atleta", data_url: value,
+      file_name: "perfil.png", mime_type: "image/png", sync_id: syncId, sync_dirty: syncId === selectedRef,
+      remote_team_id: "e2e-remote-team", remote_updated_at: stamp, created_at: stamp, updated_at: stamp,
+    });
+    await DB.criar("media_items", row(selectedRef, currentPhoto));
+    await DB.criar("media_items", row(tieWinnerRef, olderPhoto));
+    return { playerId, selectedRef, tieWinnerRef, currentPhoto, tieWinnerPhoto: olderPhoto };
+  });
+  await page.goto("/#/equipa/jogador/" + fixture.playerId);
+  await expect(page.locator(".hero-main .avatar img")).toHaveAttribute("src", fixture.currentPhoto);
+  const syncedChoice = await page.evaluate(async ({ playerId, selectedRef }) => {
+    const selected = (await DB.listar("media_items")).find((item) => item.sync_id === selectedRef);
+    await DB.atualizar("media_items", { ...selected, sync_dirty: false, remote_updated_at: selected.updated_at }, { remote: true });
+    const player = await DB.obter("jogadores", playerId);
+    return { ref: player.profile_media_ref, displayedPhoto: (await applyPlayerProfilePhotos([player]))[0].foto };
+  }, { playerId: fixture.playerId, selectedRef: fixture.selectedRef });
+  expect(syncedChoice.ref).toBe(fixture.selectedRef);
+  expect(syncedChoice.displayedPhoto).toBe(fixture.tieWinnerPhoto);
 });
 
 test("editar atleta guarda e sincroniza foto grande de telemóvel sem duplicar em submissão repetida", async ({ page }) => {
@@ -1769,9 +1818,11 @@ test("editar atleta guarda e sincroniza foto grande de telemóvel sem duplicar e
   const saved = await page.evaluate(async (id) => {
     const player = await DB.obter("jogadores", id);
     const media = await HeadCoachMedia.listForSubject("player", id);
-    return { player, media: media.find((item) => item.note === "Foto de perfil do atleta"), profilePhotoCount: media.filter((item) => item.note === "Foto de perfil do atleta").length, syncDelays: window.__photoSyncDelays };
+    const displayed = (await applyPlayerProfilePhotos([player]))[0];
+    return { player, displayedPhoto: displayed.foto, media: media.find((item) => item.note === "Foto de perfil do atleta"), profilePhotoCount: media.filter((item) => item.note === "Foto de perfil do atleta").length, syncDelays: window.__photoSyncDelays };
   }, playerId);
-  expect(saved.player.foto, JSON.stringify({ player: saved.player, media: saved.media && { mime_type: saved.media.mime_type, size: saved.media.size, dirty: saved.media.sync_dirty }, delays: saved.syncDelays })).toMatch(/^data:image\/jpeg;base64,/);
+  expect(saved.player.foto).toBeNull();
+  expect(saved.displayedPhoto, JSON.stringify({ player: saved.player, media: saved.media && { mime_type: saved.media.mime_type, size: saved.media.size, dirty: saved.media.sync_dirty }, delays: saved.syncDelays })).toMatch(/^data:image\/jpeg;base64,/);
   expect(saved.player.sync_dirty).toBe(true);
   expect(saved.media.data_url).toMatch(/^data:image\/jpeg;base64,/);
   expect(saved.media.size).toBeLessThan(5 * 1024 * 1024);
@@ -1812,10 +1863,12 @@ test("foto grande guarda em telemóvel sem createImageBitmap e fica abaixo do li
     const player = (await DB.listar("jogadores")).find(row => row.nome === "Foto Sem Bitmap E2E");
     const media = await HeadCoachMedia.listForSubject("player", player.id);
     const photo = media.find(item => item.note === "Foto de perfil do atleta");
-    return { player, photo };
+    const displayed = (await applyPlayerProfilePhotos([player]))[0];
+    return { player, displayedPhoto: displayed.foto, photo };
   });
-  expect(saved.player.foto).toMatch(/^data:image\/jpeg;base64,/);
-  expect(saved.photo.data_url).toBe(saved.player.foto);
+  expect(saved.player.foto).toBeNull();
+  expect(saved.displayedPhoto).toMatch(/^data:image\/jpeg;base64,/);
+  await expect(page.locator(".hero-main .avatar img")).toHaveAttribute("src", /^data:image\/jpeg;base64,/);
   expect(saved.photo.size).toBeLessThan(5 * 1024 * 1024);
   expect(saved.photo.sync_dirty).toBe(true);
 });
