@@ -254,15 +254,16 @@ async function getTeamRedactionNames(admin,teamId){
 }
 
 async function sha256(value){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');}
-async function embed(inputs,{apiKey=globalThis.Deno?.env?.get?.('OPENAI_API_KEY'),fetchImpl=globalThis.fetch}={}){
+async function embed(inputs,{apiKey=globalThis.Deno?.env?.get?.('OPENAI_API_KEY'),fetchImpl=globalThis.fetch,timeoutMs=8000}={}){
   if(!apiKey)throw new Error('team_knowledge_embedding_provider_not_configured');
   if(typeof fetchImpl!=='function')throw new Error('team_knowledge_embedding_fetch_unavailable');
   const vectors=[];
   for(let start=0;start<inputs.length;start+=64){
     const batch=inputs.slice(start,start+64);
-    let response;
-    try{response=await fetchImpl('https://api.openai.com/v1/embeddings',{method:'POST',headers:{authorization:`Bearer ${apiKey}`,'content-type':'application/json'},body:JSON.stringify({model:MODEL,dimensions:DIMENSIONS,input:batch})});}
+    let response;const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),Math.max(1,Number(timeoutMs)||8000));
+    try{response=await fetchImpl('https://api.openai.com/v1/embeddings',{method:'POST',headers:{authorization:`Bearer ${apiKey}`,'content-type':'application/json'},body:JSON.stringify({model:MODEL,dimensions:DIMENSIONS,input:batch}),signal:controller.signal});}
     catch{throw new Error('team_knowledge_embedding_provider_unavailable');}
+    finally{clearTimeout(timer);}
     if(!response.ok)throw new Error(`team_knowledge_embedding_provider_error_${response.status}`);
     const body=await response.json(),data=arr(body?.data).sort((a,b)=>a.index-b.index);
     if(data.length!==batch.length||data.some(x=>!Array.isArray(x.embedding)||x.embedding.length!==DIMENSIONS||x.embedding.some(v=>!Number.isFinite(v))))throw new Error('team_knowledge_embedding_shape_invalid');

@@ -242,6 +242,12 @@ test('provider adapter validates dimensions and uses multilingual embedding endp
  await assert.rejects(rag.teamKnowledgeTestAPI.embed(['texto'],{apiKey:'test',fetchImpl:async()=>({ok:true,status:200,json:async()=>({data:[{index:0,embedding:[1,2]}]})})}),/shape_invalid/);
 });
 
+test('embedding provider requests have a deadline and abort instead of hanging the hybrid context',async()=>{
+ let requestSignal;const provider={apiKey:'test-only',timeoutMs:5,async fetchImpl(_url,init){requestSignal=init.signal;return new Promise((_,reject)=>requestSignal.addEventListener('abort',()=>reject(requestSignal.reason),{once:true}));}};
+ await assert.rejects(rag.teamKnowledgeTestAPI.embed(['saída sob pressão'],provider),/team_knowledge_embedding_provider_unavailable/);
+ assert.equal(requestSignal?.aborted,true);
+});
+
 test('RAG validates exact team/scope/filters and searches only with the authorized team UUID',async()=>{
  const db=fakeAdmin([]),provider=fakeProvider();provider.fetchImpl=async(url,init)=>({ok:true,status:200,json:async()=>({data:JSON.parse(init.body).input.map((_,index)=>({index,embedding:Array(1536).fill(.01)}))})});
  const output=await rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query:'O que correu mal?',source_kinds:['match'],from:'2026-09-01',to:'2026-09-30',match_ref:SOURCE,match_refs:[SOURCE],per_match_limit:2,player_ref:PLAYER,limit:4},{provider});
