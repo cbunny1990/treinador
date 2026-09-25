@@ -3,6 +3,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
 const { createClient } = require("@supabase/supabase-js");
 
 const supabaseUrl = process.env.VISION_COACH_SUPABASE_LOCAL_URL || "";
@@ -10,6 +12,16 @@ const serviceKey = process.env.VISION_COACH_SUPABASE_LOCAL_SERVICE_KEY || "";
 const mcpUrl = process.env.VISION_COACH_MCP_LOCAL_HTTP_URL || "";
 const configured = !!(supabaseUrl && serviceKey && mcpUrl);
 const localHost = (value) => ["localhost", "127.0.0.1", "::1"].includes(new URL(value).hostname);
+function localStorageUrl(value) {
+  const url = new URL(value);
+  assert.ok(localHost(url.href) || url.hostname === "kong", `Expected local Storage host, got ${url.hostname}.`);
+  if (url.hostname === "kong") {
+    const localApi = new URL(supabaseUrl);
+    url.protocol = localApi.protocol;
+    url.host = localApi.host;
+  }
+  return url;
+}
 const uuid = () => crypto.randomUUID();
 
 async function mcpRequest(token, method, params = {}) {
@@ -30,6 +42,7 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
   const admin = createClient(supabaseUrl, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const users = [];
   const teams = [];
+  const uploadedExerciseObjects = [];
   try {
     const email = `rag-http-${uuid()}@vision-coach.local`;
     const createdUser = await admin.auth.admin.createUser({
@@ -44,6 +57,10 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     }).select("id").single();
     assert.ifError(createdTeam.error);
     teams.push(createdTeam.data.id);
+    const headCoachAuthorization = await admin.from("agent_authorizations").insert({
+      team_id: teams[0], owner_id: users[0], agent_subject: "head-coach", scopes: ["read", "write"], enabled: true,
+    });
+    assert.ifError(headCoachAuthorization.error);
 
     const matchDates = ["2026-09-01", "2026-09-05", "2026-09-10", "2026-09-17", "2026-09-20", "2026-09-22"];
     const matchIds = [...matchDates.map(() => uuid()), uuid()];
@@ -88,6 +105,16 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
       p_scopes: ["read"], p_expires_at: null,
     });
     assert.ifError(connector.error);
+    const createConnectorToken = async (scopes, prefix, label) => {
+      const value = `vcmcp_${crypto.randomBytes(32).toString("base64url")}`;
+      const created = await admin.rpc("mcp_connector_create", {
+        p_team_id: teams[0], p_owner_id: users[0],
+        p_token_hash: crypto.createHash("sha256").update(value).digest("hex"),
+        p_token_prefix: prefix, p_label: label, p_scopes: scopes, p_expires_at: null,
+      });
+      assert.ifError(created.error);
+      return value;
+    };
 
     const initialize = await mcpRequest(token, "initialize", {
       protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "local-test", version: "1" },
@@ -160,11 +187,67 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     assert.equal(planningContext.evidence_status, "provider_not_configured");
     assert.equal(planningContext.missing_data.target_training, false);
 
+    const imageWriteToken = await createConnectorToken(["read", "write", "media"], "vcmcp_imgwrite", "Imagem original local");
+    const imageReadToken = await createConnectorToken(["read", "media"], "vcmcp_imgread1", "Imagem no segundo dispositivo");
+    const exerciseImagePath = path.join(__dirname, "../assets/exercises/approved-20260922/01_ativacao_conduzir_passar_dar_opcao.png");
+    const exerciseImageBytes = new Uint8Array(fs.readFileSync(exerciseImagePath));
+    const { imageInfo, imageHash } = await import("../supabase/functions/vision-coach-mcp/image_uploads.mjs");
+    const exerciseImageMeta = {
+      ...imageInfo(exerciseImageBytes), sha256: await imageHash(exerciseImageBytes),
+      file_name: path.basename(exerciseImagePath),
+    };
+    const existingImage = await mcpRequest(token, "tools/call", {
+      name: "get_exercise_image", arguments: { id: exerciseRef },
+    });
+    assert.equal(existingImage.status, 200);
+    const exerciseBeforeUpload = JSON.parse((await existingImage.json()).result.content[0].text);
+    const preparedImageResponse = await mcpRequest(imageWriteToken, "tools/call", {
+      name: "prepare_exercise_image_upload",
+      arguments: { id: exerciseRef, approved: true, expected_updated_at: exerciseBeforeUpload.updated_at, ...exerciseImageMeta },
+    });
+    assert.equal(preparedImageResponse.status, 200);
+    const preparedImage = JSON.parse((await preparedImageResponse.json()).result.content[0].text);
+    assert.equal(preparedImage.already_linked, false);
+    const uploadUrl = localStorageUrl(preparedImage.upload_url);
+    assert.match(uploadUrl.pathname, /\/storage\/v1\/object\/upload\/sign\/team-media\//);
+    const uploadObjectPath = decodeURIComponent(uploadUrl.pathname.split("/upload/sign/team-media/")[1] || "");
+    assert.ok(uploadObjectPath.startsWith(`${teams[0]}/exercise-images/${exerciseRef}/`));
+    uploadedExerciseObjects.push(uploadObjectPath);
+    const uploadedImage = await fetch(uploadUrl, {
+      method: "PUT", redirect: "error", headers: preparedImage.headers, body: exerciseImageBytes,
+    });
+    assert.equal(uploadedImage.status, 200, await uploadedImage.clone().text());
+    const completedImageResponse = await mcpRequest(imageWriteToken, "tools/call", {
+      name: "complete_exercise_image_upload", arguments: { ticket: preparedImage.ticket },
+    });
+    assert.equal(completedImageResponse.status, 200);
+    const completedImage = JSON.parse((await completedImageResponse.json()).result.content[0].text);
+    assert.equal(completedImage.verified, true, JSON.stringify(completedImage).replace(/https?:\/\/[^\s"\\]+/g, "[redacted-local-url]"));
+    assert.equal(completedImage.exercise.image.sha256, exerciseImageMeta.sha256);
+
+    const syncedImageResponse = await mcpRequest(imageReadToken, "tools/call", {
+      name: "get_exercise_image", arguments: { id: exerciseRef, download: true },
+    });
+    assert.equal(syncedImageResponse.status, 200);
+    const syncedImage = JSON.parse((await syncedImageResponse.json()).result.content[0].text);
+    assert.equal(syncedImage.storage_path, completedImage.exercise.storage_path);
+    assert.equal(syncedImage.image.sha256, exerciseImageMeta.sha256);
+    assert.equal(syncedImage.visual_url, null);
+    const downloadUrl = localStorageUrl(syncedImage.download_url);
+    assert.match(downloadUrl.pathname, /\/storage\/v1\/object\/sign\/team-media\//);
+    const downloadedImage = await fetch(downloadUrl, { redirect: "error" });
+    assert.equal(downloadedImage.status, 200);
+    assert.equal(await imageHash(new Uint8Array(await downloadedImage.arrayBuffer())), exerciseImageMeta.sha256);
+
     const rejectedToken = `vcmcp_${crypto.randomBytes(32).toString("base64url")}`;
     const rejected = await mcpRequest(rejectedToken, "tools/list");
     assert.equal(rejected.status, 401);
     assert.equal((await rejected.json()).error, "connector_not_authorized");
   } finally {
+    if (uploadedExerciseObjects.length) {
+      const removedObjects = await admin.storage.from("team-media").remove(uploadedExerciseObjects);
+      assert.ifError(removedObjects.error);
+    }
     for (const teamId of teams) {
       const removed = await admin.from("teams").delete().eq("id", teamId);
       assert.ifError(removed.error);
