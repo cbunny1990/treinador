@@ -1,5 +1,7 @@
 # Próximas fases Vision Coach — 25/09/2026
 
+Atualização de cache v164: renova o cache shell para os dispositivos descarregarem novamente os ficheiros já publicados, incluindo a correção de foto de atleta e sync. O cache separado das imagens aprovadas não foi alterado.
+
 Confirmação read-only do GitHub Pages (25/09/2026): o endereço publicado respondeu HTTP 200 e `sw.js` serve `vision-coach-v161`; `index.html` regista `serviceWorkerVersion = 156`. Isto identifica os ficheiros disponíveis no servidor, não o cache já ativo em cada dispositivo. O branch de desenvolvimento conserva alterações locais que não foram publicadas.
 
 Regressão Safari/WebKit para o Workspace (25/09/2026): criei `npm run test:e2e:webkit-scroll`, que executa em WebKit móvel simulado os fluxos existentes de sincronização em segundo plano e scroll do treinador durante renderização concorrente. Os dois testes passaram (2/2); `npm run check` e `git diff --check` também passaram. Isto testa o motor do Safari, mas não substitui o ensaio num iPhone físico. Só muda a configuração/cobertura de testes, sem alteração de dados, imagens, migrations ou publicação.
