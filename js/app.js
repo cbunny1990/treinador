@@ -112,16 +112,20 @@ function avatarHTML(player,px){
   if(player && player.foto) return '<span class="avatar" '+size+'><img src="'+esc(player.foto)+'" alt=""></span>';
   return '<span class="avatar" '+size+'>'+esc(player && (player.numero||initials(player.nome)))+'</span>';
 }
+function playerProfilePhotoFor(player,items){
+  var photos=(items||[]).filter(function(item){return item.subject_type==="player"&&item.type==="photo"&&String(item.subject_id)===String(player&&player.id)&&String(item.note||"").toLowerCase().includes("foto de perfil");});
+  var pending=player&&player.profile_media_ref&&photos.find(function(item){return item.sync_id===player.profile_media_ref&&item.sync_dirty;});
+  if(pending)return pending;
+  return photos.sort(function(a,b){return String(b.updated_at||b.created_at||"").localeCompare(String(a.updated_at||a.created_at||""))||String(b.sync_id||"").localeCompare(String(a.sync_id||""));})[0]||null;
+}
 async function applyPlayerProfilePhotos(players){
   var media=await DB.porIndice("media_items","team_id",DEFAULT_TEAM_ID);
   var photos=media.filter(function(item){
     return item.subject_type==="player" && item.type==="photo" &&
       String(item.note||"").toLowerCase().includes("foto de perfil");
-  }).sort(function(a,b){
-    return String(b.updated_at||b.created_at||"").localeCompare(String(a.updated_at||a.created_at||""));
   });
   return (players||[]).map(function(player){
-    var photo=photos.find(function(item){return String(item.subject_id)===String(player.id);});
+    var photo=playerProfilePhotoFor(player,photos);
     var src=photo&&(photo.data_url||photo.url);
     if(src)return Object.assign({},player,{foto:src,profile_media_ref:photo.sync_id||null});
     if(!photo&&(player.profile_media_ref||String(player.foto||"").startsWith("data:")||/\/storage\/v1\/object\/sign\/team-media\//i.test(String(player.foto||""))))return Object.assign({},player,{foto:null});
@@ -146,8 +150,8 @@ async function refreshPlayerPhotoSyncStatus(failed){
   if(!status)return;
   var playerId=status.dataset.playerId;
   try{
-    var photo=(await HeadCoachMedia.listForSubject("player",playerId))
-      .find(function(item){return item.type==="photo"&&String(item.note||"").toLowerCase().includes("foto de perfil");});
+    var currentPlayer=await DB.obter("jogadores",Number(playerId));
+    var photo=playerProfilePhotoFor(currentPlayer,await HeadCoachMedia.listForSubject("player",playerId));
     var state=playerPhotoSyncState(photo),message=status.querySelector("[data-player-photo-sync-message]"),link=status.querySelector("[data-player-photo-sync-link]");
     status.dataset.state=state||"missing";
     if(message)message.textContent=playerPhotoSyncMessage(photo,state,failed);
@@ -625,7 +629,7 @@ async function viewPlayer(id){
   player=(await applyPlayerProfilePhotos([player]))[0];
   var memory=await HeadCoachMemory.list(DEFAULT_TEAM_ID,{subjectType:"player",subjectId:id});
   var media=await HeadCoachMedia.listForSubject("player",id);
-  var profilePhoto=media.find(function(item){return item.type==="photo"&&String(item.note||"").toLowerCase().includes("foto de perfil");});
+  var profilePhoto=playerProfilePhotoFor(player,media);
   var photoSyncState=playerPhotoSyncState(profilePhoto);
   var photoSyncStatus=profilePhoto?'<div class="notice" role="status" data-player-photo-sync-status data-player-id="'+esc(id)+'" data-state="'+esc(photoSyncState)+'"><span data-player-photo-sync-message>'+esc(playerPhotoSyncMessage(profilePhoto,photoSyncState,false))+'</span> <a href="#/definicoes?focus=conflitos" data-player-photo-sync-link '+(photoSyncState==="synced"?"hidden":"")+'>Ver sincronização</a></div>':'';
   var obs=memory.length?'<div class="list">'+memory.slice(0,8).map(function(m){

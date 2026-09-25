@@ -1732,6 +1732,44 @@ test("foto do atleta persiste na fila local antes de iniciar a sincronização r
   expect(saved.syncDelays).toContain(0);
 });
 
+test("a UUID local pendente da foto prevalece sobre datas empatadas", async ({ page }) => {
+  await page.goto("/#/equipa");
+  const fixture = await page.evaluate(async () => {
+    const selectedRef = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const tieWinnerRef = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    const playerId = await DB.criar("jogadores", {
+      team_id: DEFAULT_TEAM_ID, nome: "Atleta Foto UUID E2E", profile_media_ref: selectedRef,
+    });
+    const stamp = "2026-09-25T12:00:00.000Z";
+    const dataUrl = (color) => {
+      const canvas = document.createElement("canvas"); canvas.width = 1; canvas.height = 1;
+      const context = canvas.getContext("2d"); context.fillStyle = color; context.fillRect(0, 0, 1, 1);
+      return canvas.toDataURL("image/png");
+    };
+    const currentPhoto = dataUrl("#ef0000"), olderPhoto = dataUrl("#0000ef");
+    const row = (syncId, value) => ({
+      team_id: DEFAULT_TEAM_ID, subject_type: "player", subject_id: String(playerId),
+      subject_key: [DEFAULT_TEAM_ID, "player", playerId].join("|"), type: "photo",
+      title: "Foto · Atleta Foto UUID E2E", note: "Foto de perfil do atleta", data_url: value,
+      file_name: "perfil.png", mime_type: "image/png", sync_id: syncId, sync_dirty: syncId === selectedRef,
+      remote_team_id: "e2e-remote-team", remote_updated_at: stamp, created_at: stamp, updated_at: stamp,
+    });
+    await DB.criar("media_items", row(selectedRef, currentPhoto));
+    await DB.criar("media_items", row(tieWinnerRef, olderPhoto));
+    return { playerId, selectedRef, tieWinnerRef, currentPhoto, tieWinnerPhoto: olderPhoto };
+  });
+  await page.goto("/#/equipa/jogador/" + fixture.playerId);
+  await expect(page.locator(".hero-main .avatar img")).toHaveAttribute("src", fixture.currentPhoto);
+  const syncedChoice = await page.evaluate(async ({ playerId, selectedRef }) => {
+    const selected = (await DB.listar("media_items")).find((item) => item.sync_id === selectedRef);
+    await DB.atualizar("media_items", { ...selected, sync_dirty: false, remote_updated_at: selected.updated_at }, { remote: true });
+    const player = await DB.obter("jogadores", playerId);
+    return { ref: player.profile_media_ref, displayedPhoto: (await applyPlayerProfilePhotos([player]))[0].foto };
+  }, { playerId: fixture.playerId, selectedRef: fixture.selectedRef });
+  expect(syncedChoice.ref).toBe(fixture.selectedRef);
+  expect(syncedChoice.displayedPhoto).toBe(fixture.tieWinnerPhoto);
+});
+
 test("editar atleta guarda e sincroniza foto grande de telemóvel sem duplicar em submissão repetida", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/#/equipa");
