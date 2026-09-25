@@ -288,6 +288,8 @@ Pull de históricos grandes (25/09/2026): ao aplicar o snapshot remoto, a sincro
 
 Referências repetidas em media (25/09/2026): durante uma sincronização, UUIDs repetidos de atleta/equipa são resolvidos com uma leitura local por tipo de origem e cache limitado àquela execução; não há cache persistente que possa ficar obsoleto entre syncs. Regressão puxa 1.007 ficheiros do mesmo atleta e confirma uma leitura do plantel, preservando o vínculo local e a media. `npm test` passou 410/410 sem falhas (7 testes locais ignorados por requererem stack); E2E de fotografia móvel 2/2, integração Supabase local 4/4 e PWA offline/conflito PC↔PWA 1/1 passaram. Stack descartável encerrada com backup; sem publicação ou escrita remota.
 
+Referências em atividade (25/09/2026): o pull aplica o mesmo cache temporário ao converter a origem dos eventos, evitando carregar o plantel repetidamente quando muitos eventos apontam para a mesma pessoa. Regressão importa 1.007 eventos com a mesma UUID, confirma uma leitura e verifica que todos mantêm o ID local correto. Check, 410 testes unitários, Playwright 164/164, Supabase local 4/4 e PWA offline/conflito PC↔PWA 1/1 passaram. Stack encerrada com backup; sem alteração remota ou publicação.
+
 Se o evento de atividade continua válido mas a sua origem local já não existe ou a UUID não pertence ao workspace selecionado, o sincronizador envia o evento com `entity_ref` vazio e guarda tipo, referência original e motivo em `_vision_coach_unresolved_origin`. A referência fica explícita como proveniência, nunca é convertida num vínculo remoto. O mesmo aviso é mostrado no Workspace e na Timeline. Referências ambíguas, de outra equipa ou de equipa desconhecida continuam bloqueadas. Cache PWA v119.
 
 ## Publicação rápida de imagens por IA

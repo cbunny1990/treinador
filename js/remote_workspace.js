@@ -1382,6 +1382,7 @@ const RemoteWorkspace = {
 
   async _syncActivity(remoteTeamId, userId) {
     const client = await this.init();
+    const localReferenceCache = new Map();
     const remoteRows = await remoteReadTeamRows(client, "activity_log", remoteTeamId);
     const remoteMap = new Map(remoteRows.map((x) => [x.id, x]));
     const result = { pushed: 0, pulled: 0, conflicts: [] };
@@ -1454,7 +1455,7 @@ const RemoteWorkspace = {
     for (const remote of remoteMap.values()) {
       if (localMap.has(remote.id)) continue;
       const localEntityId = remote.entity_type && remote.entity_ref != null
-        ? await this._localIdForRemoteRef(remote.entity_type, String(remote.entity_ref), remoteTeamId)
+        ? await this._localIdForRemoteRef(remote.entity_type, String(remote.entity_ref), remoteTeamId, localReferenceCache)
         : null;
       const row = {
         team_id: DEFAULT_TEAM_ID,

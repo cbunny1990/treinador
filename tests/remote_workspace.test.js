@@ -1454,9 +1454,10 @@ test("sync pagina todos os registos, media e atividade acima do limite de linhas
       payload: { type: "note", title: `Nota ${index + 1}`, body: "Histórico sintético", external_key: `page-note-${index + 1}` },
       actor_type: "human", actor_label: "Treinador", updated_at: `v${index + 1}`, deleted_at: null,
     })));
+    const playerRef = "82000000-0000-4000-8000-000000000001";
     remote.activityRows.push(...Array.from({ length: count }, (_, index) => ({
       id: idAt("81000000", index), team_id: remoteTeamId, actor_type: "human", actor_label: "Treinador",
-      action: "updated", summary: `Atividade ${index + 1}`, entity_type: null, entity_ref: null,
+      action: "updated", summary: `Atividade ${index + 1}`, entity_type: "player", entity_ref: playerRef,
       metadata: {}, created_by: null, created_at: `2026-09-${String((index % 28) + 1).padStart(2, "0")}T10:00:00.000Z`,
     })));
 
@@ -1467,8 +1468,7 @@ test("sync pagina todos os registos, media e atividade acima do limite de linhas
     assert.equal(localDocuments.length, count);
     assert.ok(localDocuments.some((row) => row.sync_id === idAt("80000000", count - 1)));
 
-    const playerRef = "82000000-0000-4000-8000-000000000001";
-    await devices[1].criar("jogadores", {
+    const localPlayerId = await devices[1].criar("jogadores", {
       team_id: "default", sync_id: playerRef, remote_team_id: remoteTeamId,
       remote_updated_at: "player-v1", sync_dirty: false, nome: "Atleta sintético",
     });
@@ -1492,6 +1492,8 @@ test("sync pagina todos os registos, media e atividade acima do limite de linhas
 
     const activity = await RemoteWorkspace._syncActivity(remoteTeamId, "coach");
     assert.equal(activity.pulled, count);
+    assert.equal(playerListReads, 2, "media e atividade devem resolver o UUID com uma leitura cada, sem uma por registo");
+    assert.ok((await devices[1].listar("activity_items")).every((row) => String(row.entity_id) === String(localPlayerId)));
     assert.equal((await devices[1].listar("activity_items")).length, count);
   }, { maxRows: 250 });
 });
