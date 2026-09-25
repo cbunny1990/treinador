@@ -1732,10 +1732,8 @@ const RemoteWorkspace = {
     const remoteTeamId = await this.ensureSelectedTeam();
     if (!client || !session || !remoteTeamId) throw new Error("Liga primeiro o workspace remoto.");
 
-    const remoteRecordsRes = await client.from("workspace_records")
-      .select("id,kind,deleted_at").eq("team_id", remoteTeamId);
-    if (remoteRecordsRes.error) throw remoteRecordsRes.error;
-    const remoteRecordIds = new Set((remoteRecordsRes.data || []).map((x) => x.id));
+    const remoteRecords = await remoteReadTeamRows(client, "workspace_records", remoteTeamId);
+    const remoteRecordIds = new Set(remoteRecords.map((x) => x.id));
 
     let repaired = 0;
     for (const store of Object.keys(REMOTE_STORE_KINDS)) {
@@ -1765,10 +1763,8 @@ const RemoteWorkspace = {
       }
     }
 
-    const remoteMediaRes = await client.from("media_assets")
-      .select("id,deleted_at").eq("team_id", remoteTeamId);
-    if (remoteMediaRes.error) throw remoteMediaRes.error;
-    const remoteMediaIds = new Set((remoteMediaRes.data || []).map((x) => x.id));
+    const remoteMedia = await remoteReadTeamRows(client, "media_assets", remoteTeamId);
+    const remoteMediaIds = new Set(remoteMedia.map((x) => x.id));
     let mediaRows = (await DB.listar("media_items"))
       .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID);
     mediaRows = (await this._bindRemoteTeams(client, "media_items", mediaRows, remoteTeamId)).rows;

@@ -578,8 +578,9 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.equal(pcProfileCleared.profile_media_ref, undefined);
     assert.equal((await devices[0].listar("media_items")).length, 0);
 
+    const idAt = (group, index) => `${group}-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
     const overflowRows = Array.from({ length: 1007 }, (_, index) => ({
-      id: crypto.randomUUID(), team_id: teamId, kind: "document",
+      id: idAt("80000000", index), team_id: teamId, kind: "document",
       payload: { type: "note", title: `Histórico ${index + 1}`, body: "Registo sintético de paginação", external_key: `sync-page-${index + 1}` },
       actor_type: "human", actor_label: "Teste de integração", created_by: owner.user.id,
     }));
@@ -596,7 +597,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.equal(new Set(phoneOverflowRows.map((row) => row.sync_id)).size, overflowRows.length, "Páginas não podem gerar duplicados locais.");
 
     const overflowMedia = overflowRows.map((row, index) => ({
-      id: crypto.randomUUID(), team_id: teamId, subject_type: "team", subject_ref: teamId,
+      id: idAt("83000000", index), team_id: teamId, subject_type: "team", subject_ref: teamId,
       media_type: "file", title: `Ficheiro ${index + 1}`, note: "Teste sintético de paginação",
       external_url: `https://example.test/sync-page/${index + 1}`, created_by: owner.user.id,
     }));
@@ -611,7 +612,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.equal(new Set(phoneOverflowMedia.map((row) => row.sync_id)).size, overflowMedia.length);
 
     const overflowActivity = overflowRows.map((row, index) => ({
-      id: crypto.randomUUID(), team_id: teamId, actor_type: "human", actor_label: "Teste de integração",
+      id: idAt("81000000", index), team_id: teamId, actor_type: "human", actor_label: "Teste de integração",
       action: "updated", summary: `Atividade sintética ${index + 1}`, created_by: owner.user.id,
     }));
     for (let start = 0; start < overflowActivity.length; start += 200) {
@@ -624,6 +625,42 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
       .filter((row) => row.summary.startsWith("Atividade sintética "));
     assert.equal(phoneOverflowActivity.length, overflowActivity.length);
     assert.equal(new Set(phoneOverflowActivity.map((row) => row.sync_id)).size, overflowActivity.length);
+
+    const consolidationOriginal = {
+      db: globalThis.DB, team: globalThis.DEFAULT_TEAM_ID, init: RemoteWorkspace.init,
+      getSession: RemoteWorkspace.getSession, ensureSelectedTeam: RemoteWorkspace.ensureSelectedTeam,
+      syncNow: RemoteWorkspace.syncNow, navigator: Object.getOwnPropertyDescriptor(globalThis, "navigator"),
+      localStorage: globalThis.localStorage,
+    };
+    const localPlayer = { id: 1, team_id: "local-coach", sync_id: overflowRows.at(-1).id,
+      remote_team_id: teamId, remote_updated_at: "present", sync_dirty: false };
+    const localMedia = { id: 2, team_id: "local-coach", sync_id: overflowMedia.at(-1).id,
+      remote_team_id: teamId, remote_updated_at: "present", sync_dirty: false };
+    globalThis.DB = {
+      async listar(store) { return store === "jogadores" ? [{ ...localPlayer }] : store === "media_items" ? [{ ...localMedia }] : []; },
+      async atualizar() { throw new Error("Consolidation must not mark paged remote records as missing."); },
+    };
+    globalThis.DEFAULT_TEAM_ID = "local-coach";
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: { onLine: true } });
+    globalThis.localStorage = { setItem() {} };
+    RemoteWorkspace.init = async () => owner.client;
+    RemoteWorkspace.getSession = async () => ({ user: owner.user });
+    RemoteWorkspace.ensureSelectedTeam = async () => teamId;
+    RemoteWorkspace.syncNow = async () => ({ pushed: 0, pulled: 0, deleted: 0, conflicts: [] });
+    try {
+      const consolidated = await RemoteWorkspace.consolidateNow();
+      assert.equal(consolidated.repaired, 0, "Consolidation must see late-page IDs in both remote tables.");
+    } finally {
+      globalThis.DB = consolidationOriginal.db;
+      globalThis.DEFAULT_TEAM_ID = consolidationOriginal.team;
+      if (consolidationOriginal.navigator) Object.defineProperty(globalThis, "navigator", consolidationOriginal.navigator);
+      else delete globalThis.navigator;
+      globalThis.localStorage = consolidationOriginal.localStorage;
+      RemoteWorkspace.init = consolidationOriginal.init;
+      RemoteWorkspace.getSession = consolidationOriginal.getSession;
+      RemoteWorkspace.ensureSelectedTeam = consolidationOriginal.ensureSelectedTeam;
+      RemoteWorkspace.syncNow = consolidationOriginal.syncNow;
+    }
   } finally {
     RemoteWorkspace.init = original.init;
     globalThis.DB = original.db;
