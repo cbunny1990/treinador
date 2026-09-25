@@ -25,7 +25,7 @@
     }).join('');
   }
   async function view(id){
-    const token=++turn,training=await DB.obter('treinos',id);if(!training)return setView('Continuidade indisponível','<div class="notice">O treino não está disponível.</div>','Treino');
+    const token=++turn,training=await DB.obter('treinos',id);if(token!==turn||location.hash!=='#/continuidade/'+id)return;if(!training){current=null;return setView('Continuidade indisponível','<div class="notice">O treino não está disponível.</div>','Treino');}
     const all=await tuExercises(),rows=await DB.porIndice('treinos','team_id',DEFAULT_TEAM_ID);if(token!==turn||location.hash!=='#/continuidade/'+id)return;
     const s=C.state(training),p=s.proposal,target=p&&rows.find(t=>t.sync_id===p.target_ref),progress=C.progress(training,target),review=C.effectiveReview(training);current={id:training.id,revision:s.revision,review_key:C.reviewKey(review)};
     let html='<div data-training-continuity><section class="panel hero-main"><div class="kicker">Treino · '+fmtDate(training.data)+'</div><h2>Do que observámos ao próximo treino</h2><p class="lead">Uma proposta não é um treino aprovado. Revê o foco, os exercícios e o critério de avaliação antes de criar a sessão.</p><a class="link" href="#/treinos/'+id+'">Voltar ao treino e à avaliação</a><p class="notice" data-continuity-feedback role="alert" hidden></p><p class="hint">'+(!navigator.onLine?'Offline · alterações guardadas localmente e pendentes de envio.':training.sync_dirty?'Existem alterações locais pendentes de sincronização.':'Sem alterações locais pendentes.')+'</p></section>';
