@@ -89,8 +89,8 @@ a{color:inherit}
 .form{display:grid;gap:15px}
 .field{display:grid;gap:6px}
 .field>span{font-size:12px;font-weight:750;color:#334155}
-input,select,textarea{width:100%;border:1px solid var(--line-strong);background:#fff;color:var(--ink);border-radius:11px;padding:10px 12px;outline:none}
-input:focus,select:focus,textarea:focus{border-color:var(--accent-2);box-shadow:0 0 0 3px rgba(200,16,46,.12)}
+input:not([type="checkbox"]):not([type="radio"]),select,textarea{width:100%;border:1px solid var(--line-strong);background:#fff;color:var(--ink);border-radius:11px;padding:10px 12px;outline:none}
+input:not([type="checkbox"]):not([type="radio"]):focus,select:focus,textarea:focus{border-color:var(--accent-2);box-shadow:0 0 0 3px rgba(200,16,46,.12)}
 textarea{resize:vertical;min-height:110px}
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .hint{font-size:11px;color:var(--muted);line-height:1.45}
