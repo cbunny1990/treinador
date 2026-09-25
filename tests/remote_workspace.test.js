@@ -639,7 +639,7 @@ test("foto de perfil segue a media associada e a remoção limpa apenas referên
   globalThis.DEFAULT_TEAM_ID = "default";
   try {
     await RemoteWorkspace._refreshPlayerProfilePhotos();
-    assert.equal(players[0].foto, "https://signed.example/photo");
+    assert.equal(players[0].foto, null, "Os bytes/URLs geridos ficam na media e não duplicados na ficha do atleta.");
     assert.equal(players[0].profile_media_ref, "media-20");
     media = [];
     await RemoteWorkspace._refreshPlayerProfilePhotos();
@@ -2170,7 +2170,7 @@ test("foto do atleta faz ida e volta entre dispositivos pela UUID estável e Sto
     assert.equal(phoneMedia.subject_id, String(phonePlayer.id));
     assert.equal(phoneMedia.data_url, undefined);
     assert.equal(refreshedPhonePlayer.profile_media_ref, photoRef);
-    assert.equal(refreshedPhonePlayer.foto, `https://signed.example/${storedPhoto.storage_path}`);
+    assert.equal(refreshedPhonePlayer.foto, null, "A URL assinada fica na media, não duplicada na ficha do atleta.");
 
     await devices[1].criar("media_items", {
       team_id: "default", subject_type: "player", subject_id: phonePlayer.id,
@@ -2187,7 +2187,7 @@ test("foto do atleta faz ida e volta entre dispositivos pela UUID estável e Sto
     const returnedPlayer = await devices[0].obter("jogadores", playerLocalId);
     assert.equal(returnedMedia.subject_id, String(playerLocalId));
     assert.equal(returnedPlayer.profile_media_ref, phonePhotoRef);
-    assert.equal(returnedPlayer.foto, `https://signed.example/${remote.mediaRows.find((row) => row.id === phonePhotoRef).storage_path}`);
+    assert.equal(returnedPlayer.foto, null, "A referência muda para a foto mais recente sem copiar a imagem para a ficha.");
     assert.equal(remote.mediaRows.length, 2);
 
     useDevice(1);
@@ -2202,7 +2202,7 @@ test("foto do atleta faz ida e volta entre dispositivos pela UUID estável e Sto
     const afterDeletePlayer = await devices[0].obter("jogadores", playerLocalId);
     assert.equal((await devices[0].listar("media_items")).some((row) => row.sync_id === phonePhotoRef), false);
     assert.equal(afterDeletePlayer.profile_media_ref, photoRef);
-    assert.equal(afterDeletePlayer.foto, imageData);
+    assert.equal(afterDeletePlayer.foto, null, "A foto antiga continua disponível no registo media local.");
     assert.equal((await RemoteWorkspace._syncMedia(remoteTeamId, "coach")).pulled, 1);
     assert.equal((await devices[0].listar("media_items")).length, 1);
     assert.equal((await devices[0].listar("media_items")).some((row) => row.sync_id === phonePhotoRef), false);

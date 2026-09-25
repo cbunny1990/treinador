@@ -1615,8 +1615,8 @@ const RemoteWorkspace = {
       if (newerLocalPhoto) continue;
       if (nextPhoto) {
         const photoRef = photo.sync_id || null;
-        if (player.foto !== nextPhoto || player.profile_media_ref !== photoRef) {
-          await this._applyPulledRecord("jogadores", player, { ...player, foto: nextPhoto, profile_media_ref: photoRef });
+        if (player.foto || player.profile_media_ref !== photoRef) {
+          await this._applyPulledRecord("jogadores", player, { ...player, foto: null, profile_media_ref: photoRef });
         }
         continue;
       }

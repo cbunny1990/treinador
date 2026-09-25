@@ -1666,7 +1666,8 @@ app.addEventListener("submit",async function(event){
         note:"Foto de perfil do atleta"
       });
       var localPhotoItem=await DB.obter("media_items",localPhotoId);
-      await DB.atualizar("jogadores",Object.assign({},savedPlayer,{foto:localPhoto,profile_media_ref:localPhotoItem.sync_id}));
+      // Store image bytes once in media_items; the player keeps only the stable media reference.
+      await DB.atualizar("jogadores",Object.assign({},savedPlayer,{foto:null,profile_media_ref:localPhotoItem.sync_id}));
       savedPlayer=await DB.obter("jogadores",playerId);
       RemoteWorkspace.scheduleSync(0);
       await logHuman("updated_player_photo","Atualizou foto do atleta · "+fd.get("nome"),"player",savedPlayer.sync_id||playerId);

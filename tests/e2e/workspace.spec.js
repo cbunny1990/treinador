@@ -1720,9 +1720,12 @@ test("foto do atleta persiste na fila local antes de iniciar a sincronização r
   const saved = await page.evaluate(async () => {
     const player = (await DB.listar("jogadores")).find((row) => row.nome === "Foto Upload Recuperação E2E");
     const media = await HeadCoachMedia.listForSubject("player", player.id);
-    return { photo: player.foto, ref: player.profile_media_ref, media: media.find((item) => item.note === "Foto de perfil do atleta"), syncDelays: window.__photoSyncDelays };
+    const displayed = (await applyPlayerProfilePhotos([player]))[0];
+    return { photo: player.foto, displayedPhoto: displayed.foto, ref: player.profile_media_ref, media: media.find((item) => item.note === "Foto de perfil do atleta"), syncDelays: window.__photoSyncDelays };
   });
-  expect(saved.photo).toMatch(/^data:image\/png;base64,/);
+  expect(saved.photo).toBeNull();
+  expect(saved.displayedPhoto).toMatch(/^data:image\/png;base64,/);
+  await expect(page.locator(".hero-main .avatar img")).toHaveAttribute("src", /^data:image\/png;base64,/);
   expect(saved.media.data_url).toMatch(/^data:image\/png;base64,/);
   expect(saved.media.sync_dirty).toBe(true);
   expect(saved.ref).toBe(saved.media.sync_id);
@@ -1774,9 +1777,11 @@ test("editar atleta guarda e sincroniza foto grande de telemóvel sem duplicar e
   const saved = await page.evaluate(async (id) => {
     const player = await DB.obter("jogadores", id);
     const media = await HeadCoachMedia.listForSubject("player", id);
-    return { player, media: media.find((item) => item.note === "Foto de perfil do atleta"), profilePhotoCount: media.filter((item) => item.note === "Foto de perfil do atleta").length, syncDelays: window.__photoSyncDelays };
+    const displayed = (await applyPlayerProfilePhotos([player]))[0];
+    return { player, displayedPhoto: displayed.foto, media: media.find((item) => item.note === "Foto de perfil do atleta"), profilePhotoCount: media.filter((item) => item.note === "Foto de perfil do atleta").length, syncDelays: window.__photoSyncDelays };
   }, playerId);
-  expect(saved.player.foto, JSON.stringify({ player: saved.player, media: saved.media && { mime_type: saved.media.mime_type, size: saved.media.size, dirty: saved.media.sync_dirty }, delays: saved.syncDelays })).toMatch(/^data:image\/jpeg;base64,/);
+  expect(saved.player.foto).toBeNull();
+  expect(saved.displayedPhoto, JSON.stringify({ player: saved.player, media: saved.media && { mime_type: saved.media.mime_type, size: saved.media.size, dirty: saved.media.sync_dirty }, delays: saved.syncDelays })).toMatch(/^data:image\/jpeg;base64,/);
   expect(saved.player.sync_dirty).toBe(true);
   expect(saved.media.data_url).toMatch(/^data:image\/jpeg;base64,/);
   expect(saved.media.size).toBeLessThan(5 * 1024 * 1024);
@@ -1817,10 +1822,12 @@ test("foto grande guarda em telemóvel sem createImageBitmap e fica abaixo do li
     const player = (await DB.listar("jogadores")).find(row => row.nome === "Foto Sem Bitmap E2E");
     const media = await HeadCoachMedia.listForSubject("player", player.id);
     const photo = media.find(item => item.note === "Foto de perfil do atleta");
-    return { player, photo };
+    const displayed = (await applyPlayerProfilePhotos([player]))[0];
+    return { player, displayedPhoto: displayed.foto, photo };
   });
-  expect(saved.player.foto).toMatch(/^data:image\/jpeg;base64,/);
-  expect(saved.photo.data_url).toBe(saved.player.foto);
+  expect(saved.player.foto).toBeNull();
+  expect(saved.displayedPhoto).toMatch(/^data:image\/jpeg;base64,/);
+  await expect(page.locator(".hero-main .avatar img")).toHaveAttribute("src", /^data:image\/jpeg;base64,/);
   expect(saved.photo.size).toBeLessThan(5 * 1024 * 1024);
   expect(saved.photo.sync_dirty).toBe(true);
 });

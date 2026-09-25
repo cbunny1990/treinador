@@ -307,15 +307,18 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
       const player = await DB.obter("jogadores", playerId);
       const photo = (await HeadCoachMedia.listForSubject("player", playerId))
         .find((item) => item.note === "Foto de perfil do atleta");
-      return { playerDirty: player.sync_dirty, playerPhoto: player.foto, ref: player.profile_media_ref,
+      const displayed = (await applyPlayerProfilePhotos([player]))[0];
+      return { playerDirty: player.sync_dirty, playerPhoto: player.foto, displayedPhoto: displayed.foto, ref: player.profile_media_ref,
         id: photo?.id, syncId: photo?.sync_id, dataUrl: photo?.data_url, dirty: photo?.sync_dirty,
         fileName: photo?.file_name, mimeType: photo?.mime_type };
     }, phonePlayerId);
     expect(queuedPhoto.playerDirty).toBe(true);
-    expect(queuedPhoto.playerPhoto).toMatch(/^data:image\/png;base64,/);
+    expect(queuedPhoto.playerPhoto).toBeNull();
+    expect(queuedPhoto.displayedPhoto).toMatch(/^data:image\/png;base64,/);
     expect(queuedPhoto.syncId).toMatch(/^[0-9a-f-]{36}$/i);
     expect(queuedPhoto.ref).toBe(queuedPhoto.syncId);
-    expect(queuedPhoto.dataUrl).toBe(queuedPhoto.playerPhoto);
+    expect(queuedPhoto.dataUrl).toMatch(/^data:image\/png;base64,/);
+    expect(queuedPhoto.playerPhoto).not.toBe(queuedPhoto.dataUrl);
     expect(queuedPhoto.dirty).toBe(true);
     expect(queuedPhoto.fileName).toBe("perfil.png");
     expect(queuedPhoto.mimeType).toBe("image/png");
@@ -342,26 +345,30 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
       const result = await RemoteWorkspace.syncNow();
       const photo = (await DB.listar("media_items")).find((item) => item.sync_id === syncId);
       const player = (await DB.listar("jogadores")).find((item) => item.sync_id === playerSyncId);
+      const displayed = (await applyPlayerProfilePhotos([player]))[0];
       return { conflicts: result.conflicts.filter((item) => item.sync_id === syncId),
-        photoUrl: photo?.url, playerPhoto: player?.foto, ref: player?.profile_media_ref };
+        photoUrl: photo?.url, playerPhoto: player?.foto, displayedPhoto: displayed.foto, ref: player?.profile_media_ref };
     }, { syncId: profilePhotoSyncId, playerSyncId: photoPlayerSyncId });
     expect(desktopPhotoState.conflicts).toEqual([]);
     expect(desktopPhotoState.photoUrl).toMatch(/\/storage\/v1\/object\/sign\/team-media\//);
-    expect(desktopPhotoState.playerPhoto).toMatch(/\/storage\/v1\/object\/sign\/team-media\//);
+    expect(desktopPhotoState.playerPhoto).toBeNull();
+    expect(desktopPhotoState.displayedPhoto).toMatch(/\/storage\/v1\/object\/sign\/team-media\//);
     expect(desktopPhotoState.ref).toBe(profilePhotoSyncId);
 
     const phonePhotoState = await phone.evaluate(async ({ syncId, playerSyncId }) => {
       const result = await RemoteWorkspace.syncNow();
       const media = (await DB.listar("media_items")).find((item) => item.sync_id === syncId);
       const player = (await DB.listar("jogadores")).find((item) => item.sync_id === playerSyncId);
+      const displayed = (await applyPlayerProfilePhotos([player]))[0];
       const mediaConflicts = result.conflicts.filter((item) => item.sync_id === syncId);
-      return { mediaConflicts, title: media?.title, dataUrl: media?.data_url, url: media?.url, playerPhoto: player?.foto, storagePath: media?.storage_path };
+      return { mediaConflicts, title: media?.title, dataUrl: media?.data_url, url: media?.url, playerPhoto: player?.foto, displayedPhoto: displayed.foto, storagePath: media?.storage_path };
     }, { syncId: profilePhotoSyncId, playerSyncId: photoPlayerSyncId });
     expect(phonePhotoState.mediaConflicts).toEqual([]);
     expect(phonePhotoState.title).toBe("Foto · Atleta de foto PWA");
     expect(phonePhotoState.dataUrl).toMatch(/^data:image\/png;base64,/);
     expect(phonePhotoState.url).toMatch(/\/storage\/v1\/object\/sign\/team-media\//);
-    expect(phonePhotoState.playerPhoto).toMatch(/^data:image\/png;base64,/);
+    expect(phonePhotoState.playerPhoto).toBeNull();
+    expect(phonePhotoState.displayedPhoto).toMatch(/^data:image\/png;base64,/);
     expect(phonePhotoState.storagePath).toBe(remotePhoto.data.storage_path);
 
     await mobileContext.setOffline(true);
