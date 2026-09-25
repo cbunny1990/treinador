@@ -100,7 +100,10 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     const seededPlanning = await admin.from("workspace_records").insert([
       {
         id: completedTrainingRef, team_id: teams[0], kind: "training", actor_type: "human",
-        payload: { data: "2026-09-22", status: "ready", session: { status: "completed", blocks: [{ exercise_ref: exerciseRef, exercise_name: "Apoio após passe" }] } },
+        payload: { data: "2026-09-22", status: "ready", session: { status: "completed", blocks: [
+          { key: "recorded-support", exercise_ref: exerciseRef, exercise_name: "Apoio após passe", done: true, elapsed_ms: 60000 },
+          { key: "untouched-finishing", exercise_ref: uuid(), exercise_name: "Remate", done: false, elapsed_ms: 0 },
+        ] } },
       },
       {
         id: unstartedTrainingRef, team_id: teams[0], kind: "training", actor_type: "human",
@@ -281,8 +284,13 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     assert.equal(planningContext.missing_data.target_training_exercises, false);
     assert.deepEqual(planningContext.recent_trainings.map((row) => row.ref), [completedTrainingRef]);
     assert.ok(planningContext.recent_trainings.every((row) => row.status === "completed"));
-    assert.deepEqual(planningContext.recent_exercise_use, [{ exercise_ref: exerciseRef, name: "Apoio após passe", uses: 1, last_used: "2026-09-22" }]);
-    assert.match(planningContext.guidance, /não inclui o plano alvo nem sessões por iniciar/);
+    assert.deepEqual(planningContext.recent_exercise_use, [{
+      exercise_ref: exerciseRef, name: "Apoio após passe", uses: 1, last_used: "2026-09-22",
+      usage_evidence: [{ training_ref: completedTrainingRef, training_date: "2026-09-22", block_ref: "recorded-support" }],
+    }]);
+    assert.equal(planningContext.recent_exercise_use_status, "recorded");
+    assert.equal(planningContext.missing_data.recent_exercise_use, false);
+    assert.match(planningContext.guidance, /não inclui o plano alvo, blocos intocados nem sessões por iniciar/);
     assert.equal(planningContext.recent_matches.length, 5);
     assert.equal(planningContext.evidence_status, "provider_not_configured");
     assert.equal(planningContext.missing_data.target_training, false);
