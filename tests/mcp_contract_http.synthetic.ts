@@ -102,6 +102,7 @@ try {
     arguments: { player_ref: archivePlayerRef },
   });
   check(!archivedPlayer.result.isError, "The archived athlete read failed over MCP HTTP.");
+  check(archivedPlayer.result.structuredContent.historical_only === true && archivedPlayer.result.structuredContent.archive_status === "archived", "The MCP archive result did not identify its contents as historical only.");
   check(archivedPlayer.result.structuredContent.player.ref === archivePlayerRef, "The MCP archive result lost the stable athlete UUID.");
   check(archivedPlayer.result.structuredContent.goals[0].history.length === 0, "The MCP archive result changed the historical goals.");
   check(workspaceQueries.length === 1, "The MCP archive read did not make exactly one scoped data query.");
