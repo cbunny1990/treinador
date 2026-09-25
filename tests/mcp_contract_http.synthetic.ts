@@ -57,11 +57,15 @@ globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     workspaceQueries.push(url.searchParams);
     const query = url.searchParams;
     check(query.get("team_id") === `eq.${connector.team_id}`, "Archived athlete read was not scoped to the authorized team.");
-    check(query.get("kind") === "eq.document", "Archived athlete read queried a non-document record.");
-    check(query.get("payload->>type") === "eq.player_archive", "Archived athlete read did not filter archive documents.");
-    check(query.get("payload->>external_key") === `eq.player-archive:default:${archivePlayerRef}`, "Archived athlete read did not use the exact stable athlete UUID.");
     check(query.get("deleted_at") === "is.null", "Archived athlete read included deleted archive documents.");
-    return Response.json([archiveRecord]);
+    const kind = query.get("kind");
+    check(["eq.document", "eq.match", "eq.training"].includes(kind || ""), "Archived athlete read queried an unrelated record type.");
+    if (kind === "eq.document") {
+      check(query.get("payload->>type") === "eq.player_archive", "Archived athlete read did not filter archive documents.");
+      check(query.get("payload->>external_key") === `eq.player-archive:default:${archivePlayerRef}`, "Archived athlete read did not use the exact stable athlete UUID.");
+      return Response.json([archiveRecord]);
+    }
+    return Response.json([]);
   }
   if (url.origin === "http://127.0.0.1") return originalFetch(input, init);
   throw new Error("external_network_disabled_in_synthetic_contract_test");
@@ -105,7 +109,8 @@ try {
   check(archivedPlayer.result.structuredContent.historical_only === true && archivedPlayer.result.structuredContent.archive_status === "archived", "The MCP archive result did not identify its contents as historical only.");
   check(archivedPlayer.result.structuredContent.player.ref === archivePlayerRef, "The MCP archive result lost the stable athlete UUID.");
   check(archivedPlayer.result.structuredContent.goals[0].history.length === 0, "The MCP archive result changed the historical goals.");
-  check(workspaceQueries.length === 1, "The MCP archive read did not make exactly one scoped data query.");
+  check(archivedPlayer.result.structuredContent.participation_history.player_ref === archivePlayerRef, "The MCP archive result did not resolve participation by stable athlete UUID.");
+  check(workspaceQueries.length === 3, "The MCP archive read did not query the archive and its historical game/training records.");
 
   const refused = await call("tools/call", {
     name: "evaluate_cross_session_pattern",
