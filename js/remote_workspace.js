@@ -1192,8 +1192,13 @@ const RemoteWorkspace = {
       }
     }
 
-    const refreshed = await remoteReadTeamRows(client, "workspace_records", remoteTeamId);
-    remoteMap = new Map(refreshed.map((x) => [x.id, x]));
+    // The initial snapshot plus acknowledged local writes is authoritative when
+    // there was no conflict. Keep the extra read only when a concurrent version
+    // needs a fresh remote state for the conflict review.
+    if (result.conflicts.length) {
+      const refreshed = await remoteReadTeamRows(client, "workspace_records", remoteTeamId);
+      remoteMap = new Map(refreshed.map((x) => [x.id, x]));
+    }
 
     const pendingDeletes = new Set((await DB.listar("sync_tombstones"))
       .filter((item) => !item.remote_team_id || item.remote_team_id === remoteTeamId)
@@ -1549,8 +1554,11 @@ const RemoteWorkspace = {
       result.pushed++;
     }
 
-    const refreshed = await remoteReadTeamRows(client, "media_assets", remoteTeamId);
-    remoteMap = new Map(refreshed.map((x) => [x.id, x]));
+    // As with records, retain the second full read only to refresh a conflict.
+    if (result.conflicts.length) {
+      const refreshed = await remoteReadTeamRows(client, "media_assets", remoteTeamId);
+      remoteMap = new Map(refreshed.map((x) => [x.id, x]));
+    }
     localMap = new Map([...await this._localBySyncId("media_items")].filter(([, row]) => remoteRowBelongsToTeam(row, remoteTeamId)));
     const pendingDeletes = new Set((await DB.listar("sync_tombstones"))
       .filter((item) => item.store === "media_items" && (!item.remote_team_id || item.remote_team_id === remoteTeamId))

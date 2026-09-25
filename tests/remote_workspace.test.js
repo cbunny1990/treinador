@@ -1272,6 +1272,63 @@ async function withTwoDeviceSync(run, options = {}) {
   }
 }
 
+function countRemoteSnapshotStarts(remote, table) {
+  return remote.queryLog.filter((query) => query.table === table && query.action === "select"
+    && query.projection === "*"
+    && query.filters.some(([op, key]) => op === "eq" && key === "team_id")
+    && !query.filters.some(([op, key]) => op === "gt" && key === "id")).length;
+}
+
+test("sync reutiliza o snapshot quando está limpo e só volta a ler a tabela para rever conflitos", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    useDevice(0);
+    await devices[0].criar("jogos", {
+      team_id: "default", adversario: "Jogo novo", external_key: "sync-single-snapshot-match", sync_dirty: true,
+    });
+    await devices[0].criar("media_items", {
+      team_id: "default", subject_type: "team", subject_id: "default", type: "file",
+      title: "Media nova", external_url: "https://example.test/sync-single-snapshot", sync_dirty: true,
+    });
+
+    remote.queryLog.length = 0;
+    const records = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(records.pushed, 1);
+    assert.equal(records.conflicts.length, 0);
+    assert.equal(countRemoteSnapshotStarts(remote, "workspace_records"), 1,
+      "snapshot inicial e respostas de escrita bastam quando não há conflito");
+
+    remote.queryLog.length = 0;
+    const media = await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+    assert.equal(media.pushed, 1);
+    assert.equal(media.conflicts.length, 0);
+    assert.equal(countRemoteSnapshotStarts(remote, "media_assets"), 1);
+
+    const remoteMatchId = "84000000-0000-4000-8000-000000000001";
+    remote.rows.push({ id: remoteMatchId, team_id: remoteTeamId, kind: "match",
+      payload: { adversario: "Alterado remotamente" }, updated_at: "v-current", deleted_at: null });
+    await devices[0].criar("jogos", { team_id: "default", sync_id: remoteMatchId,
+      remote_team_id: remoteTeamId, remote_updated_at: "v-old", sync_dirty: true,
+      adversario: "Alterado localmente" });
+    remote.queryLog.length = 0;
+    const recordConflict = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(recordConflict.conflicts[0]?.remote_updated_at, "v-current");
+    assert.equal(countRemoteSnapshotStarts(remote, "workspace_records"), 2,
+      "um conflito volta a ler o estado atual para que a decisão mostre a revisão correta");
+
+    const remoteMediaId = "85000000-0000-4000-8000-000000000001";
+    remote.mediaRows.push({ id: remoteMediaId, team_id: remoteTeamId, subject_type: "team",
+      subject_ref: remoteTeamId, media_type: "file", title: "Versão remota", external_url: "https://example.test/remote",
+      updated_at: "m-current", created_at: "m-created", deleted_at: null });
+    await devices[0].criar("media_items", { team_id: "default", sync_id: remoteMediaId,
+      remote_team_id: remoteTeamId, remote_updated_at: "m-old", sync_dirty: true,
+      subject_type: "team", subject_id: "default", type: "file", title: "Versão local" });
+    remote.queryLog.length = 0;
+    const mediaConflict = await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+    assert.equal(mediaConflict.conflicts[0]?.remote_updated_at, "m-current");
+    assert.equal(countRemoteSnapshotStarts(remote, "media_assets"), 2);
+  });
+});
+
 test("dois dispositivos sincronizam criação, edição e eliminação sem duplicar ou ressuscitar registos", async () => {
   await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
     useDevice(0);

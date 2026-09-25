@@ -282,6 +282,8 @@ Consolidação mais leve e recuperação de identidade (24/09/2026): a verifica�
 
 Consolidação para históricos grandes (25/09/2026): a verificação de registos já associados ao workspace consulta apenas as UUIDs locais, em lotes de até 100, em `workspace_records` e `media_assets`. Cada lote usa paginação por UUID, incluindo quando o limite configurado da API é inferior a 100. Não descarrega todos os IDs da equipa. A regressão simulou 1.007 IDs locais com limite de resposta 25; a integração PostgREST confirmou a presença de UUIDs numa página tardia num histórico de 1.007 registos. Conflitos, pertença da equipa e apagamentos continuam sujeitos às verificações existentes.
 
+Leituras completas durante a sync (25/09/2026): cada tabela começa com um snapshot remoto paginado. As escritas locais confirmadas atualizam esse mapa com a resposta do servidor; a app volta a descarregar a tabela apenas se a operação detetar um conflito e precisar da revisão remota atual para apresentar ao treinador. Alterações remotas concorrentes fora desse snapshot continuam a chegar por Realtime ou pela sincronização seguinte; nenhuma versão local ou remota é escolhida silenciosamente.
+
 Se o evento de atividade continua válido mas a sua origem local já não existe ou a UUID não pertence ao workspace selecionado, o sincronizador envia o evento com `entity_ref` vazio e guarda tipo, referência original e motivo em `_vision_coach_unresolved_origin`. A referência fica explícita como proveniência, nunca é convertida num vínculo remoto. O mesmo aviso é mostrado no Workspace e na Timeline. Referências ambíguas, de outra equipa ou de equipa desconhecida continuam bloqueadas. Cache PWA v119.
 
 ## Publicação rápida de imagens por IA
