@@ -87,6 +87,8 @@ try {
 
   const initialized = await call("initialize", { protocolVersion: "2025-11-25" });
   check(initialized.result.serverInfo.name === "vision-coach", "Unexpected MCP server identity.");
+  check(/weekday or relative date, call list_trainings to resolve the exact scheduled date, then call get_training_planning_context/i.test(initialized.result.instructions), "Missing route from an unspecified weekday to an exact training date.");
+  check(/if no unique matching session is available, ask which date rather than guessing/i.test(initialized.result.instructions), "MCP must not guess a date when a weekday has no unique scheduled session.");
   check(/first locate candidate citations with search_team_knowledge or get_cross_session_evidence/i.test(initialized.result.instructions), "Missing evidence-retrieval instruction.");
   check(/Never invent a source UUID, revision, field or quote/i.test(initialized.result.instructions), "Missing anti-fabrication instruction.");
   check(/category player_goal_archive or evidence type historical_coach_goal/i.test(initialized.result.instructions), "Missing instruction to preserve archived athlete goals as historical evidence.");

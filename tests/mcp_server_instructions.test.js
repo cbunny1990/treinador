@@ -6,6 +6,9 @@ const { SERVER_INSTRUCTIONS } = require("../supabase/functions/vision-coach-mcp/
 
 test("MCP directs hybrid RAG questions to context tools and structured facts to exact reads", () => {
   assert.match(SERVER_INSTRUCTIONS, /training date, call get_training_planning_context first/i);
+  assert.match(SERVER_INSTRUCTIONS, /weekday or relative date, call list_trainings to resolve the exact scheduled date, then call get_training_planning_context/i);
+  assert.match(SERVER_INSTRUCTIONS, /if no unique matching session is available, ask which date rather than guessing/i);
+  assert.match(SERVER_INSTRUCTIONS, /Treat the listed plan as intent, not proof that training occurred/i);
   assert.match(SERVER_INSTRUCTIONS, /recent games, call get_recent_match_context/i);
   assert.match(SERVER_INSTRUCTIONS, /search_team_knowledge only for other text-based team history/i);
   assert.match(SERVER_INSTRUCTIONS, /roster and availability, use list_players/i);
