@@ -3,6 +3,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
 const { createClient } = require("@supabase/supabase-js");
 const { RemoteWorkspace } = require("../js/remote_workspace.js");
 const MatchVisual = require("../js/match_visual.js");
@@ -85,6 +87,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     return { user: signedIn.data.user, client };
   };
   let teamId;
+  let exerciseImagePath;
   try {
     const owner = await makeUser("owner");
     const coach = await makeUser("coach");
@@ -202,9 +205,23 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
       description: "Momento a remover no telemóvel", relation_type: "none",
     } }, { now: "2026-09-03T12:02:00.000Z" });
     await devices[0].criar("jogos", evidenceMatch);
+    const approvedImageBytes = fs.readFileSync(path.join(__dirname, "../assets/exercises/approved-20260922/01_ativacao_conduzir_passar_dar_opcao.png"));
+    const approvedImageSha = crypto.createHash("sha256").update(approvedImageBytes).digest("hex");
+    const approvedImageInfo = {
+      width: approvedImageBytes.readUInt32BE(16), height: approvedImageBytes.readUInt32BE(20),
+      mime_type: "image/png", size_bytes: approvedImageBytes.length, sha256: approvedImageSha,
+      file_name: "01_ativacao_conduzir_passar_dar_opcao.png", source: "approved_original_upload",
+    };
+    exerciseImagePath = `${teamId}/exercise-images/${refs.exercise}/original.png`;
+    const exerciseImageUpload = await admin.storage.from("team-media").upload(exerciseImagePath, approvedImageBytes, {
+      contentType: "image/png", upsert: false,
+    });
+    assert.ifError(exerciseImageUpload.error);
     const exerciseId = await devices[0].criar("exercicios", {
       team_id: "local-coach", sync_id: refs.exercise, remote_team_id: teamId, sync_dirty: true,
       workspace_v2: true, external_key: "local-sync-passe-apoio", nome: "Passe + apoio",
+      visual_storage_bucket: "team-media", visual_storage_path: exerciseImagePath,
+      visual_image: approvedImageInfo, visual_removed: false,
     });
     await devices[0].criar("treinos", {
       team_id: "local-coach", sync_id: refs.historyTraining, remote_team_id: teamId, sync_dirty: true,
@@ -236,6 +253,11 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     const pcHistoryTrainingAfterPush = (await devices[0].listar("treinos")).find((row) => row.sync_id === refs.historyTraining);
     assert.equal(pcHistoryTrainingAfterPush.blocos[0].exercise_ref, refs.exercise);
     assert.equal(pcHistoryTrainingAfterPush.session.blocks[0].exercise_ref, refs.exercise);
+    const remoteExercise = await owner.client.from("workspace_records").select("payload").eq("id", refs.exercise).single();
+    assert.ifError(remoteExercise.error);
+    assert.equal(remoteExercise.data.payload.visual_storage_path, exerciseImagePath);
+    assert.equal(remoteExercise.data.payload.visual_image.sha256, approvedImageSha);
+    assert.equal(remoteExercise.data.payload.visual_url, undefined, "Signed download URLs must never be synchronized.");
 
     const orphanActivityId = crypto.randomUUID();
     await devices[0].criar("activity_items", {
@@ -287,6 +309,25 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.deepEqual(phoneLegacyPlayerRef.callup.player_ids, [phonePlayer.sync_id]);
     assert.equal(phoneLegacyPlayerRef.lineup.goalkeeper_id, phonePlayer.sync_id);
     assert.notEqual(phoneDeleted.id, deletedId);
+    assert.equal(phoneExercise.visual_storage_path, exerciseImagePath);
+    assert.equal(phoneExercise.visual_image.sha256, approvedImageSha);
+    assert.equal(phoneExercise.visual_url, undefined, "The phone receives only the private object identity, not a signed URL.");
+    const publicExerciseImage = await fetch(`${url}/storage/v1/object/public/team-media/${exerciseImagePath}`);
+    assert.equal(publicExerciseImage.ok, false, "Approved originals stay in the private team bucket.");
+    const [pcExerciseImageUrl, phoneExerciseImageUrl] = await Promise.all([
+      owner.client.storage.from("team-media").createSignedUrl(exerciseImagePath, 60),
+      coach.client.storage.from("team-media").createSignedUrl(exerciseImagePath, 60),
+    ]);
+    assert.ifError(pcExerciseImageUrl.error);
+    assert.ifError(phoneExerciseImageUrl.error);
+    const [pcExerciseImage, phoneExerciseImage] = await Promise.all([
+      fetch(pcExerciseImageUrl.data.signedUrl), fetch(phoneExerciseImageUrl.data.signedUrl),
+    ]);
+    assert.equal(pcExerciseImage.status, 200);
+    assert.equal(phoneExerciseImage.status, 200);
+    const [pcExerciseBytes, phoneExerciseBytes] = await Promise.all([pcExerciseImage.arrayBuffer(), phoneExerciseImage.arrayBuffer()]);
+    assert.equal(crypto.createHash("sha256").update(Buffer.from(pcExerciseBytes)).digest("hex"), approvedImageSha);
+    assert.equal(crypto.createHash("sha256").update(Buffer.from(phoneExerciseBytes)).digest("hex"), approvedImageSha);
     assert.equal(phoneHistoryTraining.blocos[0].exercise_ref, phoneExercise.sync_id);
     assert.equal(phoneHistoryTraining.session.blocks[0].exercise_ref, phoneExercise.sync_id);
     assert.equal(JSON.parse(phoneProposal.body).agent_proposal.status, "proposed");
@@ -498,6 +539,10 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     globalThis.DEFAULT_TEAM_ID = original.team;
     globalThis.mediaSubjectKey = original.subjectKey;
     if (teamId) {
+      if (exerciseImagePath) {
+        const removedExerciseImage = await admin.storage.from("team-media").remove([exerciseImagePath]);
+        assert.ifError(removedExerciseImage.error);
+      }
       const { data: mediaRows, error: mediaError } = await admin.from("media_assets").select("storage_path").eq("team_id", teamId);
       assert.ifError(mediaError);
       const paths = [...new Set((mediaRows || []).map((row) => row.storage_path).filter(Boolean))];
