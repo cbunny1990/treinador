@@ -267,16 +267,26 @@ function structuredGameModel(row,players){
   const terms=redactionTerms(players.map(x=>x.payload?.nome)),rawTitle=text(p.title||p.nome,160),title=rawTitle&&!containsSensitivePersonalText(rawTitle)?redactNamesFromText(rawTitle,terms)||null:null;
   return {ref:row.id,updated_at:row.updated_at,title,provenance:'coach_defined_model',principles:leaves.filter(x=>!containsSensitivePersonalText(x.text)).map(x=>({field:x.path,text:redactNamesFromText(x.text,terms)})).filter(x=>x.text.trim())};
 }
+function archivedPlayerName(payload){
+  if(obj(payload).type!=='player_archive')return null;
+  let body=payload.body;
+  if(typeof body==='string'){try{body=JSON.parse(body);}catch{return null;}}
+  return text(obj(obj(body).player).name,160)||null;
+}
 async function loadTeamRedactionNames(admin,teamId){
   if(typeof admin?.from!=='function')throw new Error('team_knowledge_query_privacy_metadata_unavailable');
   const names=[];
   try{
-    for(let from=0;;from+=150){
-      const {data,error}=await admin.from('workspace_records').select('payload').eq('team_id',teamId).eq('kind','player').range(from,from+149);
-      if(error)throw error;
-      const page=arr(data);
-      names.push(...page.map(row=>row.payload?.nome).filter(name=>typeof name==='string'));
-      if(page.length<150)break;
+    for(const kind of ['player','document']){
+      for(let from=0;;from+=150){
+        let query=admin.from('workspace_records').select('payload').eq('team_id',teamId).eq('kind',kind);
+        if(kind==='document')query=query.eq('payload->>type','player_archive');
+        const {data,error}=await query.range(from,from+149);
+        if(error)throw error;
+        const page=arr(data);
+        names.push(...page.map(row=>kind==='player'?row.payload?.nome:archivedPlayerName(row.payload)).filter(name=>typeof name==='string'));
+        if(page.length<150)break;
+      }
     }
   }catch{
     throw new Error('team_knowledge_query_privacy_metadata_unavailable');
@@ -338,15 +348,7 @@ export async function indexPendingTeamKnowledge(admin,teamId,{provider={},limit=
       const {data:team,error:teamError}=await admin.from('teams').select('metadata').eq('id',teamId).maybeSingle();
       if(teamError)throw teamError;
       ageGroup=text(team?.metadata?.escalao||team?.metadata?.age_group,80)||null;
-      // Deleted players are read only to redact their names from retained match/training notes.
-      // Page the full team history so old names cannot escape redaction after large roster turnover.
-      for(let from=0;;from+=150){
-        const {data:players,error:playersError}=await admin.from('workspace_records').select('payload').eq('team_id',teamId).eq('kind','player').range(from,from+149);
-        if(playersError)throw playersError;
-        const page=arr(players);
-        redactNames.push(...page.map(x=>x.payload?.nome).filter(Boolean));
-        if(page.length<150)break;
-      }
+      redactNames=await loadTeamRedactionNames(admin,teamId);
     }
   }catch(error){
     await admin.rpc('release_team_knowledge_jobs',{p_team_id:teamId,p_claims:claimed.map(x=>({source_id:x.source_id,claim_token:x.claim_token})),p_error:String(error?.message||'indexing_metadata_failed').slice(0,240)});

@@ -14,7 +14,7 @@ function withIndexingBacklog(admin){
 }
 function fakeAdmin(rows=[match()]){
  const calls=[],fromCalls=[];
- return {calls,fromCalls,from(table){const filters=[];let rangeStart=0,rangeEnd=Infinity;fromCalls.push({table,filters});const query={select(){return this;},eq(k,v){filters.push(r=>r[k]===v);return this;},is(k,v){filters.push(r=>v===null?r[k]==null:r[k]===v);return this;},limit(){return this;},range(start,end){rangeStart=start;rangeEnd=end;return this;},maybeSingle(){return Promise.resolve({data:{metadata:{escalao:'Sub-8'}},error:null});},then(resolve){return Promise.resolve({data:rows.filter(r=>filters.every(f=>f(r))).slice(rangeStart,rangeEnd+1).map(r=>({payload:structuredClone(r.payload)}))}).then(resolve);}};return query;},async rpc(name,args){calls.push({name,args});
+ return {calls,fromCalls,from(table){const filters=[];let rangeStart=0,rangeEnd=Infinity;fromCalls.push({table,filters});const value=(row,key)=>key.startsWith('payload->>')?row.payload?.[key.slice('payload->>'.length)]:row[key];const query={select(){return this;},eq(k,v){filters.push(r=>value(r,k)===v);return this;},is(k,v){filters.push(r=>v===null?value(r,k)==null:value(r,k)===v);return this;},limit(){return this;},range(start,end){rangeStart=start;rangeEnd=end;return this;},maybeSingle(){return Promise.resolve({data:{metadata:{escalao:'Sub-8'}},error:null});},then(resolve){return Promise.resolve({data:rows.filter(r=>filters.every(f=>f(r))).slice(rangeStart,rangeEnd+1).map(r=>({payload:structuredClone(r.payload)}))}).then(resolve);}};return query;},async rpc(name,args){calls.push({name,args});
     if(name==='claim_team_knowledge_jobs')return {data:rows.filter(x=>x.team_id===args.p_team_id&&!x.deleted_at&&['player','match','training','memory','document','game_model','exercise'].includes(x.kind)).map(x=>({source_id:x.id,source_updated_at:x.updated_at,source_kind:x.kind,payload:x.payload,claim_token:'90000000-0000-4000-8000-000000000009'}))};
     if(name==='replace_team_knowledge_source')return {data:args.p_chunks.length};
     if(name==='release_team_knowledge_jobs')return {data:args.p_claims.length};
@@ -102,7 +102,7 @@ test('chunks use an allowlist of coaching text and preserve epistemic provenance
  assert.deepEqual(rag.teamKnowledgeTestAPI.chunkRecord({...match(),kind:'player'}),[]);
 });
 
-test('RAG indexes coach video evidence with stable clip links but never embeds the video URL',()=>{
+test('RAG indexes coach video evidence with stable clip links but never embeds the video URL',async()=>{
  const memoryRef='40000000-0000-4000-8000-000000000004',source=match();
  source.payload.match_evidence={schema:'vision-match-evidence@1',revision:1,moments:[
   {id:'moment-video-1',url:'https://private.example/video?token=never-embed-this',seconds:83,category:'loss',player_ref:PLAYER,
@@ -118,6 +118,14 @@ test('RAG indexes coach video evidence with stable clip links but never embeds t
  assert.equal(moment.metadata.video_relation_type,'observation');assert.equal(moment.metadata.video_relation_ref,memoryRef);
  assert.deepEqual(moment.metadata.related_refs,[{type:'memory',id:memoryRef,field:null,event_ref:'moment-video-1'}]);
  assert.equal(chunks.some(x=>x.source_path==='match_evidence.moments[1]'),false,'observações de saúde não podem entrar nos embeddings');
+ const player={id:PLAYER,team_id:TEAM,kind:'player',updated_at:'v1',payload:{nome:'Maria Silva',development_goals:{items:[]}}};
+ const db=fakeAdmin([source,player]),provider=fakeProvider();
+ const indexed=await rag.indexPendingTeamKnowledge(db,TEAM,{provider});
+ assert.equal(indexed.indexed_sources,2);assert.equal(indexed.indexed_chunks,chunks.length);
+ const saved=db.calls.find(call=>call.name==='replace_team_knowledge_source').args.p_chunks;
+ const savedMoment=saved.find(item=>item.source_path==='match_evidence.moments[0]');
+ assert.ok(savedMoment);assert.equal(savedMoment.metadata.video_moment_ref,'moment-video-1');
+ assert.doesNotMatch(JSON.stringify(provider.requests),/private\.example|never-embed-this|Maria Silva/);
 });
 
 test('RAG indexes the coach-entered opponent analysis and tactical preparation with distinct provenance',()=>{
@@ -367,7 +375,10 @@ test('hybrid search reuses scoped roster names within one MCP request',async()=>
  const db=fakeAdmin([]),provider=fakeProvider();
  await rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query:'O que mudou no jogo?'},{provider});
  await rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query:'O que melhorar no treino?'},{provider});
- assert.equal(db.fromCalls.filter(call=>call.table==='workspace_records').length,1,'two retrievals in one hybrid operation should read names once');
+ const rosterReads=db.fromCalls.filter(call=>call.table==='workspace_records');
+ assert.equal(rosterReads.length,2,'two retrievals in one hybrid operation should load the active and archived names only once');
+ assert.equal(rosterReads.filter(call=>call.filters.every(filter=>filter({team_id:TEAM,kind:'player'}))).length,1);
+ assert.equal(rosterReads.filter(call=>call.filters.every(filter=>filter({team_id:TEAM,kind:'document',payload:{type:'player_archive'}}))).length,1);
  assert.equal(provider.requests.length,2,'each query still receives its own embedding');
 });
 
@@ -423,6 +434,28 @@ test('indexer redacts names of deleted players from retained match notes without
  assert.ok(db.fromCalls[1].filters.every(filter=>filter({team_id:TEAM,kind:'player'})));
 });
 
+test('reindex after definitive player removal redacts the name from retained match and video notes using the archive',async()=>{
+ const source=match(),archive={id:'40000000-0000-4000-8000-000000000004',team_id:TEAM,kind:'document',updated_at:'v1',payload:{
+  type:'player_archive',title:'Arquivo histórico',body:JSON.stringify({schema:'vision-player-archive@1',player:{ref:PLAYER,name:'Maria Silva'},development_goals:{items:[]}})
+ }};
+ source.payload.post_game.analysis.fields.summary='Maria Silva perdeu a bola na saída curta.';
+ source.payload.match_evidence={moments:[{id:'archived-player-clip',url:'https://private.example/match',seconds:34,category:'loss',player_ref:PLAYER,description:'Maria Silva perde a bola após a receção.',observation:'Apoio atrasado.'}]};
+ const db=fakeAdmin([source,archive]),provider=fakeProvider();
+ const result=await rag.indexPendingTeamKnowledge(db,TEAM,{provider,limit:16});
+ assert.equal(result.indexed_sources,2);
+ const embedded=provider.requests.flatMap(request=>request.input).join('\n');
+ assert.doesNotMatch(embedded,/Maria Silva|private\.example/);
+ assert.match(embedded,/atleta perdeu a bola na saída curta/i);
+ assert.match(embedded,/atleta perde a bola após a receção/i);
+ const playerQueries=db.fromCalls.filter(call=>call.table==='workspace_records');
+ assert.ok(playerQueries.some(call=>call.filters.every(filter=>filter({team_id:TEAM,kind:'document',payload:{type:'player_archive'}}))));
+ const queryDb=fakeAdmin([archive]),queryProvider=fakeProvider();
+ await rag.executeTeamKnowledgeTool(queryDb,connector,'search_team_knowledge',{query:'O que aconteceu com Maria Silva?'},{provider:queryProvider});
+ const safeQuery=queryProvider.requests.at(-1).input[0];
+ assert.doesNotMatch(safeQuery,/Maria|Silva/);assert.match(safeQuery,/atleta/i);
+ assert.equal(queryDb.calls.find(call=>call.name==='search_team_knowledge_chunks').args.p_query,safeQuery);
+});
+
 test('indexer redacts historical names beyond the first paged roster batch',async()=>{
  const players=Array.from({length:151},(_,i)=>({id:`30000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`,team_id:TEAM,kind:'player',deleted_at:'2026-09-23T10:00:00.000Z',updated_at:`v${i}`,payload:{nome:i===150?'Nome Histórico Longe':'Atleta Apagado '+i}}));
  const source=match();source.payload.post_game.analysis.fields.summary='Nome Histórico Longe falhou o passe.';
@@ -435,7 +468,10 @@ test('indexer redacts historical names beyond the first paged roster batch',asyn
  assert.match(indexedContent,/atleta falhou o passe/i);
  assert.doesNotMatch(indexedContent,/Nome Histórico Longe/i);
  assert.doesNotMatch(provider.requests.flatMap(request=>request.input).join('\n'),/Nome Histórico Longe/i);
- assert.equal(db.fromCalls.filter(call=>call.table==='workspace_records').length,2);
+  const rosterReads=db.fromCalls.filter(call=>call.table==='workspace_records');
+  assert.equal(rosterReads.length,3,'the full active/deleted-player pages and archive names must be loaded');
+  assert.equal(rosterReads.filter(call=>call.filters.every(filter=>filter({team_id:TEAM,kind:'player'}))).length,2);
+  assert.equal(rosterReads.filter(call=>call.filters.every(filter=>filter({team_id:TEAM,kind:'document',payload:{type:'player_archive'}}))).length,1);
 });
 
 test('indexer releases only claimed leases after provider failure so newer revisions can retry immediately',async()=>{
