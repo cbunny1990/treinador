@@ -64,7 +64,11 @@
     if(op==='dismiss'&&!confirm('Apagar a proposta? A avaliação e os exercícios ficam preservados.'))return;
     el.disabled=true;try{await run(op,{confirmed:op==='approve'||op==='dismiss'});}finally{el.disabled=false;}
   });
-  window.addEventListener('visioncoach:sync-complete',()=>{if(current&&!busy&&location.hash.startsWith('#/continuidade/'))error('Existem dados recebidos. Os ajustes não guardados foram preservados; volta a abrir esta área antes de aprovar.');});
+  window.addEventListener('visioncoach:sync-complete',()=>{
+    if(!current||busy||!location.hash.startsWith('#/continuidade/'))return;
+    if(document.querySelector('[data-continuity-form][data-dirty="true"]')){error('Existem dados recebidos. Os ajustes não guardados foram preservados; volta a abrir esta área antes de aprovar.');return;}
+    void view(current.id).catch(err=>error(err.message));
+  });
   window.addEventListener('hashchange',()=>{if(!location.hash.startsWith('#/continuidade/')){current=null;turn++;}});
   root.TrainingContinuityUI={view,summary};
 })(globalThis);
