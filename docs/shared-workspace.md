@@ -280,6 +280,8 @@ Quando uma atividade antiga aponta para uma chave externa textual, o sincronizad
 
 Consolidação mais leve e recuperação de identidade (24/09/2026): a verificação de equipa para registos locais não ligados ao workspace consulta UUIDs remotos em lotes de até 100, em vez de uma chamada por registo; aplica-se a dados de jogo/treino, media e atividade. O arranque não agenda uma sync em paralelo à consolidação emitida pelo evento inicial de sessão. Um conflito `invalid_local_sync_id` pode procurar uma única correspondência por `external_key`, mostrar as duas cópias e ligar os IDs após confirmação do treinador, revalidando a versão antes da operação. Chave ausente ou resultado ambíguo mantém o conflito e não cria cópia nova.
 
+Consolidação para históricos grandes (25/09/2026): a verificação de registos já associados ao workspace consulta apenas as UUIDs locais, em lotes de até 100, em `workspace_records` e `media_assets`. Não descarrega todos os IDs da equipa. Uma integração com 1.007 registos por tabela confirmou que as últimas páginas continuam reconhecidas, tanto pela consolidação como pela leitura real do PostgREST. Conflitos, pertença da equipa e apagamentos continuam sujeitos às verificações existentes.
+
 Se o evento de atividade continua válido mas a sua origem local já não existe ou a UUID não pertence ao workspace selecionado, o sincronizador envia o evento com `entity_ref` vazio e guarda tipo, referência original e motivo em `_vision_coach_unresolved_origin`. A referência fica explícita como proveniência, nunca é convertida num vínculo remoto. O mesmo aviso é mostrado no Workspace e na Timeline. Referências ambíguas, de outra equipa ou de equipa desconhecida continuam bloqueadas. Cache PWA v119.
 
 ## Publicação rápida de imagens por IA
