@@ -4,7 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { parseMigrationList, migrationHistoryDrift, migrationDriftMessage } = require("../scripts/supabase-migration-preflight.mjs");
+const { parseMigrationList, migrationHistoryDrift, migrationDriftMessage, migrationDeploymentPlan, migrationDeploymentMessage } = require("../scripts/supabase-migration-preflight.mjs");
 
 const runner = fs.readFileSync(path.join(__dirname, "..", "scripts", "test-supabase-local.mjs"), "utf8");
 
@@ -40,4 +40,25 @@ test("Supabase migration preflight reports drift without applying or resetting",
   assert.match(message, /20260924100000/);
   assert.match(message, /20260924100001/);
   assert.match(message, /20260924100002 \/ 20260924100003/);
+});
+
+test("Supabase remote deployment audit blocks when a later migration is applied before earlier pending migrations", () => {
+  const rows = [
+    { local: "20260923120000", remote: "" },
+    { local: "20260923120100", remote: "" },
+    { local: "20260923145609", remote: "" },
+    { local: "20260924100000", remote: "" },
+    { local: "20260924100001", remote: "" },
+    { local: "20260924101056", remote: "" },
+    { local: "20260924110000", remote: "" },
+    { local: "20260924120000", remote: "" },
+    { local: "20260924144849", remote: "20260924144849" },
+  ];
+  const plan = migrationDeploymentPlan(rows);
+  assert.equal(plan.ready, false);
+  assert.equal(plan.latestApplied, "20260924144849");
+  assert.equal(plan.appliedOutOfOrder.length, 8);
+  assert.deepEqual(plan.unapplied, rows.slice(0, 8).map(row => row.local));
+  assert.match(migrationDeploymentMessage(plan), /não aplicou migrations nem alterou dados/);
+  assert.match(migrationDeploymentMessage(plan), /Revê a sequência/);
 });
