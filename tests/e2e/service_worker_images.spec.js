@@ -1,5 +1,8 @@
 const { test, expect } = require('@playwright/test');
 const visuals = require('../../js/exercise_visuals.js');
+const fs = require('node:fs');
+const path = require('node:path');
+const appVersion = fs.readFileSync(path.join(__dirname, '..', '..', 'index.html'), 'utf8').match(/const serviceWorkerVersion = (\d+);/)?.[1];
 
 test('service worker activates without original exercise images and caches them on demand for offline use', async ({ page }) => {
   await page.goto('/#/');
@@ -7,8 +10,8 @@ test('service worker activates without original exercise images and caches them 
   await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
 
   const images = visuals.approved.map(({ src, bytes }) => ({ path: src, bytes }));
-  const initial = await page.evaluate(async () => {
-    const shell = await caches.open('vision-coach-v167');
+  const initial = await page.evaluate(async (version) => {
+    const shell = await caches.open(`vision-coach-v${version}`);
     const images = await caches.open('vision-coach-approved-exercises-v1');
     return {
       teamCrestCached: !!(await shell.match(new URL('./assets/teams/14529_imgbank.png', location.href))),
@@ -16,7 +19,7 @@ test('service worker activates without original exercise images and caches them 
       shellImages: (await shell.keys()).filter(request => request.url.includes('/approved-20260922/')).length,
       cachedImages: (await images.keys()).length,
     };
-  });
+  }, appVersion);
   expect(initial).toEqual({ teamCrestCached: true, playerArchiveCached: true, shellImages: 0, cachedImages: 0 });
 
   const archiveScriptOnline = await page.evaluate(async () => {

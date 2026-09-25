@@ -1,6 +1,9 @@
 "use strict";
 
 const { test, expect } = require("@playwright/test");
+const fs = require("node:fs");
+const path = require("node:path");
+const appVersion = fs.readFileSync(path.join(__dirname, "..", "..", "index.html"), "utf8").match(/const serviceWorkerVersion = (\d+);/)?.[1];
 
 test("atividade sincronizada sem origem relacional apresenta a proveniência preservada", async ({ page }) => {
   await page.goto("/");
@@ -1630,7 +1633,7 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
   await expect(page.getByText(/Atualização disponível\. Termina ou guarda o trabalho em curso/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeDisabled();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
-  expect(await page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v167"))).toBeNull();
+  expect(await page.evaluate((version) => sessionStorage.getItem(`vision-sw-reloaded-v${version}`), appVersion)).toBeNull();
 });
 
 test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
@@ -1643,7 +1646,7 @@ test("service worker update after an older cached reload does not stay suppresse
   }).catch(() => {});
   await reloaded;
   await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate(() => sessionStorage.getItem("vision-sw-reloaded-v167"))).toBe("1");
+  await expect.poll(() => page.evaluate((version) => sessionStorage.getItem(`vision-sw-reloaded-v${version}`), appVersion)).toBe("1");
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {
