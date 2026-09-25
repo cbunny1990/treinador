@@ -956,14 +956,14 @@ const RemoteWorkspace = {
     }
     return payload;
   },
-  async _hydratePayload(kind, payload, remoteTeamId) {
+  async _hydratePayload(kind, payload, remoteTeamId, lookupCache = null) {
     const out = { ...(payload || {}) };
     if (Array.isArray(out.subject_refs)) {
       const refs = [];
       for (const ref of out.subject_refs) {
         refs.push({
           ...ref,
-          id: await this._localIdForRemoteRef(ref.type, String(ref.id), remoteTeamId),
+          id: await this._localIdForRemoteRef(ref.type, String(ref.id), remoteTeamId, lookupCache),
         });
       }
       out.subject_refs = refs;
@@ -973,7 +973,7 @@ const RemoteWorkspace = {
       for (const ref of out.refs) {
         refs.push({
           ...ref,
-          id: await this._localIdForRemoteRef(ref.type, String(ref.id), remoteTeamId),
+          id: await this._localIdForRemoteRef(ref.type, String(ref.id), remoteTeamId, lookupCache),
         });
       }
       out.refs = refs;
@@ -982,19 +982,19 @@ const RemoteWorkspace = {
       const mapIds = async (ids) => {
         const mapped = [];
         for (const id of (Array.isArray(ids) ? ids : [])) {
-          mapped.push(Number(await this._localIdForRemoteRef("memory", String(id), remoteTeamId)) || id);
+          mapped.push(Number(await this._localIdForRemoteRef("memory", String(id), remoteTeamId, lookupCache)) || id);
         }
         return mapped;
       };
       out.evidence_ids = await mapIds(out.evidence_ids);
       out.related_ids = await mapIds(out.related_ids);
       if (out.supersedes_id) {
-        const localId = await this._localIdForRemoteRef("memory", String(out.supersedes_id), remoteTeamId);
+        const localId = await this._localIdForRemoteRef("memory", String(out.supersedes_id), remoteTeamId, lookupCache);
         out.supersedes_id = Number(localId) || out.supersedes_id;
       }
     }
     if (kind === "game_model" && out.supersedes_id) {
-      const localId = await this._localIdForRemoteRef("game_model", String(out.supersedes_id), remoteTeamId);
+      const localId = await this._localIdForRemoteRef("game_model", String(out.supersedes_id), remoteTeamId, lookupCache);
       out.supersedes_id = Number(localId) || out.supersedes_id;
     }
     return out;
@@ -1215,6 +1215,13 @@ const RemoteWorkspace = {
       .filter((item) => !item.remote_team_id || item.remote_team_id === remoteTeamId)
       .map((item) => `${item.store}|${item.sync_id}`));
     const localIndexes = new Map();
+    const localReferenceCache = new Map();
+    const rememberLocalReference = (store, row) => {
+      const references = localReferenceCache.get(store);
+      if (!references || !row?.sync_id) return;
+      if (row.remote_team_id === remoteTeamId && row.id != null) references.set(row.sync_id, String(row.id));
+      else references.delete(row.sync_id);
+    };
     const localIndexFor = async (store, kind) => {
       if (localIndexes.has(store)) return localIndexes.get(store);
       const rows = (await DB.listar(store)).filter((row) => remoteRowBelongsToTeam(row, remoteTeamId));
@@ -1276,6 +1283,11 @@ const RemoteWorkspace = {
         }
         if (await this._applyRemoteDeletion(store, local, remote, addConflict)) {
           localIndex.remove(local);
+          const references = localReferenceCache.get(store);
+          if (references) {
+            if (local.sync_id) references.delete(local.sync_id);
+            references.delete(remote.id);
+          }
           result.deleted++;
         }
         continue;
@@ -1290,7 +1302,7 @@ const RemoteWorkspace = {
         ));
         continue;
       }
-      const payload = await this._hydratePayload(remote.kind, remote.payload, remoteTeamId);
+      const payload = await this._hydratePayload(remote.kind, remote.payload, remoteTeamId, localReferenceCache);
       const merged = {
         ...(local || {}),
         ...payload,
@@ -1337,16 +1349,19 @@ const RemoteWorkspace = {
         const applied = await this._applyPulledRecord(store, local, merged);
         if (!applied.applied) {
           localIndex.replace(local, applied.current);
+          rememberLocalReference(store, applied.current);
           if (applied.current?.sync_dirty && applied.current.remote_updated_at !== remote.updated_at) {
             addConflict(remoteConflict(store, applied.current, remote));
           }
           continue;
         }
         localIndex.replace(local, merged);
+        rememberLocalReference(store, merged);
       } else {
         const created = remoteFreshLocalRecord(merged);
         const createdId = await DB.criar(store, created, { remote: true });
         localIndex.add({ ...created, id: created.id || createdId });
+        rememberLocalReference(store, { ...created, id: created.id || createdId });
       }
       result.pulled++;
     }

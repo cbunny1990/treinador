@@ -1304,6 +1304,41 @@ test("pull de um histórico extenso percorre o estado local uma vez por módulo,
   }, { maxRows: 250 });
 });
 
+test("pull reutiliza a resolução local de referências repetidas entre registos", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    const count = 1007;
+    const playerRef = "87000000-0000-4000-8000-000000000001";
+    const playerId = await devices[1].criar("jogadores", {
+      team_id: "default", sync_id: playerRef, remote_team_id: remoteTeamId,
+      remote_updated_at: "player-v1", sync_dirty: false, nome: "Atleta sintético",
+    });
+    const idAt = (index) => `88000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
+    remote.rows.push(...Array.from({ length: count }, (_, index) => ({
+      id: idAt(index), team_id: remoteTeamId, kind: "document",
+      payload: {
+        type: "note", title: `Relatório ${index + 1}`, external_key: `sync-ref-cache-${index + 1}`,
+        subject_refs: [{ type: "player", id: playerRef }],
+      },
+      actor_type: "human", actor_label: "Treinador", updated_at: `r${index + 1}`, deleted_at: null,
+    })));
+    useDevice(1);
+    let playerListReads = 0;
+    const list = devices[1].listar.bind(devices[1]);
+    devices[1].listar = async (store) => {
+      if (store === "jogadores") playerListReads++;
+      return list(store);
+    };
+
+    const result = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(result.pulled, count);
+    assert.equal(playerListReads, 3,
+      "duas leituras do fluxo de registos e uma do cache devem bastar para mil referências iguais");
+    const documents = await devices[1].listar("workspace_documents");
+    assert.equal(documents.length, count);
+    assert.ok(documents.every((row) => row.subject_refs?.[0]?.id === String(playerId)));
+  }, { maxRows: 250 });
+});
+
 test("sync reutiliza o snapshot quando está limpo e só volta a ler a tabela para rever conflitos", async () => {
   await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
     useDevice(0);
