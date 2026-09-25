@@ -178,7 +178,7 @@ function sourceFields(row){
               const exercises=arr(version.exercise_refs).map(id=>({type:'exercise',id}));
               const suffix=entry.history?`.history[${entry.index}]`:'';
               add(`body.development_goals.items[${i}]${suffix}`,
-                entry.history?'Objetivo individual arquivado · revisão histórica':'Objetivo individual arquivado',content,'coach_goal',
+                entry.history?'Objetivo individual arquivado · revisão histórica':'Objetivo individual arquivado',content,'historical_coach_goal',
                 {category:'player_goal_archive',source_date:isoDate(version.updated_at)||isoDate(version.started_at),player_ref:playerRef,related_refs:relatedRefs([...evidence,...exercises])});
             }
           }

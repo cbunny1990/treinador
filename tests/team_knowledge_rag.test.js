@@ -150,13 +150,20 @@ test('RAG preserves archived player-goal history by stable player UUID without e
  assert.equal(chunks.find(chunk=>chunk.source_path==='title').content,'Arquivo histórico de atleta: Arquivo histórico de atleta');
  assert.equal(goalChunks.length,2);const historical=goalChunks.find(chunk=>chunk.source_path.endsWith('.history[0]')),current=goalChunks.find(chunk=>!chunk.source_path.includes('.history['));
  assert.equal(historical.player_ref,PLAYER);assert.equal(historical.source_date,'2026-09-05');assert.equal(current.player_ref,PLAYER);
- assert.equal(current.evidence_type,'coach_goal');assert.equal(current.category,'player_goal_archive');
+ assert.equal(current.evidence_type,'historical_coach_goal');assert.equal(current.category,'player_goal_archive');
  assert.deepEqual(current.metadata.related_refs,[
   {type:'match',id:matchRef,field:null,event_ref:null},{type:'training',id:trainingRef,field:null,event_ref:null},
   {type:'memory',id:SOURCE,field:null,event_ref:null},{type:'exercise',id:exerciseRef,field:null,event_ref:null}
  ]);
  assert.match(current.content,/atleta/);assert.match(historical.content,/sinal verbal/);
  assert.doesNotMatch(JSON.stringify(chunks),/Maria Silva|ansiedade|saúde mental|Arquivo · Maria/);
+});
+
+test('Head Coach instructions keep archived athlete goals historical',async()=>{
+ const {SERVER_INSTRUCTIONS}=await import('../supabase/functions/vision-coach-mcp/server_instructions.mjs');
+ assert.match(SERVER_INSTRUCTIONS,/player_goal_archive.*historical_coach_goal/);
+ assert.match(SERVER_INSTRUCTIONS,/never present it as a current team priority/);
+ assert.match(SERVER_INSTRUCTIONS,/proof of improvement\/transfer to another athlete/);
 });
 
 test('RAG redacts athlete names and filters health terms in chunk labels as well as text',()=>{
@@ -376,7 +383,7 @@ test('indexer embeds archived goal history with stable provenance while withhold
  const db=fakeAdmin([row]),provider=fakeProvider(),result=await rag.indexPendingTeamKnowledge(db,TEAM,{provider,limit:16});
  assert.equal(result.indexed_sources,1);
  const indexed=db.calls.find(x=>x.name==='replace_team_knowledge_source').args.p_chunks,goal=indexed.find(chunk=>chunk.category==='player_goal_archive');
- assert.equal(indexed.length,2);assert.equal(goal.player_ref,PLAYER);assert.equal(goal.category,'player_goal_archive');
+ assert.equal(indexed.length,2);assert.equal(goal.player_ref,PLAYER);assert.equal(goal.category,'player_goal_archive');assert.equal(goal.evidence_type,'historical_coach_goal');
  assert.deepEqual(goal.metadata.related_refs,[{type:'match',id:matchRef,field:null,event_ref:null}]);
  const embedded=provider.requests.flatMap(request=>request.input).join('\n');
  assert.match(embedded,/apoiar após passar a bola/i);assert.doesNotMatch(embedded,/Maria Silva|hipertensão|número 8|Arquivo · Maria/i);
