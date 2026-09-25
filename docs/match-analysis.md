@@ -2,7 +2,7 @@
 
 ## Registo do treinador
 
-Calendário → jogo → Depois. A página mostra o resultado apenas quando ambos os valores foram introduzidos, a lista cronológica de lances e as utilizações gravadas pelo cronómetro. Estatísticas derivam dos lances presentes e identificam-se como contadas. Minutos são registos de utilização. A ausência de dados aparece como desconhecida ou não registada; não se transforma em 0–0 nem em factos inventados.
+Calendário → jogo → Depois. A página mostra o resultado quando ambos os valores foram introduzidos e marca como parcial quando falta um deles. Mostra a lista cronológica de lances e as utilizações gravadas pelo cronómetro. Estatísticas derivam dos lances presentes e identificam-se como contadas, incluindo desagregações por motivo/zona. Minutos são registos de utilização. A ausência de dados aparece como desconhecida ou não registada; não se transforma em 0–0 nem em factos inventados.
 
 O treinador pode registar resumo, pontos positivos, problemas, perdas, recuperações, criação ofensiva, comportamento defensivo, transições, bolas paradas, utilização, aspetos a manter/corrigir, observações, interpretação, hipóteses, decisões e prioridades seguintes. Causas de golos sofridos são hipóteses ligadas a um evento concreto. Os campos antigos permanecem preservados.
 

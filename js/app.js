@@ -163,7 +163,8 @@ async function refreshPlayerPhotoSyncStatus(failed){
   }
 }
 function resultText(match){
-  if(match && (match.golos_favor==null || match.golos_contra==null)) return "Por jogar";
+  if(!match || (match.golos_favor==null && match.golos_contra==null)) return "Por jogar";
+  if(match.golos_favor==null || match.golos_contra==null) return String(match.golos_favor==null?"?":match.golos_favor)+"–"+String(match.golos_contra==null?"?":match.golos_contra)+" · Parcial";
   return String(match.golos_favor)+"–"+String(match.golos_contra);
 }
 function teamCrestSrc(team){
@@ -720,6 +721,7 @@ function matchAnalysisSection(match,players,id,memory){
   var A=VisionMatchAnalysis,a=A.fromMatch(match),events=VisionMatchEvents.state(match).events,stats=VisionMatchEvents.stats(match),legacy=match.post_game||{};
   var facts=[];
   if(match.golos_favor!=null&&match.golos_contra!=null) facts.push('<li>Resultado introduzido manualmente pelo treinador: '+esc(match.golos_favor)+'–'+esc(match.golos_contra)+'</li>');
+  else if(match.golos_favor!=null||match.golos_contra!=null) facts.push('<li>Resultado parcial introduzido manualmente pelo treinador: '+esc(match.golos_favor==null?'?':match.golos_favor)+'–'+esc(match.golos_contra==null?'?':match.golos_contra)+'</li>');
   else facts.push('<li>Resultado: ainda não registado</li>');
   if(stats.events_available)facts.push('<li>Lances registados: '+stats.event_count+' · golos '+stats.goals.for+'–'+stats.goals.against+' · remates à baliza '+stats.shots.on+' · fora '+stats.shots.off+' · perdas '+stats.losses.total+' · recuperações '+stats.recoveries.total+' · cantos '+stats.counts.corner_for+'–'+stats.counts.corner_against+' <small>(contagem dos lances registados)</small></li>');
   else facts.push('<li>Lances: não registados · estatísticas desconhecidas, não equivalem a zero</li>');

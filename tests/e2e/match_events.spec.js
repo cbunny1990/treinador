@@ -55,6 +55,23 @@ test('match without a saved event registry shows unknown statistics, not zeros',
  await expect(stats.locator('table')).toContainText('Golos a favor');
  await expect(stats.locator('tbody')).toContainText('0');
 });
+test('reason and zone breakdown rows show their counted provenance',async({page})=>{
+ const f=await seed(page);await start(page);
+ const form=page.locator('[data-event-form="record"]');
+ await page.evaluate(()=>window._matchTime+=60000);
+ await page.getByRole('button',{name:'Perda de bola',exact:true}).click();
+ await form.locator('[name="reason"]').selectOption('pass');await form.locator('[name="zone"]').selectOption('def_c');
+ await form.getByRole('button',{name:'Registar lance',exact:true}).click();await saved(page);
+ await page.evaluate(()=>window._matchTime+=60000);
+ await page.getByRole('button',{name:'Recuperação de bola',exact:true}).click();
+ await form.locator('[name="zone"]').selectOption('med_c');
+ await form.getByRole('button',{name:'Registar lance',exact:true}).click();await saved(page);
+ const table=page.locator('[data-match-events] table');
+ for(const label of ['Perdas por motivo','Perdas por zona','Recuperações por zona']){
+  const row=table.locator('tbody tr').filter({hasText:label});
+  await expect(row.locator('td')).toHaveCount(3);await expect(row.locator('td').nth(2)).toHaveText('contada');
+ }
+});
 test('offline recording, pause-gated edit and delete, possession provenance',async({page,context})=>{
  const f=await seed(page);await start(page);
  const form=page.locator('[data-event-form="record"]');

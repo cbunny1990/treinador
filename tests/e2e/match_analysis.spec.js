@@ -25,6 +25,13 @@ test('analysis labels the saved score as manually entered',async({page})=>{
  await page.evaluate(id=>{go('#/jogo-visual/'+id);return MatchVisualUI.view(id);},id);
  await expect(page.locator('[data-match-events]')).toContainText('O resultado foi introduzido manualmente.');
 });
+test('partial manual score stays visible and is labelled incomplete',async({page})=>{
+ await page.goto('/#/calendario');await page.waitForFunction(()=>typeof VisionMatchAnalysis!=='undefined'&&typeof go==='function');
+ const id=await page.evaluate(()=>DB.criar('jogos',{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:'2026-09-26',adversario:'Resultado parcial',estado:'concluido',golos_favor:2}));
+ await page.evaluate(id=>{go('#/equipa/jogo/'+id);return viewMatch(id);},id);
+ await expect(page.locator('.hero-main .metric-value')).toHaveText('2–? · Parcial');
+ await expect(page.locator('section.panel.match-form').first()).toContainText('Resultado parcial introduzido manualmente pelo treinador: 2–?');
+});
 test('coach reviews and accepts a current Head Coach proposal without creating a training',async({page})=>{
  await page.goto('/#/calendario');await page.waitForFunction(()=>typeof VisionMatchAnalysis!=='undefined'&&typeof go==='function');
  const fixture=await page.evaluate(async()=>{RemoteWorkspace.scheduleSync=()=>{};const eventId=crypto.randomUUID(),id=await DB.criar('jogos',{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:'2026-09-26',adversario:'Proposta E2E',estado:'concluido',match_events:{schema:'vision-match-events@1',revision:1,possession:{kind:'unknown',value:null},events:[{id:eventId,type:'loss',at_ms:125000,reason:'pass',zone:'def_c',note:'Passe intercetado'}]},post_game:{analysis:{schema:'vision-match-analysis@1',revision:1,status:'done',fields:{summary:'Análise do treinador',next_priority:'',decisions:''},agent_proposal:{status:'proposed',prepared_by:'Head Coach',prepared_at:'2026-09-26T12:00:00.000Z',source_analysis_revision:1,source_events_revision:1,summary:'Rever a saída de bola',hypotheses:['O apoio pode estar distante'],next_priority:'Melhorar passe e apoio',evidence_ids:[eventId]}}}});return{id,eventId};});

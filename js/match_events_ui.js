@@ -13,9 +13,9 @@
   const row=(label,count)=>'<tr><td>'+esc(label)+'</td><td><strong>'+count+'</strong></td><td>'+esc(t.provenance.counts)+'</td></tr>';
   let rows=row('Golos a favor',c.goal_for)+row('Golos sofridos',c.goal_against)+row('Remates à baliza · total',t.shots.on)+row('Remates à baliza · nossa equipa',t.shots.own_on)+row('Remates à baliza · adversário',t.shots.against_on)+row('Remates à baliza · lado não indicado',t.shots.unknown_side_on)+row('Remates para fora · total',t.shots.off)+row('Remates para fora · nossa equipa',t.shots.own_off)+row('Remates para fora · adversário',t.shots.against_off)+row('Remates para fora · lado não indicado',t.shots.unknown_side_off)+row('Cantos a favor',c.corner_for)+row('Cantos contra',c.corner_against)+'<tr><td>Substituições realizadas</td><td><strong>'+usageEvents.filter(e=>e.type==='substitute'&&!e.voided_at).length+'</strong></td><td>Registo de utilização</td></tr>'+row('Perdas de bola',t.losses.total)+row('Recuperações de bola',t.recoveries.total)+row('Bolas em profundidade',t.through_balls)+row('Bolas no pé do avançado',t.striker_foots)+row('Notas livres',t.free_notes);
   const join=tally=>Object.entries(tally).map(([k,n])=>esc(k==='none'?'Sem motivo':(E.lossReasons[k]||E.zones[k]||k))+' · '+n).join(' · ');
-  if(Object.keys(t.losses.by_reason).length)rows+='<tr><td>Perdas por motivo</td><td colspan="2">'+join(t.losses.by_reason)+'</td></tr>';
-  if(Object.keys(t.losses.by_zone).length)rows+='<tr><td>Perdas por zona</td><td colspan="2">'+join(t.losses.by_zone)+'</td></tr>';
-  if(Object.keys(t.recoveries.by_zone).length)rows+='<tr><td>Recuperações por zona</td><td colspan="2">'+join(t.recoveries.by_zone)+'</td></tr>';
+  if(Object.keys(t.losses.by_reason).length)rows+='<tr><td>Perdas por motivo</td><td>'+join(t.losses.by_reason)+'</td><td>'+esc(t.provenance.losses)+'</td></tr>';
+  if(Object.keys(t.losses.by_zone).length)rows+='<tr><td>Perdas por zona</td><td>'+join(t.losses.by_zone)+'</td><td>'+esc(t.provenance.losses)+'</td></tr>';
+  if(Object.keys(t.recoveries.by_zone).length)rows+='<tr><td>Recuperações por zona</td><td>'+join(t.recoveries.by_zone)+'</td><td>'+esc(t.provenance.recoveries)+'</td></tr>';
   return '<h3 class="section">Estatísticas do jogo</h3><p class="hint">Contagens derivadas dos lances que registaste. Cada linha indica a origem; nada é inferido.</p><div class="table-wrap section"><table><thead><tr><th>O que</th><th>Contagem</th><th>Origem</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
  }
  function possessionSection(match){
