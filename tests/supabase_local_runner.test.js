@@ -7,6 +7,8 @@ const path = require("node:path");
 const { parseMigrationList, migrationHistoryDrift, migrationDriftMessage, migrationDeploymentPlan, migrationDeploymentMessage } = require("../scripts/supabase-migration-preflight.mjs");
 
 const runner = fs.readFileSync(path.join(__dirname, "..", "scripts", "test-supabase-local.mjs"), "utf8");
+const remoteAudit = fs.readFileSync(path.join(__dirname, "..", "scripts", "audit-supabase-linked-migrations.mjs"), "utf8");
+const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
 
 test("Supabase local test runner bounds a stalled CLI status check", () => {
   assert.match(runner, /timeout:\s*15_000/);
@@ -61,4 +63,11 @@ test("Supabase remote deployment audit blocks when a later migration is applied 
   assert.deepEqual(plan.unapplied, rows.slice(0, 8).map(row => row.local));
   assert.match(migrationDeploymentMessage(plan), /não aplicou migrations nem alterou dados/);
   assert.match(migrationDeploymentMessage(plan), /Revê a sequência/);
+});
+
+test("linked migration audit is read-only and refuses to guess the target project", () => {
+  assert.equal(packageJson.scripts["audit:supabase-migrations"], "node scripts/audit-supabase-linked-migrations.mjs");
+  assert.match(remoteAudit, /VISION_COACH_SUPABASE_PROJECT_REF/);
+  assert.match(remoteAudit, /migration", "list"/);
+  assert.doesNotMatch(remoteAudit, /db", "push|migration", "repair|db", "reset|apply_migration/);
 });
