@@ -594,6 +594,36 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     const phoneOverflowRows = (await devices[1].listar("workspace_documents")).filter((row) => row.external_key?.startsWith("sync-page-"));
     assert.equal(phoneOverflowRows.length, overflowRows.length);
     assert.equal(new Set(phoneOverflowRows.map((row) => row.sync_id)).size, overflowRows.length, "Páginas não podem gerar duplicados locais.");
+
+    const overflowMedia = overflowRows.map((row, index) => ({
+      id: crypto.randomUUID(), team_id: teamId, subject_type: "team", subject_ref: teamId,
+      media_type: "file", title: `Ficheiro ${index + 1}`, note: "Teste sintético de paginação",
+      external_url: `https://example.test/sync-page/${index + 1}`, created_by: owner.user.id,
+    }));
+    for (let start = 0; start < overflowMedia.length; start += 200) {
+      const inserted = await admin.from("media_assets").insert(overflowMedia.slice(start, start + 200));
+      assert.ifError(inserted.error);
+    }
+    const paginatedMedia = await RemoteWorkspace._syncMedia(teamId, coach.user.id);
+    assert.equal(paginatedMedia.pulled, overflowMedia.length, "A leitura de media deve ultrapassar o max_rows da Data API sem perder registos.");
+    const phoneOverflowMedia = (await devices[1].listar("media_items")).filter((row) => row.title.startsWith("Ficheiro "));
+    assert.equal(phoneOverflowMedia.length, overflowMedia.length);
+    assert.equal(new Set(phoneOverflowMedia.map((row) => row.sync_id)).size, overflowMedia.length);
+
+    const overflowActivity = overflowRows.map((row, index) => ({
+      id: crypto.randomUUID(), team_id: teamId, actor_type: "human", actor_label: "Teste de integração",
+      action: "updated", summary: `Atividade sintética ${index + 1}`, created_by: owner.user.id,
+    }));
+    for (let start = 0; start < overflowActivity.length; start += 200) {
+      const inserted = await admin.from("activity_log").insert(overflowActivity.slice(start, start + 200));
+      assert.ifError(inserted.error);
+    }
+    const paginatedActivity = await RemoteWorkspace._syncActivity(teamId, coach.user.id);
+    assert.equal(paginatedActivity.pulled, overflowActivity.length, "A leitura da atividade deve ultrapassar o max_rows da Data API sem perder registos.");
+    const phoneOverflowActivity = (await devices[1].listar("activity_items"))
+      .filter((row) => row.summary.startsWith("Atividade sintética "));
+    assert.equal(phoneOverflowActivity.length, overflowActivity.length);
+    assert.equal(new Set(phoneOverflowActivity.map((row) => row.sync_id)).size, overflowActivity.length);
   } finally {
     RemoteWorkspace.init = original.init;
     globalThis.DB = original.db;
