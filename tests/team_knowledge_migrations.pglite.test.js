@@ -40,7 +40,7 @@ function testVector(angle) {
   return `[${[Math.cos(angle), Math.sin(angle), ...Array(1534).fill(0)].join(",")}]`;
 }
 
-async function fixture() {
+async function fixture({ internalRlsAppliedFirst = false } = {}) {
   const [{ PGlite }, { vector }] = await Promise.all([
     import("@electric-sql/pglite"),
     import("@electric-sql/pglite-pgvector"),
@@ -73,6 +73,16 @@ async function fixture() {
       ('${SOURCE_B}','${TEAM_B}','match','{"match_id":"${MATCH_B}","report":"construction losses"}','${UPDATED}');
     select set_config('request.jwt.claim.role','service_role',false);
   `);
+  if (internalRlsAppliedFirst) {
+    await db.exec(`
+      create table private.agent_request_log(id uuid primary key);
+      create table private.mcp_connector_tokens(id uuid primary key);
+    `);
+    await db.exec(fs.readFileSync(
+      path.join(ROOT, "supabase", "migrations", "20260924144849_enable_private_internal_table_rls.sql"),
+      "utf8",
+    ));
+  }
   for (const file of MIGRATIONS) {
     await db.exec(fs.readFileSync(path.join(ROOT, "supabase", "migrations", file), "utf8"));
   }
@@ -132,6 +142,45 @@ async function searchKnowledge(db, filters = {}) {
   ]);
   return result.rows;
 }
+
+test("RLS interno já aplicado não bloqueia as migrations RAG pendentes do remoto", async (t) => {
+  const db = await fixture({ internalRlsAppliedFirst: true });
+  t.after(() => db.close());
+
+  const tables = await db.query(`
+    select n.nspname as schema_name, c.relname, c.relrowsecurity,
+      has_table_privilege('anon', c.oid, 'select') as anon_can_select,
+      has_table_privilege('authenticated', c.oid, 'select') as auth_can_select
+    from pg_class c join pg_namespace n on n.oid=c.relnamespace
+    where n.nspname='private' and c.relname in (
+      'agent_request_log','mcp_connector_tokens','team_knowledge_chunks','team_knowledge_jobs'
+    )
+    order by c.relname
+  `);
+  assert.equal(tables.rows.length, 4);
+  assert.ok(tables.rows.every((row) => row.relrowsecurity), "all internal tables keep RLS enabled");
+  assert.ok(tables.rows.every((row) => !row.anon_can_select && !row.auth_can_select),
+    "ordinary API roles gain no direct table reads");
+
+  const policies = await db.query(`
+    select count(*)::int as n from pg_policy p
+    where p.polrelid in (
+      'private.agent_request_log'::regclass,
+      'private.mcp_connector_tokens'::regclass,
+      'private.team_knowledge_chunks'::regclass,
+      'private.team_knowledge_jobs'::regclass
+    )
+  `);
+  assert.equal(policies.rows[0].n, 0, "service-role-only internal tables remain policy-free");
+
+  const ragFunctions = await db.query(`
+    select count(*)::int as n from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+    where n.nspname='public' and p.proname in (
+      'claim_team_knowledge_jobs','search_team_knowledge_chunks'
+    )
+  `);
+  assert.ok(ragFunctions.rows[0].n >= 2, "pending migrations install RAG RPCs after internal RLS");
+});
 
 test("RAG migrations executam em Postgres WASM e preservam limites de equipa e origem", async (t) => {
   const db = await fixture();
