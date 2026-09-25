@@ -1135,6 +1135,7 @@ function createSharedRemoteWorkspace({ maxRows = 1000 } = {}) {
   const mediaRows = tables.media_assets;
   const activityRows = tables.activity_log;
   const files = new Map();
+  const queryLog = [];
   let revision = 0;
   const stamp = () => `v${++revision}`;
   const matches = (row, filters) => filters.every(([op, key, value]) =>
@@ -1142,11 +1143,12 @@ function createSharedRemoteWorkspace({ maxRows = 1000 } = {}) {
   );
   return {
     rows,
+    queryLog,
     client: {
       from(table) {
         const query = {
-          filters: [], action: "select", patch: null, input: null, sort: null, pageLimit: null,
-          select() { return this; },
+          filters: [], action: "select", patch: null, input: null, sort: null, pageLimit: null, projection: "*",
+          select(columns = "*") { this.projection = columns; return this; },
           eq(key, value) { this.filters.push(["eq", key, value]); return this; },
           gt(key, value) { this.filters.push(["gt", key, value]); return this; },
           in(key, values) { this.filters.push(["in", key, values]); return this; },
@@ -1156,6 +1158,8 @@ function createSharedRemoteWorkspace({ maxRows = 1000 } = {}) {
           insert(input) { this.action = "insert"; this.input = input; return this; },
           update(patch) { this.action = "update"; this.patch = patch; return this; },
           async execute() {
+            queryLog.push({ table, action: this.action, projection: this.projection,
+              filters: this.filters.map(([op, key, value]) => [op, key, Array.isArray(value) ? [...value] : value]) });
             const tableRows = tables[table] || [];
             if (this.action === "insert") {
               if (tableRows.some((row) => row.id === this.input.id)) return { data: null, error: { code: "23505", message: "duplicate key" } };
@@ -1334,12 +1338,17 @@ test("consolidação pagina registos e media antes de decidir que IDs remotos de
   RemoteWorkspace.getSession=async()=>({user:{id:"coach"}});
   RemoteWorkspace.ensureSelectedTeam=async()=>remoteTeamId;
   let syncCalls=0;RemoteWorkspace.syncNow=async()=>{syncCalls++;return{pushed:0,pulled:0,deleted:0,conflicts:[]};};
+  remote.queryLog.length=0;
   try{
    const result=await RemoteWorkspace.consolidateNow();
    assert.equal(result.repaired,0,"registos depois do primeiro lote não podem ser confundidos com IDs desaparecidos");
    assert.equal(syncCalls,2);
    assert.equal((await devices[0].listar("jogadores"))[0].sync_dirty,false);
    assert.equal((await devices[0].listar("media_items"))[0].sync_dirty,false);
+   const consolidationReads=remote.queryLog.filter((query)=>["workspace_records","media_assets"].includes(query.table));
+   assert.ok(consolidationReads.length>0);
+   assert.ok(consolidationReads.every((query)=>query.filters.some(([op,key])=>op==="in"&&key==="id")),
+    "consolidação deve verificar apenas os UUIDs locais, sem descarregar o histórico remoto da equipa");
   }finally{
    if(originals.navigator)Object.defineProperty(globalThis,"navigator",originals.navigator);else delete globalThis.navigator;
    globalThis.localStorage=originals.localStorage;RemoteWorkspace.getSession=originals.getSession;

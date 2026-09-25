@@ -3,6 +3,7 @@
 const REMOTE_CONFIG_KEY = "treinador.remote.supabase.v1";
 const REMOTE_TUS_THRESHOLD = 6 * 1024 * 1024;
 const REMOTE_SYNC_PAGE_SIZE = 500;
+const REMOTE_CONSOLIDATION_ID_BATCH = 100;
 const REMOTE_DEFAULT_CONFIG = {
   url: "https://rsydvhbsxzdoprekefij.supabase.co",
   publishableKey: "sb_publishable_0DwyNhlIJijcAr3u3cG51w_3VP_2vmC",
@@ -134,6 +135,21 @@ async function remoteReadTeamRows(client, table, teamId) {
     }
     afterId = String(nextId);
   }
+}
+
+async function remoteReadTeamIds(client, table, teamId, ids) {
+  const uniqueIds = [...new Set((Array.isArray(ids) ? ids : []).filter(remoteIsUuid))];
+  const found = new Set();
+  for (let start = 0; start < uniqueIds.length; start += REMOTE_CONSOLIDATION_ID_BATCH) {
+    const batch = uniqueIds.slice(start, start + REMOTE_CONSOLIDATION_ID_BATCH);
+    const { data, error } = await client.from(table).select("id")
+      .eq("team_id", teamId).in("id", batch);
+    if (error) throw error;
+    for (const row of Array.isArray(data) ? data : []) {
+      if (remoteIsUuid(row?.id)) found.add(row.id);
+    }
+  }
+  return found;
 }
 
 function remoteIdentityKey(kind, payload) {
@@ -1732,15 +1748,23 @@ const RemoteWorkspace = {
     const remoteTeamId = await this.ensureSelectedTeam();
     if (!client || !session || !remoteTeamId) throw new Error("Liga primeiro o workspace remoto.");
 
-    const remoteRecords = await remoteReadTeamRows(client, "workspace_records", remoteTeamId);
-    const remoteRecordIds = new Set(remoteRecords.map((x) => x.id));
-
-    let repaired = 0;
+    const localRecordGroups = [];
     for (const store of Object.keys(REMOTE_STORE_KINDS)) {
       let rows = (await DB.listar(store))
         .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID)
         .filter((x) => store !== "exercicios" || x.workspace_v2 || x.sync_id);
       rows = (await this._bindRemoteTeams(client, store, rows, remoteTeamId)).rows;
+      localRecordGroups.push({ store, rows });
+    }
+    const remoteRecordIds = await remoteReadTeamIds(
+      client,
+      "workspace_records",
+      remoteTeamId,
+      localRecordGroups.flatMap(({ rows }) => rows.map((row) => row.sync_id))
+    );
+
+    let repaired = 0;
+    for (const { store, rows } of localRecordGroups) {
       for (const original of rows) {
         let local = original;
         if (!remoteIsUuid(local.sync_id)) {
@@ -1763,11 +1787,15 @@ const RemoteWorkspace = {
       }
     }
 
-    const remoteMedia = await remoteReadTeamRows(client, "media_assets", remoteTeamId);
-    const remoteMediaIds = new Set(remoteMedia.map((x) => x.id));
     let mediaRows = (await DB.listar("media_items"))
       .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID);
     mediaRows = (await this._bindRemoteTeams(client, "media_items", mediaRows, remoteTeamId)).rows;
+    const remoteMediaIds = await remoteReadTeamIds(
+      client,
+      "media_assets",
+      remoteTeamId,
+      mediaRows.map((row) => row.sync_id)
+    );
     for (const original of mediaRows) {
       let local = original;
       if (!remoteIsUuid(local.sync_id)) {
