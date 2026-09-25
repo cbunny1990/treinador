@@ -101,6 +101,7 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     assert.match(initialized.result.instructions, /attendance and actual timings, use get_training_session/i);
     assert.match(initialized.result.instructions, /recorded attendance and match usage, use get_player_participation_history/i);
     assert.match(initialized.result.instructions, /recorded match events, statistics, and player usage, use get_match_report/i);
+    assert.match(initialized.result.instructions, /structured event or result is a registered fact; coach-entered text is an observation/i);
     assert.match(initialized.result.instructions, /structured facts such as roster, availability, dates, attendance, duration, results, counted events, and minutes/i);
     assert.match(initialized.result.instructions, /semantic retrieval is not their source of truth/i);
     assert.match(initialized.result.instructions, /evidence is insufficient/);
