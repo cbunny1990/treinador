@@ -186,7 +186,7 @@ tr:last-child td{border-bottom:0}
 .match-progress span.done{background:#f8fafc;border-color:#cbd5e1;color:#111827}
 .player-choice-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .player-choice{display:block}
-.player-choice>input{position:absolute;opacity:0;pointer-events:none}
+.player-choice>input{position:absolute;width:auto;opacity:0;pointer-events:none}
 .player-choice>span{display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:12px;padding:9px;background:#fff;cursor:pointer}
 .player-choice input:checked+span{border-color:var(--accent-2);background:var(--accent-soft)}
 .player-choice strong{display:block;font-size:12px}
