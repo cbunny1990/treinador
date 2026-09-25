@@ -297,3 +297,15 @@ Se o evento de atividade continua válido mas a sua origem local já não existe
 ## Publicação rápida de imagens por IA
 
 O procedimento atual está em [ai-image-workflow.md](ai-image-workflow.md). Usa o MCP autenticado ou `npm run images:publish`; não volta a gerar imagens aprovadas nem requer alterações de frontend por imagem.
+
+## Aceitação física PC↔telemóvel — pendente
+
+Os testes Playwright/WebKit e Supabase local confirmam o código e o backend isolado, mas não verificam dois aparelhos físicos. Para testar a branch atual sem publicar, servir o build local numa rede de teste e apontá-lo a uma stack Supabase descartável acessível aos dois aparelhos. Usar uma equipa e registos sintéticos nessa stack; não criar, editar ou apagar dados na equipa real. A PWA publicada atualmente é v170, por isso testar essa URL valida apenas a versão publicada, não os commits locais posteriores.
+
+1. Criar um atleta sintético no PC; confirmar no telemóvel a mesma UUID e uma única ficha. Editar campos e fotografia no telemóvel; confirmar texto, estado sincronizado e fotografia no PC. A fotografia de teste deve ser própria, sem substituir originais aprovados.
+2. Criar treino, convocatória/alinhamento e jogo sintéticos; registar presença, sessão, evento, substituição/minutos e análise nos dois aparelhos. Confirmar que as contagens e referências são iguais após fechar e reabrir a PWA.
+3. Apagar um registo de teste no PC e outro no telemóvel; sincronizar ambos os aparelhos, fechar/reabrir e confirmar que não reaparecem. Não limpar conflitos através de consolidação automática.
+4. Pôr o telemóvel offline, editar um registo de teste e voltar a ligar; confirmar a sincronização sem cópia duplicada. Editar o mesmo campo em ambos os aparelhos offline; confirmar que o conflito é apresentado e que a escolha explícita preserva o valor escolhido em ambos.
+5. Com texto por guardar ou sessão de treino/jogo ativa, confirmar que uma atualização da PWA não interrompe o trabalho nem salta o scroll; após sair da sessão, atualizar e reabrir, confirmar a versão/caches e a persistência dos dados sintéticos.
+
+Registar para cada passo o aparelho/navegador, estado online/offline e resultado. Considerar concluída a auditoria física só depois de todas as direções de criação/edição/apagamento, fotografia, conflito e reconexão passarem. Encerrar apenas a stack/ambiente de teste após guardar a evidência; nunca executar limpeza sobre o projeto ou equipa reais.
