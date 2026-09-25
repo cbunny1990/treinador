@@ -69,6 +69,8 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
 
     const matchDates = ["2026-09-01", "2026-09-05", "2026-09-10", "2026-09-17", "2026-09-20", "2026-09-22"];
     const matchIds = [...matchDates.map(() => uuid()), uuid()];
+    const registeredLossRef = uuid();
+    const registeredRecoveryRef = uuid();
     const seededMatches = await admin.from("workspace_records").insert([
       ...matchDates.map((date, index) => ({
         id: matchIds[index], team_id: teams[0], kind: "match", actor_type: "human",
@@ -76,9 +78,14 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
           data: date, estado: "concluido", adversario: `Adversário local ${index + 1}`,
           ...(index === 5 ? { golos_favor: 2, golos_contra: 1 } : {}),
           match_events: { events: index === 5 ? [
-            { id: uuid(), type: "loss", at_ms: 60000, reason: "pass", zone: "def_c", note: "Passe errado na saída" },
-            { id: uuid(), type: "recovery", at_ms: 120000, zone: "med_c", note: "Recuperação central" },
+            { id: registeredLossRef, type: "loss", at_ms: 60000, reason: "pass", zone: "def_c", note: "Passe errado na saída" },
+            { id: registeredRecoveryRef, type: "recovery", at_ms: 120000, zone: "med_c", note: "Recuperação central" },
           ] : [] },
+          ...(index === 5 ? { post_game: { analysis: {
+            schema: "vision-match-analysis@1", revision: 2, status: "done",
+            fields: { observations: "Observação guardada pelo treinador", interpretation: "Apoio insuficiente pode explicar a perda", hypotheses: "Confirmar se o padrão se repete", decisions: "Trabalhar linhas de apoio" },
+            goals_conceded: {}, history: [], agent_proposal: null,
+          } } } : {}),
         },
       })),
       { id: matchIds[6], team_id: teams[0], kind: "match", actor_type: "human", payload: { estado: "concluido", adversario: "Jogo local sem data" } },
@@ -128,6 +135,8 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
       assert.ifError(created.error);
       return value;
     };
+    const imageWriteToken = await createConnectorToken(["read", "write", "media"], "vcmcp_imgwrite", "Imagem original local");
+    const imageReadToken = await createConnectorToken(["read", "media"], "vcmcp_imgread1", "Imagem no segundo dispositivo");
 
     const initialize = await mcpRequest(token, "initialize", {
       protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "local-test", version: "1" },
@@ -186,6 +195,60 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     assert.deepEqual(recentContext.semantic_evidence, []);
     assert.doesNotMatch(JSON.stringify(recentContext), /SEGREDO_EQUIPA_EXTERNA/);
 
+    const sourceAnalysisResponse = await mcpRequest(token, "tools/call", {
+      name: "get_match_analysis", arguments: { id: matchIds[5] },
+    });
+    assert.equal(sourceAnalysisResponse.status, 200);
+    const sourceAnalysis = JSON.parse((await sourceAnalysisResponse.json()).result.content[0].text);
+    const proposedChanges = {
+      summary: "Há duas perdas registadas na saída e apoio irregular nas observações do treinador.",
+      hypotheses: ["O apoio tardio pode contribuir para uma perda; a relação precisa de confirmação."],
+      next_priority: "Rever apoio após passe no próximo treino.",
+      evidence_ids: [registeredLossRef],
+    };
+    const refusedProposalResponse = await mcpRequest(imageWriteToken, "tools/call", {
+      name: "prepare_match_analysis",
+      arguments: {
+        id: matchIds[5], expected_updated_at: sourceAnalysis.updated_at,
+        expected_revision: sourceAnalysis.analysis_revision, confirmed: false, proposal: proposedChanges,
+      },
+    });
+    assert.equal(refusedProposalResponse.status, 200);
+    const refusedProposal = JSON.parse((await refusedProposalResponse.json()).result.content[0].text);
+    assert.equal(refusedProposal.error, "explicit_confirmation_required");
+    const unchangedAnalysisResponse = await mcpRequest(token, "tools/call", {
+      name: "get_match_analysis", arguments: { id: matchIds[5] },
+    });
+    const unchangedAnalysis = JSON.parse((await unchangedAnalysisResponse.json()).result.content[0].text);
+    assert.equal(unchangedAnalysis.analysis.agent_proposal, null);
+
+    const preparedProposalResponse = await mcpRequest(imageWriteToken, "tools/call", {
+      name: "prepare_match_analysis",
+      arguments: {
+        id: matchIds[5], expected_updated_at: sourceAnalysis.updated_at,
+        expected_revision: sourceAnalysis.analysis_revision, confirmed: true, proposal: proposedChanges,
+      },
+    });
+    assert.equal(preparedProposalResponse.status, 200);
+    const preparedProposal = JSON.parse((await preparedProposalResponse.json()).result.content[0].text);
+    assert.equal(preparedProposal.analysis.agent_proposal.status, "proposed");
+    assert.deepEqual(preparedProposal.analysis.agent_proposal.evidence_ids, [registeredLossRef]);
+    assert.equal(preparedProposal.analysis.fields.observations, "Observação guardada pelo treinador");
+    assert.equal(preparedProposal.analysis.fields.decisions, "Trabalhar linhas de apoio");
+    const staleProposalResponse = await mcpRequest(imageWriteToken, "tools/call", {
+      name: "prepare_match_analysis",
+      arguments: {
+        id: matchIds[5], expected_updated_at: sourceAnalysis.updated_at,
+        expected_revision: sourceAnalysis.analysis_revision, confirmed: true, proposal: proposedChanges,
+      },
+    });
+    const staleProposal = JSON.parse((await staleProposalResponse.json()).result.content[0].text);
+    assert.equal(staleProposal.error, "record_conflict_read_again");
+    const trainingCount = await admin.from("workspace_records").select("id", { count: "exact", head: true })
+      .eq("team_id", teams[0]).eq("kind", "training").is("deleted_at", null);
+    assert.ifError(trainingCount.error);
+    assert.equal(trainingCount.count, 3, "preparing a match analysis proposal must not create a training");
+
     const search = await mcpRequest(token, "tools/call", {
       name: "search_team_knowledge", arguments: { query: "problemas nos jogos recentes", match_refs: recentResult.map((row) => row.id) },
     });
@@ -224,8 +287,6 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     assert.equal(planningContext.evidence_status, "provider_not_configured");
     assert.equal(planningContext.missing_data.target_training, false);
 
-    const imageWriteToken = await createConnectorToken(["read", "write", "media"], "vcmcp_imgwrite", "Imagem original local");
-    const imageReadToken = await createConnectorToken(["read", "media"], "vcmcp_imgread1", "Imagem no segundo dispositivo");
     const exerciseImagePath = path.join(__dirname, "../assets/exercises/approved-20260922/01_ativacao_conduzir_passar_dar_opcao.png");
     const exerciseImageBytes = new Uint8Array(fs.readFileSync(exerciseImagePath));
     const { imageInfo, imageHash } = await import("../supabase/functions/vision-coach-mcp/image_uploads.mjs");
