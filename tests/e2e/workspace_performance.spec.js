@@ -64,9 +64,16 @@ test("resumo operacional do Workspace mantém consultas limitadas com 15 mil reg
     const snapshot = await WorkspaceStore.buildSnapshot(DEFAULT_TEAM_ID, {
       includeArchivedDocuments: true, countMediaOnly: true, includeTimeline: false, compactOperationalRecords: true,
     });
+    const snapshotMs = performance.now() - snapshotStarted;
+    const snapshotCounts = { ...counts };
+    Object.keys(counts).forEach(key => delete counts[key]);
+    const renderStarted = performance.now();
+    await viewWorkspace({ skipRemoteSync: true });
+    const renderCounts = { ...counts };
     return {
       summaryMs,
-      snapshotMs: performance.now() - snapshotStarted,
+      snapshotMs,
+      workspaceRenderMs: performance.now() - renderStarted,
       nextMatch: summary.next_match?.adversario,
       nextTraining: summary.next_training?.objetivo,
       snapshotNextMatch: snapshot.next_match?.adversario,
@@ -75,7 +82,8 @@ test("resumo operacional do Workspace mantém consultas limitadas com 15 mil reg
       pendingTrainingProposals: summary.pending_training_proposals.length,
       staleMatchProposals: summary.stale_match_proposals.length,
       counts: summaryCounts,
-      snapshotCounts: counts,
+      snapshotCounts,
+      renderCounts,
     };
   });
 
@@ -93,5 +101,6 @@ test("resumo operacional do Workspace mantém consultas limitadas com 15 mil reg
     },
   });
   expect(result.snapshotCounts).toEqual(result.counts);
-  console.log(`Workspace, 15,006 synthetic rows, CPU throttle 4×: summary ${result.summaryMs.toFixed(2)} ms; full compact snapshot ${result.snapshotMs.toFixed(2)} ms (browser-local measurements)`);
+  expect(result.renderCounts).toEqual(result.counts);
+  console.log(`Workspace, 15,006 synthetic rows, CPU throttle 4×: summary ${result.summaryMs.toFixed(2)} ms; full compact snapshot ${result.snapshotMs.toFixed(2)} ms; visible dashboard render ${result.workspaceRenderMs.toFixed(2)} ms (browser-local measurements)`);
 });
