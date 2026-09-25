@@ -17,7 +17,7 @@ const choose={oneOf:[{required:['id'],not:{required:['external_key']}},{required
 
 export const REPORT_TOOLS=[{
  name:'get_match_report',
- description:'Prepare current structured match-sheet and post-match report data from one persisted match. Includes only recorded events, usage, analysis and video evidence, with provenance; read-only and scoped to the authorized team.',
+ description:'Prepare current structured match-sheet and post-match report data from one persisted match. Includes kickoff availability snapshot when recorded, plus recorded events, usage, analysis and video evidence, with provenance; read-only and scoped to the authorized team.',
  inputSchema:{type:'object',properties:{...selector,report_type:{type:'string',enum:['match_sheet','post_match'],default:'post_match'}},required:['report_type'],additionalProperties:false,...choose},
  annotations:{readOnlyHint:true,destructiveHint:false}
 },{
@@ -81,16 +81,17 @@ export async function executeReportTool(admin,c,name,args){
  if(name!=='get_match_report')throw new Error('unknown_report_tool');
  if(!['match_sheet','post_match'].includes(args.report_type))throw new Error('invalid_match_report_type');
  const row=await find(admin,c,args,'match'),p=row.payload,usage=M.replay(p),events=E.state(p).events,stats=E.stats(p),analysis=A.fromMatch(p),evidence=V.state(p);
+ const availability=p.availability_snapshot?.schema==='vision-match-availability@1'?{captured_at:p.availability_snapshot.captured_at||null,players:Array.isArray(p.availability_snapshot.players)?p.availability_snapshot.players.filter(x=>x&&UUID.test(x.ref||'')).map(x=>({ref:x.ref,name:x.name||null,number:x.number??null,status:x.status||null})):[]}:null;
  const result={
   schema:'vision-match-report@1',report_type:args.report_type,id:row.id,updated_at:row.updated_at,
   match:{date:p.data||null,time:p.hora||null,venue:p.local||null,opponent:p.adversario||null,state:p.estado||null,
    result:{for:p.golos_favor??null,against:p.golos_contra??null,provenance:p.golos_favor!=null&&p.golos_contra!=null?'introduced_manual':'unknown'},
-   callup:p.callup||null,lineup:p.lineup||null,notes:p.nota_tatica||p.notas||null},
+   callup:p.callup||null,lineup:p.lineup||null,availability_snapshot:availability,notes:p.nota_tatica||p.notas||null},
   registered_events:events,statistics:stats,
   usage:{status:usage.status,period:usage.period,total_ms:usage.total_ms,provenance:'recorded_clock_and_movements',players:usage.players.map(x=>({ref:x.ref,name:x.name||null,number:x.number??null,total_ms:x.elapsed_ms,goalkeeper_ms:x.keeper_ms,entries:x.entries,on_field:x.on_field,positions_played:M.positionsPlayed(p,x.ref).map(role=>M.roles[role])}))},
   analysis:{status:analysis.status,fields:analysis.fields,goals_conceded:analysis.goals_conceded,agent_proposal:analysis.agent_proposal||null},
   video_evidence:evidence.moments,
-  missing_data:{result:p.golos_favor==null||p.golos_contra==null,events:!stats.events_available,registered_events_empty:stats.events_available&&events.length===0,usage:!p.visual_match?.started_at,analysis:!A.hasCoachContent(analysis.fields,analysis.goals_conceded),video:evidence.moments.length===0}
+  missing_data:{result:p.golos_favor==null||p.golos_contra==null,events:!stats.events_available,registered_events_empty:stats.events_available&&events.length===0,usage:!p.visual_match?.started_at,availability_snapshot:!availability,analysis:!A.hasCoachContent(analysis.fields,analysis.goals_conceded),video:evidence.moments.length===0}
  };
  if(args.report_type==='match_sheet')delete result.analysis;
  return result;

@@ -23,7 +23,7 @@ Uma rotação é uma intenção: nunca se executa automaticamente. Quando o minu
 A entrada tem de ser possível nesse momento: quem sai está no campo e quem entra está no banco e disponível. O sistema não inventa a execução de uma sequência de rotações.
 
 ## Durante o jogo
-**Iniciar jogo e contar minutos** exige confirmação e exatamente um GR + quatro jogadores de campo. Congela o alinhamento inicial e os nomes/dorsais dos convocados disponíveis; não copia fotografias nem dados médicos para o histórico de utilização.
+**Iniciar jogo e contar minutos** exige confirmação e exatamente um GR + quatro jogadores de campo. Congela o alinhamento inicial e os nomes/dorsais dos convocados disponíveis; guarda também os UUIDs, nomes, dorsais, estados operacionais e instante dos atletas indisponíveis no snapshot histórico do jogo. Não copia fotografias, diagnósticos ou outros dados médicos para esse snapshot.
 Os titulares começam no minuto zero. Suplentes que ainda não entraram ficam em 00:00.
 **Pausar / intervalo** suspende a contagem. Em pausa durante a 1.ª parte, escolhe explicitamente **Retomar 1.ª parte** ou **Iniciar 2.ª parte**; a segunda ação pede confirmação, persiste o limite entre partes e retoma o relógio sem apagar o tempo ou os minutos já registados. Na 2.ª parte, a ação disponível é **Retomar 2.ª parte**. O início da segunda parte só pode ser marcado uma vez. O tempo é reconstruído por instantes guardados ao fechar/reabrir a app, não pelo número de callbacks do temporizador. O intervalo não entra no tempo total. A alteração do modo de jogo avança a cache da PWA para v99.
 **Registar substituição** escolhe quem sai e quem entra e confirma o instante atual. São permitidas reentradas; a contagem mantém todos os intervalos de utilização.

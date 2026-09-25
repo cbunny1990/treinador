@@ -32,6 +32,10 @@
   return slots;
  }
  function available(p){return !!p&&p.plantel_ativo!==false&&(p.estado_disponibilidade||'disponivel')==='disponivel';}
+ function unavailableSnapshot(players,capturedAt){
+  const statuses=new Set(['indisponivel','lesionado','castigado','ausente']);
+  return {schema:'vision-match-availability@1',captured_at:capturedAt,players:(players||[]).filter(p=>p&&p.plantel_ativo!==false&&uid(p.sync_id)&&statuses.has(String(p.estado_disponibilidade||'disponivel').trim().toLowerCase())).map(p=>({ref:p.sync_id,name:text(p.nome,180),number:p.numero??null,status:String(p.estado_disponibilidade).trim().toLowerCase()}))};
+ }
  function pool(match,players){const called=new Set((match.callup?.player_ids||[]).map(String));return (players||[]).filter(p=>called.has(p.sync_id));}
  function validateSlots(slots,match,players,complete=false){
   if(!slots||typeof slots!=='object'||Array.isArray(slots)||Object.keys(slots).some(k=>!Object.hasOwn(ROLES,k)))throw new Error('Posições inválidas.');
@@ -124,6 +128,7 @@
    if(['cancelado','concluido'].includes(row.estado))throw new Error('Este jogo está cancelado ou concluído. Não se inventam minutos retroativos.');
    s.initial_slots=validateSlots(initialSlots(row),row,players,true);
    s.roster=pool(row,players).filter(available).map(p=>({ref:p.sync_id,name:text(p.nome,180),number:p.numero??null}));
+   row.availability_snapshot=unavailableSnapshot(players,iso);
    s.status='running';s.period=1;s.second_half_started_at=null;s.second_half_started_at_ms=null;s.started_at=iso;s.active_since=iso;s.controller_id=controller;s.elapsed_ms=0;s.events=[];
   }else if(type==='pause'){
    owner();if(s.status!=='running')throw new Error('O cronómetro não está a contar.');settle();s.status='paused';
@@ -175,6 +180,6 @@
   s.revision++;s.updated_at=iso;row.visual_match=s;
   if(s.started_at)replay(row,at);return row;
  }
- root.VisionMatchVisual={schema:SCHEMA,roles:ROLES,systems:SYSTEMS,defaults:DEFAULT,systemFor,systemLayout,states:STATES,state,initialSlots,planKey,pool,available,validateSlots,elapsed,format,replay,positionsPlayed,apply};
+ root.VisionMatchVisual={schema:SCHEMA,roles:ROLES,systems:SYSTEMS,defaults:DEFAULT,systemFor,systemLayout,states:STATES,state,initialSlots,planKey,pool,available,validateSlots,unavailableSnapshot,elapsed,format,replay,positionsPlayed,apply};
  if(typeof module!=='undefined'&&module.exports)module.exports=root.VisionMatchVisual;
 })(globalThis);

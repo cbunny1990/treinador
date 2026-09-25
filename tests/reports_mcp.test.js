@@ -14,6 +14,7 @@ function fixture(){
     {id:'loss-1',type:'loss',at_ms:12000,player_ref:refs[1],zone:'def_c',reason:'pass',note:'Passe intercetado'},
     {id:'goal-1',type:'goal_for',at_ms:44000}
    ]},
+   availability_snapshot:{schema:'vision-match-availability@1',captured_at:'2026-09-20T10:30:00.000Z',players:[{ref:refs[5],name:'Atleta indisponível',number:6,status:'lesionado'}]},
    visual_match:{schema:'vision-match-visual@1',revision:3,status:'paused',period:1,elapsed_ms:60000,started_at:'2026-09-20T10:30:00.000Z',active_since:null,
     initial_slots:{gr:refs[0],def:refs[1],left:refs[2],right:refs[3],front:refs[4]},
     roster:refs.map((ref,i)=>({ref,name:'Atleta '+i,number:i+1})),events:[{id:'sub-1',type:'substitute',at_ms:30000,out_ref:refs[1],in_ref:refs[5]}]
@@ -35,6 +36,7 @@ test('match report MCP is read-only and exposes registered evidence with provena
  const out=await api.executeReportTool(f.admin,c,'get_match_report',{id:MATCH,report_type:'post_match'});
  assert.equal(out.schema,'vision-match-report@1');assert.equal(out.updated_at,'v7');
  assert.deepEqual(out.match.result,{for:2,against:1,provenance:'introduced_manual'});
+ assert.deepEqual(out.match.availability_snapshot,{captured_at:'2026-09-20T10:30:00.000Z',players:[{ref:refs[5],name:'Atleta indisponível',number:6,status:'lesionado'}]});assert.equal(out.missing_data.availability_snapshot,false);
  assert.equal(out.registered_events.length,2);assert.equal(out.statistics.losses.by_reason.pass,1);
  assert.equal(out.statistics.possession.kind,'estimated');assert.equal(out.statistics.possession.value,55);
  assert.equal(out.usage.provenance,'recorded_clock_and_movements');assert.equal(out.usage.players.find(x=>x.ref===refs[1]).total_ms,30000);assert.equal(out.usage.players.find(x=>x.ref===refs[5]).entries,1);
@@ -42,9 +44,9 @@ test('match report MCP is read-only and exposes registered evidence with provena
  assert.equal(out.video_evidence[0].seconds,4);assert.equal(out.missing_data.events,false);assert.equal(f.calls.length,0);
 });
 test('match-sheet report excludes post-match analysis but keeps missing data explicit',async()=>{
- const f=fixture();f.match.payload.match_events.events=[];f.match.payload.golos_favor=null;f.match.payload.golos_contra=null;f.match.payload.visual_match={schema:'vision-match-visual@1',revision:0,status:'not_started',period:1,elapsed_ms:0,roster:[],events:[]};
+ const f=fixture();delete f.match.payload.availability_snapshot;f.match.payload.match_events.events=[];f.match.payload.golos_favor=null;f.match.payload.golos_contra=null;f.match.payload.visual_match={schema:'vision-match-visual@1',revision:0,status:'not_started',period:1,elapsed_ms:0,roster:[],events:[]};
  const out=await api.executeReportTool(f.admin,c,'get_match_report',{external_key:'cup-final',report_type:'match_sheet'});
- assert.equal(Object.hasOwn(out,'analysis'),false);assert.equal(out.missing_data.result,true);assert.equal(out.missing_data.events,false);assert.equal(out.missing_data.registered_events_empty,true);assert.equal(out.missing_data.usage,true);
+ assert.equal(Object.hasOwn(out,'analysis'),false);assert.equal(out.match.availability_snapshot,null);assert.equal(out.missing_data.availability_snapshot,true);assert.equal(out.missing_data.result,true);assert.equal(out.missing_data.events,false);assert.equal(out.missing_data.registered_events_empty,true);assert.equal(out.missing_data.usage,true);
 });
 test('report MCP enforces scope, team isolation and one exact match identity',async()=>{
  const f=fixture();
