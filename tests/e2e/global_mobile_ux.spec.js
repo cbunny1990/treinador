@@ -26,6 +26,28 @@ test("navegação e controlos comuns respeitam alvos de toque em ecrã estreito"
   expect(layout.targets.filter((target) => target.width < 44 || target.height < 44)).toEqual([]);
 });
 
+test("formulários e áreas principais mantêm alvos de toque de 44 px em mobile", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 720 });
+  const routes = [
+    "/", "/#/equipa", "/#/calendario", "/#/planos", "/#/media", "/#/timeline",
+    "/#/definicoes", "/#/evolucao", "/#/epocas", "/#/pesquisa", "/#/capturar",
+    "/#/equipa/jogador/novo", "/#/treinos/novo", "/#/exercicios/novo", "/#/planos/novo", "/#/media/novo",
+  ];
+  const failures = [];
+  for (const route of routes) {
+    await page.goto(route);
+    await page.waitForFunction(() => typeof routerRunning === "boolean" && !routerRunning);
+    const undersized = await page.evaluate(() => Array.from(document.querySelectorAll(
+      "button, a, input:not([type=checkbox]):not([type=radio]):not([type=hidden]), select, textarea",
+    )).filter((element) => element.getClientRects().length > 0).map((element) => {
+      const rect = element.getBoundingClientRect();
+      return { label: element.getAttribute("aria-label") || element.innerText?.trim() || element.tagName.toLowerCase(), width: Math.round(rect.width), height: Math.round(rect.height) };
+    }).filter((target) => target.width < 44 || target.height < 44));
+    if (undersized.length) failures.push({ route, targets: undersized });
+  }
+  expect(failures).toEqual([]);
+});
+
 test("calendário mantém uma única lista e não cria overflow em desktop", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/#/calendario");
