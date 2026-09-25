@@ -1082,9 +1082,21 @@ const RemoteWorkspace = {
       return false;
     }
   },
-  async _syncRecords(remoteTeamId, userId) {
+  async _readSyncTable(table, remoteTeamId) {
     const client = await this.init();
-    const first = await remoteReadTeamRows(client, "workspace_records", remoteTeamId);
+    return remoteReadTeamRows(client, table, remoteTeamId);
+  },
+  async _readSyncSnapshots(remoteTeamId) {
+    const [records, activity, media] = await Promise.all([
+      this._readSyncTable("workspace_records", remoteTeamId),
+      this._readSyncTable("activity_log", remoteTeamId),
+      this._readSyncTable("media_assets", remoteTeamId),
+    ]);
+    return { records, activity, media };
+  },
+  async _syncRecords(remoteTeamId, userId, initialRows) {
+    const client = await this.init();
+    const first = initialRows || await remoteReadTeamRows(client, "workspace_records", remoteTeamId);
     let remoteMap = new Map(first.map((x) => [x.id, x]));
     const result = { pushed: 0, pulled: 0, deleted: 0, conflicts: [] };
     const conflictKeys = new Set();
@@ -1395,10 +1407,10 @@ const RemoteWorkspace = {
     return row;
   },
 
-  async _syncActivity(remoteTeamId, userId) {
+  async _syncActivity(remoteTeamId, userId, initialRows) {
     const client = await this.init();
     const localReferenceCache = new Map();
-    const remoteRows = await remoteReadTeamRows(client, "activity_log", remoteTeamId);
+    const remoteRows = initialRows || await remoteReadTeamRows(client, "activity_log", remoteTeamId);
     const remoteMap = new Map(remoteRows.map((x) => [x.id, x]));
     const result = { pushed: 0, pulled: 0, conflicts: [] };
     const localCandidates = (await DB.listar("activity_items"))
@@ -1543,10 +1555,10 @@ const RemoteWorkspace = {
     };
   },
 
-  async _syncMedia(remoteTeamId, userId) {
+  async _syncMedia(remoteTeamId, userId, initialRows) {
     const client = await this.init();
     const localReferenceCache = new Map();
-    const remoteRows = await remoteReadTeamRows(client, "media_assets", remoteTeamId);
+    const remoteRows = initialRows || await remoteReadTeamRows(client, "media_assets", remoteTeamId);
     let remoteMap = new Map(remoteRows.map((x) => [x.id, x]));
     const result = { pushed: 0, pulled: 0, deleted: 0, conflicts: [] };
     const addConflict = (conflict) => {
@@ -1986,9 +1998,10 @@ const RemoteWorkspace = {
 
     const tombstoneResult = await this._syncTombstones(remoteTeamId);
     const teamResult = await this.syncTeam(remoteTeamId);
-    const recordResult = await this._syncRecords(remoteTeamId, session.user.id);
-    const activityResult = await this._syncActivity(remoteTeamId, session.user.id);
-    const mediaResult = await this._syncMedia(remoteTeamId, session.user.id);
+    const snapshots = await this._readSyncSnapshots(remoteTeamId);
+    const recordResult = await this._syncRecords(remoteTeamId, session.user.id, snapshots.records);
+    const activityResult = await this._syncActivity(remoteTeamId, session.user.id, snapshots.activity);
+    const mediaResult = await this._syncMedia(remoteTeamId, session.user.id, snapshots.media);
     const parts = [tombstoneResult, teamResult, recordResult, activityResult, mediaResult];
 
     for (const part of parts) {

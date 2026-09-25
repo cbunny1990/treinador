@@ -2578,6 +2578,50 @@ test("sincronizações simultâneas serializam, repetem a passagem do mesmo work
   }
 });
 
+test("sync lê em paralelo os snapshots independentes antes de reconciliar registos, atividade e media", async () => {
+  const names = ["getSession", "ensureSelectedTeam", "_syncTombstones", "syncTeam", "_readSyncTable", "_syncRecords", "_syncActivity", "_syncMedia", "_clearSyncRetry"];
+  const originalMethods = Object.fromEntries(names.map((name) => [name, RemoteWorkspace[name]]));
+  const originalStorage = globalThis.localStorage;
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const values = new Map([["treinador.remote.supabase.v1", JSON.stringify({ remoteTeamId: "team-a" })]]);
+  const calls = [];
+  let activeReads = 0;
+  let maxActiveReads = 0;
+  globalThis.localStorage = {
+    getItem(key) { return values.get(key) || null; },
+    setItem(key, value) { values.set(key, value); },
+  };
+  Object.defineProperty(globalThis, "navigator", { value: { onLine: true }, configurable: true });
+  RemoteWorkspace.getSession = async () => ({ user: { id: "coach" } });
+  RemoteWorkspace.ensureSelectedTeam = async () => "team-a";
+  RemoteWorkspace._syncTombstones = async () => { calls.push("tombstones"); return { deleted: 1 }; };
+  RemoteWorkspace.syncTeam = async () => { calls.push("team"); return { pulled: 1 }; };
+  RemoteWorkspace._readSyncTable = async (table) => {
+    calls.push("read:" + table);
+    activeReads++;
+    maxActiveReads = Math.max(maxActiveReads, activeReads);
+    await new Promise((resolve) => setImmediate(resolve));
+    activeReads--;
+    return [{ table }];
+  };
+  RemoteWorkspace._syncRecords = async (_team, user, rows) => { calls.push("records"); assert.equal(user, "coach"); assert.deepEqual(rows, [{ table: "workspace_records" }]); return { pushed: 2 }; };
+  RemoteWorkspace._syncActivity = async (_team, user, rows) => { calls.push("activity"); assert.equal(user, "coach"); assert.deepEqual(rows, [{ table: "activity_log" }]); return { pulled: 3 }; };
+  RemoteWorkspace._syncMedia = async (_team, user, rows) => { calls.push("media"); assert.equal(user, "coach"); assert.deepEqual(rows, [{ table: "media_assets" }]); return { pushed: 4 }; };
+  RemoteWorkspace._clearSyncRetry = () => {};
+  try {
+    const result = await RemoteWorkspace._syncNow();
+    assert.equal(maxActiveReads, 3);
+    assert.deepEqual(calls.slice(0, 2), ["tombstones", "team"]);
+    assert.deepEqual(calls.slice(2, 5).sort(), ["read:activity_log", "read:media_assets", "read:workspace_records"]);
+    assert.deepEqual(calls.slice(5), ["records", "activity", "media"]);
+    assert.deepEqual({ pushed: result.pushed, pulled: result.pulled, deleted: result.deleted }, { pushed: 6, pulled: 4, deleted: 1 });
+  } finally {
+    for (const name of names) RemoteWorkspace[name] = originalMethods[name];
+    globalThis.localStorage = originalStorage;
+    if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator); else delete globalThis.navigator;
+  }
+});
+
 test("nome de ficheiro remoto é normalizado", () => {
   assert.equal(remoteSafeFilename("Vídeo saída 01.mp4"), "Video-saida-01.mp4");
 });
