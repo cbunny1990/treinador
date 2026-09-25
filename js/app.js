@@ -985,6 +985,7 @@ function remoteAccountHTML(status,teams,options){
   }
   var html='<h2 style="font-size:22px;margin:8px 0">Conta ligada</h2><div class="row"><span class="badge ready">Ligado</span><span class="meta">'+esc(status.email||"Sessão ativa")+'</span></div>';
   html+='<div class="form" style="margin-top:16px">';
+  if(teams.some(function(team){return team.cached;}))html+='<div class="notice" role="status">Sem Internet: lista de workspaces guardada nesta conta. A troca só abre dados já confirmados neste dispositivo.</div>';
   if(teams.length){
     html+='<label class="field"><span>Workspace remoto</span><select id="remote-team-select"><option value="">Escolher…</option>'+options+'</select></label>';
     html+='<button class="btn secondary" type="button" data-action="remote-use-team">Usar equipa selecionada</button>';
@@ -1077,7 +1078,7 @@ async function viewSettings(){
     if(accountReads[1]?.error)mcpError=accountReads[1].error.message;else if(accountReads[1])mcpData=accountReads[1].value;
   }
   var options=teams.map(function(team){
-    return '<option value="'+esc(team.id)+'" '+(team.id===status.remoteTeamId?"selected":"")+'>'+esc(team.name)+'</option>';
+    return '<option value="'+esc(team.id)+'" '+(team.id===status.remoteTeamId?"selected":"")+'>'+esc(team.name+(team.cached?" · guardada offline":""))+'</option>';
   }).join("");
   var html='<div class="grid cols-2">';
   html+='<section class="panel hero-main"><div class="kicker">Backend remoto</div><h2 style="font-size:22px;margin:8px 0">Supabase</h2>';

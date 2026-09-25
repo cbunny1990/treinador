@@ -65,6 +65,36 @@ function remoteSaveConfig(config) {
   localStorage.setItem(REMOTE_CONFIG_KEY, JSON.stringify(config || {}));
   return config;
 }
+function remoteCachedTeams(config, userId) {
+  if (!userId || config?.cachedRemoteTeamsUserId !== userId || config?.cachedRemoteTeamsUrl !== config?.url) return [];
+  return (Array.isArray(config.cachedRemoteTeams) ? config.cachedRemoteTeams : [])
+    .filter((team) => remoteIsUuid(team?.id))
+    .map((team) => ({
+      id: team.id,
+      name: remoteText(team.name, 160) || "Equipa sem nome",
+      metadata: team.metadata && typeof team.metadata === "object" && !Array.isArray(team.metadata) ? team.metadata : {},
+      updated_at: remoteText(team.updated_at, 80) || null,
+      cached: true,
+    }));
+}
+function remoteRememberTeams(teams, userId, config = remoteLoadConfig()) {
+  if (!userId) return;
+  const cachedRemoteTeams = (Array.isArray(teams) ? teams : [])
+    .filter((team) => remoteIsUuid(team?.id))
+    .map((team) => ({
+      id: team.id,
+      name: remoteText(team.name, 160) || "Equipa sem nome",
+      metadata: remotePayload(team.metadata && typeof team.metadata === "object" ? team.metadata : {}),
+      updated_at: remoteText(team.updated_at, 80) || null,
+    }));
+  remoteSaveConfig({
+    ...config,
+    cachedRemoteTeams,
+    cachedRemoteTeamsUserId: userId,
+    cachedRemoteTeamsUrl: config.url,
+    cachedRemoteTeamsAt: new Date().toISOString(),
+  });
+}
 function remoteConfigValid(config) {
   const url = remoteText(config?.url, 500);
   const key = remoteText(config?.publishableKey, 1000);
@@ -622,22 +652,36 @@ const RemoteWorkspace = {
     await this.stopRealtime();
     const client = await this.init();
     if (client) await client.auth.signOut();
+    const config = remoteLoadConfig();
+    delete config.cachedRemoteTeams;
+    delete config.cachedRemoteTeamsUserId;
+    delete config.cachedRemoteTeamsUrl;
+    delete config.cachedRemoteTeamsAt;
+    remoteSaveConfig(config);
   },
   async listTeams() {
-    const client = await this.init();
     const session = await this.getSession();
-    if (!client || !session) return [];
+    if (!session) return [];
+    const config = remoteLoadConfig();
+    if (!navigator.onLine) return remoteCachedTeams(config, session.user?.id);
+    const client = await this.init();
+    if (!client) return [];
     const { data, error } = await client.from("teams")
       .select("id,name,metadata,updated_at")
       .order("created_at", { ascending: true });
     if (error) throw error;
-    return data || [];
+    const teams = data || [];
+    remoteRememberTeams(teams, session.user?.id, config);
+    return teams;
   },
   async ensureSelectedTeam() {
     const session = await this.getSession();
     if (!session) return null;
     const teams = await this.listTeams();
     const config = remoteLoadConfig();
+    if (!navigator.onLine) {
+      return teams.some((team) => team.id === config.remoteTeamId) ? config.remoteTeamId : null;
+    }
     const selected = remoteChooseTeamId(config.remoteTeamId, teams);
     if ((config.remoteTeamId || null) !== selected) {
       remoteSaveConfig({ ...config, remoteTeamId: selected });
@@ -659,7 +703,9 @@ const RemoteWorkspace = {
     }).select("id,name,metadata,updated_at").single();
     if (error) throw error;
     const config = remoteLoadConfig();
-    remoteSaveConfig({ ...config, remoteTeamId: data.id });
+    const sessionTeams = remoteCachedTeams(config, session.user?.id).filter((team) => team.id !== data.id);
+    remoteRememberTeams([...sessionTeams, data], session.user?.id, config);
+    remoteSaveConfig({ ...remoteLoadConfig(), remoteTeamId: data.id });
     await DB.atualizar("teams", {
       ...local,
       sync_id: data.id,
@@ -678,7 +724,46 @@ const RemoteWorkspace = {
       config = remoteLoadConfig();
     }
     if (config.remoteTeamId !== id) {
-      if (!navigator.onLine) throw new Error("Liga à Internet antes de trocar de workspace para separar os dados locais com segurança.");
+      if (!navigator.onLine) {
+        const session = await this.getSession();
+        const target = remoteCachedTeams(config, session?.user?.id).find((team) => team.id === id);
+        if (!target) throw new Error("Só podes abrir offline um workspace confirmado anteriormente nesta conta e neste projeto.");
+        const localTeam = await DB.obter("teams", DEFAULT_TEAM_ID);
+        if (localTeam?.sync_dirty) throw new Error("Sincroniza ou resolve primeiro as alterações pendentes do perfil da equipa.");
+        const unassignedStores = [...Object.keys(REMOTE_STORE_KINDS), "media_items", "activity_items"];
+        for (const store of unassignedStores) {
+          const rows = await DB.listar(store);
+          if (rows.some((row) => (row.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID && !row.remote_team_id &&
+            (store !== "exercicios" || row.workspace_v2 || row.sync_id || row.sync_dirty))) {
+            throw new Error("Há registos locais sem equipa remota confirmada. Liga à Internet e consolida-os antes de trocar de workspace.");
+          }
+        }
+        const tombstones = await DB.listar("sync_tombstones");
+        if (tombstones.some((row) => !row.remote_team_id)) {
+          throw new Error("Há eliminações locais sem equipa remota confirmada. Liga à Internet e sincroniza-as antes de trocar de workspace.");
+        }
+        await this.stopRealtime();
+        const teamProfile = {
+          id: localTeam?.id || DEFAULT_TEAM_ID,
+          nome: target.name,
+          clube: target.metadata.clube || null,
+          escalao: target.metadata.escalao || null,
+          epoca: target.metadata.epoca || null,
+          competicao: target.metadata.competicao || null,
+          formato: target.metadata.formato || null,
+          horarios: target.metadata.horarios && typeof target.metadata.horarios === "object" ? target.metadata.horarios : null,
+          staff: target.metadata.staff && typeof target.metadata.staff === "object" ? target.metadata.staff : null,
+          created_at: localTeam?.created_at || new Date().toISOString(),
+          updated_at: target.updated_at || new Date().toISOString(),
+          sync_id: target.id,
+          sync_dirty: false,
+          remote_updated_at: target.updated_at,
+        };
+        await DB.atualizar("teams", teamProfile, { remote: true });
+        remoteSaveConfig({ ...config, remoteTeamId: id });
+        this.scheduleSync(0);
+        return id;
+      }
       const client = await this.init();
       const assignmentTeamId = config.remoteTeamId || id;
       for (const store of [...Object.keys(REMOTE_STORE_KINDS), "media_items", "activity_items"]) {

@@ -862,6 +862,49 @@ test("definições distinguem Realtime degradado sem voltar a desenhar a página
   await expect(page.getByRole("heading", { name: "Definições" })).toBeVisible();
 });
 
+test("Definições permite trocar offline entre workspaces conhecidos sem misturar atletas", async ({ page, context }) => {
+  await page.goto("/");
+  await page.evaluate(async () => {
+    const teamA = "11111111-1111-4111-8111-111111111111";
+    const teamB = "22222222-2222-4222-8222-222222222222";
+    const userId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const url = "https://coach.example.supabase.co";
+    localStorage.setItem("treinador.remote.supabase.v1", JSON.stringify({
+      url, remoteTeamId: teamA, cachedRemoteTeamsUserId: userId, cachedRemoteTeamsUrl: url,
+      cachedRemoteTeams: [
+        { id: teamA, name: "Sub-8 Offline", metadata: { escalao: "Sub-8" }, updated_at: "team-a-v1" },
+        { id: teamB, name: "Sub-9 Offline", metadata: { escalao: "Sub-9" }, updated_at: "team-b-v1" },
+      ],
+    }));
+    RemoteWorkspace.getSession = async () => ({ user: { id: userId } });
+    RemoteWorkspace.status = async () => ({ configured: true, signedIn: true, email: "coach@example.test", remoteTeamId: teamA, conflicts: [], offline: true });
+    RemoteWorkspace.listTeams = async () => [
+      { id: teamA, name: "Sub-8 Offline", cached: true },
+      { id: teamB, name: "Sub-9 Offline", cached: true },
+    ];
+    RemoteWorkspace.stopRealtime = async () => {};
+    RemoteWorkspace.scheduleSync = () => {};
+    MCPConnectors.list = async () => ({ ok: true, connectors: [] });
+    const team = await DB.obter("teams", DEFAULT_TEAM_ID);
+    await DB.atualizar("teams", { ...(team || {}), id: DEFAULT_TEAM_ID, nome: "Sub-8 Offline", sync_id: teamA, remote_updated_at: "team-a-v1", sync_dirty: false }, { remote: true });
+    for (const player of await DB.listar("jogadores")) {
+      await DB.atualizar("jogadores", { ...player, remote_team_id: teamA }, { remote: true });
+    }
+    await DB.criar("jogadores", { team_id: DEFAULT_TEAM_ID, nome: "Atleta só da Sub-9", remote_team_id: teamB, sync_id: "33333333-3333-4333-8333-333333333333", sync_dirty: false }, { remote: true });
+    location.hash = "#/definicoes";
+    await router();
+  });
+  await expect(page.getByText(/Sem Internet: lista de workspaces guardada/)).toBeVisible();
+  await expect(page.locator("#remote-team-select option").filter({ hasText: "Sub-9 Offline · guardada offline" })).toHaveCount(1);
+  await context.setOffline(true);
+  await page.locator("#remote-team-select").selectOption("22222222-2222-4222-8222-222222222222");
+  await page.getByRole("button", { name: "Usar equipa selecionada" }).click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("treinador.remote.supabase.v1")).remoteTeamId)).toBe("22222222-2222-4222-8222-222222222222");
+  const visible = await page.evaluate(async () => (await DB.listar("jogadores")).map((player) => player.nome));
+  expect(visible).toEqual(["Atleta só da Sub-9"]);
+  await expect(page.getByRole("heading", { name: "Definições" })).toBeVisible();
+});
+
 test("alteração offline recebe UUID e eliminação cria tombstone", async ({ page }) => {
   await page.goto("/");
   const state = await page.evaluate(async () => {

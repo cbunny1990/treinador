@@ -570,18 +570,108 @@ test("troca de workspace identifica a origem dos dados legados antes de mudar", 
   }
 });
 
-test("troca de workspace não altera a seleção quando está offline", async () => {
-  const originalStorage = globalThis.localStorage;
-  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator"), originalInit = RemoteWorkspace.init;
-  const values = new Map([["treinador.remote.supabase.v1", JSON.stringify({ remoteTeamId: "team-a" })]]);
+test("lista offline só mostra workspaces confirmados para a mesma conta e projeto", async () => {
+  const originalStorage = globalThis.localStorage, originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const originalGetSession = RemoteWorkspace.getSession, originalInit = RemoteWorkspace.init;
+  const teamA = "11111111-1111-4111-8111-111111111111", teamB = "22222222-2222-4222-8222-222222222222";
+  const userId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", url = "https://coach.example.supabase.co";
+  const remoteTeams = [{ id: teamA, name: "Sub-8", metadata: { escalao: "Sub-8" }, updated_at: "v1" }, { id: teamB, name: "Sub-9", metadata: { escalao: "Sub-9" }, updated_at: "v2" }];
+  const values = new Map([["treinador.remote.supabase.v1", JSON.stringify({ url, remoteTeamId: teamA })]]);
+  globalThis.localStorage = { getItem(key) { return values.get(key) || null; }, setItem(key, value) { values.set(key, value); } };
+  const nav = { onLine: true };
+  Object.defineProperty(globalThis, "navigator", { value: nav, configurable: true });
+  RemoteWorkspace.getSession = async () => ({ user: { id: userId } });
+  RemoteWorkspace.init = async () => ({ from(table) { assert.equal(table, "teams"); return { select() { return this; }, order() { return Promise.resolve({ data: remoteTeams, error: null }); } }; } });
+  try {
+    assert.deepEqual(await RemoteWorkspace.listTeams(), remoteTeams);
+    nav.onLine = false;
+    RemoteWorkspace.init = async () => { throw new Error("offline não deve iniciar chamadas de rede"); };
+    const teams = await RemoteWorkspace.listTeams();
+    assert.deepEqual(teams.map((team) => [team.id, team.name, team.cached]), [[teamA, "Sub-8", true], [teamB, "Sub-9", true]]);
+    const config = JSON.parse(values.get("treinador.remote.supabase.v1"));
+    config.cachedRemoteTeamsUserId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    values.set("treinador.remote.supabase.v1", JSON.stringify(config));
+    assert.deepEqual(await RemoteWorkspace.listTeams(), []);
+  } finally {
+    RemoteWorkspace.getSession = originalGetSession;
+    RemoteWorkspace.init = originalInit;
+    globalThis.localStorage = originalStorage;
+    if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator); else delete globalThis.navigator;
+  }
+});
+
+test("troca offline usa snapshot da equipa conhecida e mantém os registos separados", async () => {
+  const originalStorage = globalThis.localStorage, originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const originalGetSession = RemoteWorkspace.getSession, originalStopRealtime = RemoteWorkspace.stopRealtime;
+  const originalSchedule = RemoteWorkspace.scheduleSync, originalDB = globalThis.DB, originalTeamId = globalThis.DEFAULT_TEAM_ID;
+  const teamA = "11111111-1111-4111-8111-111111111111", teamB = "22222222-2222-4222-8222-222222222222";
+  const userId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", url = "https://coach.example.supabase.co";
+  const values = new Map([["treinador.remote.supabase.v1", JSON.stringify({ url, remoteTeamId: teamA, cachedRemoteTeamsUrl: url, cachedRemoteTeamsUserId: userId, cachedRemoteTeams: [{ id: teamA, name: "Sub-8", metadata: { escalao: "Sub-8", clube: "Clube A" }, updated_at: "v1" }, { id: teamB, name: "Sub-9", metadata: { escalao: "Sub-9", clube: "Clube B" }, updated_at: "v2" }] })]]);
+  const rows = { teams: { id: "default", nome: "Sub-8", clube: "Clube A", sync_id: teamA, remote_updated_at: "v1", sync_dirty: false }, jogadores: [{ id: 1, team_id: "default", remote_team_id: teamA }, { id: 2, team_id: "default", remote_team_id: teamB }], jogos: [], exercicios: [], treinos: [], memory_items: [], workspace_documents: [], game_models: [], media_items: [], activity_items: [], sync_tombstones: [] };
   globalThis.localStorage = { getItem(key) { return values.get(key) || null; }, setItem(key, value) { values.set(key, value); } };
   Object.defineProperty(globalThis, "navigator", { value: { onLine: false }, configurable: true });
-  RemoteWorkspace.init = async () => { throw new Error("não deve ligar"); };
+  globalThis.DEFAULT_TEAM_ID = "default";
+  globalThis.DB = { async listar(store) { return (rows[store] || []).slice(); }, async obter(store) { return rows[store] || null; }, async atualizar(store, row) { rows[store] = row; return row; } };
+  RemoteWorkspace.getSession = async () => ({ user: { id: userId } });
+  RemoteWorkspace.stopRealtime = async () => {};
+  let scheduled = 0;
+  RemoteWorkspace.scheduleSync = () => { scheduled++; };
   try {
-    await assert.rejects(RemoteWorkspace.useTeam("team-b"), /Liga à Internet antes de trocar/);
-    assert.equal(JSON.parse(values.get("treinador.remote.supabase.v1")).remoteTeamId, "team-a");
+    assert.equal(await RemoteWorkspace.useTeam(teamB), teamB);
+    assert.equal(JSON.parse(values.get("treinador.remote.supabase.v1")).remoteTeamId, teamB);
+    assert.equal(rows.teams.nome, "Sub-9");
+    assert.equal(rows.teams.clube, "Clube B");
+    assert.equal(rows.teams.remote_updated_at, "v2");
+    assert.deepEqual(rows.jogadores.map((row) => row.remote_team_id), [teamA, teamB]);
+    assert.equal(scheduled, 1, "reconexão tentará sincronizar a equipa selecionada");
   } finally {
-    RemoteWorkspace.init = originalInit;
+    RemoteWorkspace.getSession = originalGetSession;
+    RemoteWorkspace.stopRealtime = originalStopRealtime;
+    RemoteWorkspace.scheduleSync = originalSchedule;
+    globalThis.DB = originalDB;
+    globalThis.DEFAULT_TEAM_ID = originalTeamId;
+    globalThis.localStorage = originalStorage;
+    if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator); else delete globalThis.navigator;
+  }
+});
+
+test("troca offline recusa equipa desconhecida, registos órfãos e perfil por sincronizar", async () => {
+  const originalStorage = globalThis.localStorage, originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const originalGetSession = RemoteWorkspace.getSession, originalStopRealtime = RemoteWorkspace.stopRealtime;
+  const originalSchedule = RemoteWorkspace.scheduleSync, originalDB = globalThis.DB, originalTeamId = globalThis.DEFAULT_TEAM_ID;
+  const teamA = "11111111-1111-4111-8111-111111111111", teamB = "22222222-2222-4222-8222-222222222222";
+  const userId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", url = "https://coach.example.supabase.co";
+  const values = new Map([["treinador.remote.supabase.v1", JSON.stringify({ url, remoteTeamId: teamA, cachedRemoteTeamsUrl: url, cachedRemoteTeamsUserId: userId, cachedRemoteTeams: [{ id: teamA, name: "Sub-8", metadata: {}, updated_at: "v1" }, { id: teamB, name: "Sub-9", metadata: {}, updated_at: "v2" }] })]]);
+  const rows = { teams: { id: "default", nome: "Sub-8", sync_id: teamA, remote_updated_at: "v1", sync_dirty: false }, jogadores: [], jogos: [], exercicios: [], treinos: [], memory_items: [], workspace_documents: [], game_models: [], media_items: [], activity_items: [], sync_tombstones: [] };
+  globalThis.localStorage = { getItem(key) { return values.get(key) || null; }, setItem(key, value) { values.set(key, value); } };
+  Object.defineProperty(globalThis, "navigator", { value: { onLine: false }, configurable: true });
+  globalThis.DEFAULT_TEAM_ID = "default";
+  globalThis.DB = { async listar(store) { return (rows[store] || []).slice(); }, async obter(store) { return rows[store] || null; }, async atualizar(store, row) { rows[store] = row; return row; } };
+  RemoteWorkspace.getSession = async () => ({ user: { id: userId } });
+  RemoteWorkspace.stopRealtime = async () => {};
+  RemoteWorkspace.scheduleSync = () => {};
+  try {
+    await assert.rejects(RemoteWorkspace.useTeam("33333333-3333-4333-8333-333333333333"), /workspace confirmado anteriormente/);
+    RemoteWorkspace.getSession = async () => ({ user: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" } });
+    await assert.rejects(RemoteWorkspace.useTeam(teamB), /workspace confirmado anteriormente/);
+    RemoteWorkspace.getSession = async () => ({ user: { id: userId } });
+    assert.equal(JSON.parse(values.get("treinador.remote.supabase.v1")).remoteTeamId, teamA);
+    rows.jogadores.push({ id: 3, team_id: "default", remote_team_id: null });
+    await assert.rejects(RemoteWorkspace.useTeam(teamB), /registos locais sem equipa remota confirmada/);
+    assert.equal(JSON.parse(values.get("treinador.remote.supabase.v1")).remoteTeamId, teamA);
+    rows.jogadores = [];
+    rows.sync_tombstones.push({ id: 1, remote_team_id: null });
+    await assert.rejects(RemoteWorkspace.useTeam(teamB), /eliminações locais sem equipa remota confirmada/);
+    rows.sync_tombstones = [];
+    rows.teams = { ...rows.teams, sync_dirty: true };
+    await assert.rejects(RemoteWorkspace.useTeam(teamB), /alterações pendentes do perfil/);
+    assert.equal(JSON.parse(values.get("treinador.remote.supabase.v1")).remoteTeamId, teamA);
+  } finally {
+    RemoteWorkspace.getSession = originalGetSession;
+    RemoteWorkspace.stopRealtime = originalStopRealtime;
+    RemoteWorkspace.scheduleSync = originalSchedule;
+    globalThis.DB = originalDB;
+    globalThis.DEFAULT_TEAM_ID = originalTeamId;
     globalThis.localStorage = originalStorage;
     if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator); else delete globalThis.navigator;
   }
