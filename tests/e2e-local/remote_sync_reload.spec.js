@@ -121,6 +121,53 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
     }, gameSyncId);
     expect(phoneMatch).toMatchObject({ adversario: "Jogo de sincronização após reload", sync_dirty: false });
 
+    const weeklyPlanSyncId = crypto.randomUUID();
+    const weekStart = await page.evaluate(() => TeamDevelopment.monday(new Date().toISOString().slice(0, 10)));
+    const desktopWeeklyPlan = await page.evaluate(async ({ syncId, weekStart }) => {
+      const plan = TeamDevelopment.saveWeek(null, {
+        week_start: weekStart,
+        objective: "Foco semanal criado no PC",
+        evaluation: { summary: "", evidence: [] },
+      }, { expected_revision: 0 });
+      const id = await DB.criar("workspace_documents", {
+        team_id: DEFAULT_TEAM_ID, sync_id: syncId, type: "weekly_plan",
+        external_key: "team-week:" + weekStart, title: "Semana · " + weekStart,
+        body: JSON.stringify(plan), status: "ready", target_date: weekStart,
+      });
+      const result = await RemoteWorkspace.syncNow();
+      return { id, conflicts: result.conflicts, row: await DB.obter("workspace_documents", id) };
+    }, { syncId: weeklyPlanSyncId, weekStart });
+    expect(desktopWeeklyPlan.conflicts).toEqual([]);
+    expect(desktopWeeklyPlan.row.sync_dirty).toBe(false);
+
+    const weeklyPlanOnPhone = await phone.evaluate(async (syncId) => {
+      const result = await RemoteWorkspace.syncNow();
+      const rows = (await DB.listar("workspace_documents")).filter((item) => item.sync_id === syncId);
+      return { conflicts: result.conflicts, count: rows.length, sync_id: rows[0]?.sync_id, dirty: rows[0]?.sync_dirty };
+    }, weeklyPlanSyncId);
+    expect(weeklyPlanOnPhone).toEqual({ conflicts: [], count: 1, sync_id: weeklyPlanSyncId, dirty: false });
+    await expect(phone.locator("[data-workspace-current-week]")).toContainText("Foco semanal criado no PC");
+
+    await mobileContext.setOffline(true);
+    await phone.evaluate(async (syncId) => {
+      const row = (await DB.listar("workspace_documents")).find((item) => item.sync_id === syncId);
+      const prior = TeamDevelopment.week(row);
+      const updated = TeamDevelopment.saveWeek(row, {
+        ...prior, objective: "Foco semanal editado no telemóvel",
+      }, { expected_revision: prior.revision });
+      await DB.modificar("workspace_documents", row.id, (current) => ({ ...current, body: JSON.stringify(updated) }));
+    }, weeklyPlanSyncId);
+    await mobileContext.setOffline(false);
+    const phoneWeeklyPush = await phone.evaluate(async () => RemoteWorkspace.syncNow());
+    expect(phoneWeeklyPush.conflicts).toEqual([]);
+    const weeklyPlanOnDesktop = await page.evaluate(async (syncId) => {
+      const result = await RemoteWorkspace.syncNow();
+      const rows = (await DB.listar("workspace_documents")).filter((item) => item.sync_id === syncId);
+      return { conflicts: result.conflicts, count: rows.length, objective: TeamDevelopment.week(rows[0]).objective, dirty: rows[0]?.sync_dirty };
+    }, weeklyPlanSyncId);
+    expect(weeklyPlanOnDesktop).toEqual({ conflicts: [], count: 1, objective: "Foco semanal editado no telemóvel", dirty: false });
+    await expect(page.locator("[data-workspace-current-week]")).toContainText("Foco semanal editado no telemóvel");
+
     await mobileContext.setOffline(true);
     await phone.evaluate(async (id) => {
       await DB.modificar("jogos", id, (row) => ({ ...row, adversario: "Editado offline no telemóvel" }));
