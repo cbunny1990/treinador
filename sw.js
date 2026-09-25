@@ -1,5 +1,5 @@
 // Service worker - app shell offline.
-const CACHE = "vision-coach-v174";
+const CACHE = "vision-coach-v175";
 const APPROVED_IMAGE_CACHE = "vision-coach-approved-exercises-v1";
 const APPROVED_IMAGES = [
   "./assets/exercises/approved-20260922/01_ativacao_conduzir_passar_dar_opcao.png",
@@ -79,8 +79,9 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
-  const url=new URL(event.request.url);
-  if(url.origin===self.location.origin&&APPROVED_IMAGES.some(asset=>url.href===new URL(asset,self.registration.scope).href)){
+  const url = new URL(event.request.url);
+  if (url.origin !== self.location.origin) return;
+  if (APPROVED_IMAGES.some((asset) => url.href === new URL(asset, self.registration.scope).href)) {
     event.respondWith(caches.open(APPROVED_IMAGE_CACHE).then(async(cache)=>{
       const saved=await cache.match(event.request);if(saved) return saved;
       const response=await fetch(event.request);
@@ -89,11 +90,32 @@ self.addEventListener("fetch", (event) => {
     }));
     return;
   }
-  event.respondWith(
-    fetch(event.request, { cache: "no-store" }).then((response) => {
-      const copy = response.clone();
-      caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+  const shellAsset = ASSETS
+    .map((asset) => new URL(asset, self.registration.scope))
+    .find((asset) => asset.pathname === url.pathname);
+  const navigation = event.request.mode === "navigate";
+  if (!shellAsset && !navigation) return;
+
+  event.respondWith((async () => {
+    try {
+      const response = await fetch(event.request, { cache: "no-store" });
+      const cacheControl = response.headers.get("cache-control") || "";
+      const hasCredentials = event.request.headers.has("authorization") || event.request.headers.has("cookie");
+      if (shellAsset && !hasCredentials && response.ok && response.type !== "opaque" && !/\b(?:private|no-store)\b/i.test(cacheControl)) {
+        const cache = await caches.open(CACHE);
+        await cache.put(shellAsset.href, response.clone());
+      }
       return response;
-    }).catch(() => caches.match(event.request).then((cached) => cached || caches.match("./index.html")))
-  );
+    } catch {
+      const cache = await caches.open(CACHE);
+      const cached = shellAsset ? await cache.match(shellAsset.href) : null;
+      if (cached) return cached;
+      if (navigation) {
+        const index = new URL("./index.html", self.registration.scope).href;
+        const cachedIndex = await cache.match(index);
+        if (cachedIndex) return cachedIndex;
+      }
+      return Response.error();
+    }
+  })());
 });
