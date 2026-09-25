@@ -2,6 +2,7 @@
 
 const REMOTE_CONFIG_KEY = "treinador.remote.supabase.v1";
 const REMOTE_TUS_THRESHOLD = 6 * 1024 * 1024;
+const REMOTE_SYNC_PAGE_SIZE = 500;
 const REMOTE_DEFAULT_CONFIG = {
   url: "https://rsydvhbsxzdoprekefij.supabase.co",
   publishableKey: "sb_publishable_0DwyNhlIJijcAr3u3cG51w_3VP_2vmC",
@@ -109,6 +110,30 @@ function remoteFreshLocalRecord(row) {
   const fresh = { ...row };
   delete fresh.id;
   return fresh;
+}
+
+async function remoteReadTeamRows(client, table, teamId) {
+  const rows = [];
+  let afterId = null;
+  while (true) {
+    let query = client.from(table).select("*").eq("team_id", teamId);
+    const canPage = typeof query.gt === "function" && typeof query.order === "function" && typeof query.limit === "function";
+    if (canPage) {
+      if (afterId) query = query.gt("id", afterId);
+      query = query.order("id", { ascending: true }).limit(REMOTE_SYNC_PAGE_SIZE);
+    }
+    const result = await query;
+    if (result.error) throw result.error;
+    const page = Array.isArray(result.data) ? result.data : [];
+    if (!page.length) return rows;
+    rows.push(...page);
+    if (!canPage) return rows;
+    const nextId = page[page.length - 1]?.id;
+    if (nextId == null || String(nextId) === String(afterId || "")) {
+      throw new Error("A paginação da sincronização não avançou para o próximo registo.");
+    }
+    afterId = String(nextId);
+  }
 }
 
 function remoteIdentityKey(kind, payload) {
@@ -1020,10 +1045,8 @@ const RemoteWorkspace = {
   },
   async _syncRecords(remoteTeamId, userId) {
     const client = await this.init();
-    const first = await client.from("workspace_records")
-      .select("*").eq("team_id", remoteTeamId);
-    if (first.error) throw first.error;
-    let remoteMap = new Map((first.data || []).map((x) => [x.id, x]));
+    const first = await remoteReadTeamRows(client, "workspace_records", remoteTeamId);
+    let remoteMap = new Map(first.map((x) => [x.id, x]));
     const result = { pushed: 0, pulled: 0, deleted: 0, conflicts: [] };
     const conflictKeys = new Set();
     const addConflict = (conflict) => {
@@ -1141,10 +1164,8 @@ const RemoteWorkspace = {
       }
     }
 
-    const refreshed = await client.from("workspace_records")
-      .select("*").eq("team_id", remoteTeamId);
-    if (refreshed.error) throw refreshed.error;
-    remoteMap = new Map((refreshed.data || []).map((x) => [x.id, x]));
+    const refreshed = await remoteReadTeamRows(client, "workspace_records", remoteTeamId);
+    remoteMap = new Map(refreshed.map((x) => [x.id, x]));
 
     const pendingDeletes = new Set((await DB.listar("sync_tombstones"))
       .filter((item) => !item.remote_team_id || item.remote_team_id === remoteTeamId)
@@ -1259,10 +1280,8 @@ const RemoteWorkspace = {
 
   async _syncActivity(remoteTeamId, userId) {
     const client = await this.init();
-    const remoteRes = await client.from("activity_log")
-      .select("*").eq("team_id", remoteTeamId).order("created_at", { ascending: true });
-    if (remoteRes.error) throw remoteRes.error;
-    const remoteMap = new Map((remoteRes.data || []).map((x) => [x.id, x]));
+    const remoteRows = await remoteReadTeamRows(client, "activity_log", remoteTeamId);
+    const remoteMap = new Map(remoteRows.map((x) => [x.id, x]));
     const result = { pushed: 0, pulled: 0, conflicts: [] };
     const localCandidates = (await DB.listar("activity_items"))
       .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID);
@@ -1408,10 +1427,8 @@ const RemoteWorkspace = {
 
   async _syncMedia(remoteTeamId, userId) {
     const client = await this.init();
-    const remoteRes = await client.from("media_assets")
-      .select("*").eq("team_id", remoteTeamId);
-    if (remoteRes.error) throw remoteRes.error;
-    let remoteMap = new Map((remoteRes.data || []).map((x) => [x.id, x]));
+    const remoteRows = await remoteReadTeamRows(client, "media_assets", remoteTeamId);
+    let remoteMap = new Map(remoteRows.map((x) => [x.id, x]));
     const result = { pushed: 0, pulled: 0, deleted: 0, conflicts: [] };
     const addConflict = (conflict) => {
       if (!result.conflicts.some((item) => item.sync_id === conflict.sync_id && item.reason === conflict.reason)) result.conflicts.push(conflict);
@@ -1504,10 +1521,8 @@ const RemoteWorkspace = {
       result.pushed++;
     }
 
-    const refreshed = await client.from("media_assets")
-      .select("*").eq("team_id", remoteTeamId);
-    if (refreshed.error) throw refreshed.error;
-    remoteMap = new Map((refreshed.data || []).map((x) => [x.id, x]));
+    const refreshed = await remoteReadTeamRows(client, "media_assets", remoteTeamId);
+    remoteMap = new Map(refreshed.map((x) => [x.id, x]));
     localMap = new Map([...await this._localBySyncId("media_items")].filter(([, row]) => remoteRowBelongsToTeam(row, remoteTeamId)));
     const pendingDeletes = new Set((await DB.listar("sync_tombstones"))
       .filter((item) => item.store === "media_items" && (!item.remote_team_id || item.remote_team_id === remoteTeamId))

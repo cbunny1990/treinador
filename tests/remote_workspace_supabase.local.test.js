@@ -577,6 +577,23 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.equal(pcProfileCleared.foto, null);
     assert.equal(pcProfileCleared.profile_media_ref, undefined);
     assert.equal((await devices[0].listar("media_items")).length, 0);
+
+    const overflowRows = Array.from({ length: 1007 }, (_, index) => ({
+      id: crypto.randomUUID(), team_id: teamId, kind: "document",
+      payload: { type: "note", title: `Histórico ${index + 1}`, body: "Registo sintético de paginação", external_key: `sync-page-${index + 1}` },
+      actor_type: "human", actor_label: "Teste de integração", created_by: owner.user.id,
+    }));
+    for (let start = 0; start < overflowRows.length; start += 200) {
+      const inserted = await admin.from("workspace_records").insert(overflowRows.slice(start, start + 200));
+      assert.ifError(inserted.error);
+    }
+    globalThis.DB = devices[1];
+    RemoteWorkspace.init = async () => coach.client;
+    const paginatedSync = await RemoteWorkspace._syncRecords(teamId, coach.user.id);
+    assert.equal(paginatedSync.pulled, overflowRows.length, "A leitura em páginas deve ultrapassar o max_rows da Data API sem perder documentos.");
+    const phoneOverflowRows = (await devices[1].listar("workspace_documents")).filter((row) => row.external_key?.startsWith("sync-page-"));
+    assert.equal(phoneOverflowRows.length, overflowRows.length);
+    assert.equal(new Set(phoneOverflowRows.map((row) => row.sync_id)).size, overflowRows.length, "Páginas não podem gerar duplicados locais.");
   } finally {
     RemoteWorkspace.init = original.init;
     globalThis.DB = original.db;

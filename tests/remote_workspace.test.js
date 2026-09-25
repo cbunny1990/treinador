@@ -1129,26 +1129,30 @@ test("mapeamento store/kind é reversível", () => {
   }
 });
 
-function createSharedRemoteWorkspace() {
-  const tables = { workspace_records: [], media_assets: [] };
+function createSharedRemoteWorkspace({ maxRows = 1000 } = {}) {
+  const tables = { workspace_records: [], media_assets: [], activity_log: [] };
   const rows = tables.workspace_records;
   const mediaRows = tables.media_assets;
+  const activityRows = tables.activity_log;
   const files = new Map();
   let revision = 0;
   const stamp = () => `v${++revision}`;
   const matches = (row, filters) => filters.every(([op, key, value]) =>
-    op === "eq" ? row[key] === value : op === "in" ? value.includes(row[key]) : (row[key] ?? null) === value
+    op === "eq" ? row[key] === value : op === "gt" ? String(row[key]) > String(value) : op === "in" ? value.includes(row[key]) : (row[key] ?? null) === value
   );
   return {
     rows,
     client: {
       from(table) {
         const query = {
-          filters: [], action: "select", patch: null, input: null,
+          filters: [], action: "select", patch: null, input: null, sort: null, pageLimit: null,
           select() { return this; },
           eq(key, value) { this.filters.push(["eq", key, value]); return this; },
+          gt(key, value) { this.filters.push(["gt", key, value]); return this; },
           in(key, values) { this.filters.push(["in", key, values]); return this; },
           is(key, value) { this.filters.push(["is", key, value]); return this; },
+          order(key, options = {}) { this.sort = { key, ascending: options.ascending !== false }; return this; },
+          limit(value) { this.pageLimit = value; return this; },
           insert(input) { this.action = "insert"; this.input = input; return this; },
           update(patch) { this.action = "update"; this.patch = patch; return this; },
           async execute() {
@@ -1159,7 +1163,9 @@ function createSharedRemoteWorkspace() {
               tableRows.push(saved);
               return { data: [saved], error: null };
             }
-            const found = tableRows.filter((row) => matches(row, this.filters));
+            let found = tableRows.filter((row) => matches(row, this.filters));
+            if (this.sort) found = found.slice().sort((a, b) => String(a[this.sort.key]).localeCompare(String(b[this.sort.key])) * (this.sort.ascending ? 1 : -1));
+            if (this.pageLimit != null) found = found.slice(0, Math.min(this.pageLimit, maxRows));
             if (this.action === "update") {
               for (const row of found) Object.assign(row, this.patch, { updated_at: stamp() });
             }
@@ -1185,7 +1191,7 @@ function createSharedRemoteWorkspace() {
         },
       },
     },
-    mediaRows,
+    mediaRows, activityRows,
     files,
   };
 }
@@ -1241,13 +1247,13 @@ function createDeviceDatabase() {
   };
 }
 
-async function withTwoDeviceSync(run) {
+async function withTwoDeviceSync(run, options = {}) {
   const originalInit = RemoteWorkspace.init;
   const originalDB = globalThis.DB;
   const originalTeam = globalThis.DEFAULT_TEAM_ID;
   const originalMediaSubjectKey = globalThis.mediaSubjectKey;
   const remoteTeamId = "team-shared";
-  const remote = createSharedRemoteWorkspace();
+  const remote = createSharedRemoteWorkspace(options);
   const devices = [createDeviceDatabase(), createDeviceDatabase()];
   globalThis.DEFAULT_TEAM_ID = "default";
   globalThis.mediaSubjectKey = (team, type, id) => [team, type, id].join("|");
@@ -1310,6 +1316,50 @@ test("dois dispositivos sincronizam criação, edição e eliminação sem dupli
     assert.equal((await devices[1].listar("jogos")).length, 0);
     assert.equal(remote.rows.length, 1);
   });
+});
+
+test("sync pagina todos os registos, media e atividade acima do limite de linhas da API", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    const count = 1007;
+    const idAt = (group, index) => `${group}-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
+    remote.rows.push(...Array.from({ length: count }, (_, index) => ({
+      id: idAt("80000000", index), team_id: remoteTeamId, kind: "document",
+      payload: { type: "note", title: `Nota ${index + 1}`, body: "Histórico sintético", external_key: `page-note-${index + 1}` },
+      actor_type: "human", actor_label: "Treinador", updated_at: `v${index + 1}`, deleted_at: null,
+    })));
+    remote.activityRows.push(...Array.from({ length: count }, (_, index) => ({
+      id: idAt("81000000", index), team_id: remoteTeamId, actor_type: "human", actor_label: "Treinador",
+      action: "updated", summary: `Atividade ${index + 1}`, entity_type: null, entity_ref: null,
+      metadata: {}, created_by: null, created_at: `2026-09-${String((index % 28) + 1).padStart(2, "0")}T10:00:00.000Z`,
+    })));
+
+    useDevice(1);
+    const records = await RemoteWorkspace._syncRecords(remoteTeamId, "coach");
+    assert.equal(records.pulled, count);
+    const localDocuments = await devices[1].listar("workspace_documents");
+    assert.equal(localDocuments.length, count);
+    assert.ok(localDocuments.some((row) => row.sync_id === idAt("80000000", count - 1)));
+
+    const playerRef = "82000000-0000-4000-8000-000000000001";
+    await devices[1].criar("jogadores", {
+      team_id: "default", sync_id: playerRef, remote_team_id: remoteTeamId,
+      remote_updated_at: "player-v1", sync_dirty: false, nome: "Atleta sintético",
+    });
+    remote.mediaRows.push(...Array.from({ length: count }, (_, index) => ({
+      id: idAt("83000000", index), team_id: remoteTeamId, subject_type: "player", subject_ref: playerRef,
+      media_type: "evidence", title: `Evidência ${index + 1}`, note: null,
+      external_url: `https://example.test/evidence/${index + 1}`, storage_path: null,
+      file_name: null, mime_type: null, size_bytes: null, actor_type: "human", actor_label: "Treinador",
+      created_by: null, created_at: "2026-09-25T10:00:00.000Z", updated_at: `v${index + 1}`, deleted_at: null,
+    })));
+    const media = await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+    assert.equal(media.pulled, count);
+    assert.equal((await devices[1].listar("media_items")).length, count);
+
+    const activity = await RemoteWorkspace._syncActivity(remoteTeamId, "coach");
+    assert.equal(activity.pulled, count);
+    assert.equal((await devices[1].listar("activity_items")).length, count);
+  }, { maxRows: 250 });
 });
 
 test("conflito de external_key preserva UUID e conteúdo da edição local pendente", async () => {
