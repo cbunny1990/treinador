@@ -19,6 +19,10 @@ const functionSource = fs.readFileSync(
   path.join(__dirname, "..", "supabase", "functions", "head-coach-gateway", "index.ts"),
   "utf8"
 );
+const gatewayHandlerSource = fs.readFileSync(
+  path.join(__dirname, "..", "supabase", "functions", "head-coach-gateway", "handler.mjs"),
+  "utf8"
+);
 const mcpSource = fs.readFileSync(path.join(__dirname, "..", "supabase", "functions", "vision-coach-mcp", "index.ts"), "utf8");
 const supabaseConfig = fs.readFileSync(path.join(__dirname, "..", "supabase", "config.toml"), "utf8");
 
@@ -55,12 +59,13 @@ test("migrações e Edge Function não contêm credenciais privadas", () => {
   assert.doesNotMatch(sql, /sb_secret_/i);
   assert.doesNotMatch(sql, /SUPABASE_SERVICE_ROLE_KEY\s*[:=]\s*['"][^'"]+/i);
   assert.doesNotMatch(functionSource, /sb_secret_/i);
-  assert.match(functionSource, /Deno\.env\.get\("SUPABASE_SERVICE_ROLE_KEY"\)/);
+  assert.doesNotMatch(gatewayHandlerSource, /sb_secret_/i);
+  assert.match(gatewayHandlerSource, /env\.get\("SUPABASE_SERVICE_ROLE_KEY"\)/);
 });
 
 test("gateway versionado mantém JWT e acesso exclusivo de service_role", () => {
   assert.match(supabaseConfig, /\[functions\.head-coach-gateway\][\s\S]*verify_jwt\s*=\s*true/i);
-  assert.match(functionSource, /jwt\.role\s*!==\s*"service_role"/i);
+  assert.match(gatewayHandlerSource, /jwt\.role\s*!==\s*"service_role"/i);
   assert.match(sql, /grant execute on function[\s\S]*to service_role/i);
 });
 

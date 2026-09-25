@@ -14,6 +14,7 @@ const migrations = fs.readdirSync(path.join(root, "supabase", "migrations"))
 const manager = fs.readFileSync(path.join(root, "supabase", "functions", "vision-coach-connectors", "index.ts"), "utf8");
 const mcp = fs.readFileSync(path.join(root, "supabase", "functions", "vision-coach-mcp", "index.ts"), "utf8");
 const gateway = fs.readFileSync(path.join(root, "supabase", "functions", "head-coach-gateway", "index.ts"), "utf8");
+const gatewayHandler = fs.readFileSync(path.join(root, "supabase", "functions", "head-coach-gateway", "handler.mjs"), "utf8");
 const gatewayPolicy = fs.readFileSync(path.join(root, "supabase", "functions", "head-coach-gateway", "policy.mjs"), "utf8");
 const gatewayWriteMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20260923145609_constrain_head_coach_generic_writes.sql"), "utf8");
 const config = fs.readFileSync(path.join(root, "supabase", "config.toml"), "utf8");
@@ -125,13 +126,13 @@ test("gestor MCP aceita todos os headers CORS usados pelo supabase-js", () => {
 });
 
 test("gateway genérico do Head Coach exige confirmação explícita e revisão nos writes", () => {
-  assert.match(gateway, /function requireWriteConfirmation\(\)[\s\S]*params\.confirmed !== true/);
-  assert.match(gateway, /function requireCurrentRevision\(\)[\s\S]*expected_updated_at_required/);
+  assert.match(gatewayHandler, /function requireWriteConfirmation\(\)[\s\S]*params\.confirmed !== true/);
+  assert.match(gatewayHandler, /function requireCurrentRevision\(\)[\s\S]*expected_updated_at_required/);
   for (const operation of ["put_record", "soft_delete_record", "restore_record", "register_media", "soft_delete_media"]) {
-    const start = gateway.indexOf(`case "${operation}":`);
+    const start = gatewayHandler.indexOf(`case "${operation}":`);
     assert.notEqual(start, -1, `${operation} case exists`);
-    const next = gateway.indexOf("\n      case \"", start + 1);
-    const block = gateway.slice(start, next < 0 ? undefined : next);
+    const next = gatewayHandler.indexOf("\n      case \"", start + 1);
+    const block = gatewayHandler.slice(start, next < 0 ? undefined : next);
     assert.match(block, /requireWriteConfirmation\(\)/, `${operation} confirmation`);
     if (["soft_delete_record", "restore_record", "soft_delete_media"].includes(operation)) {
       assert.match(block, /requireCurrentRevision\(\)/, `${operation} revision`);
@@ -143,16 +144,17 @@ test("gateway genérico do Head Coach exige confirmação explícita e revisão 
 });
 
 test("gateway limita put_record genérico a game_model e capability anuncia o mesmo limite", () => {
-  const start = gateway.indexOf('case "put_record":');
-  const end = gateway.indexOf('\n      case "soft_delete_record":', start);
-  const block = gateway.slice(start, end);
-  assert.match(gateway, /allowsGenericPutRecordKind\(params\.kind\)/);
+  const start = gatewayHandler.indexOf('case "put_record":');
+  const end = gatewayHandler.indexOf('\n      case "soft_delete_record":', start);
+  const block = gatewayHandler.slice(start, end);
+  assert.match(gatewayHandler, /allowsGenericPutRecordKind\(params\.kind\)/);
   assert.match(block, /use_semantic_operation_for_record_kind/);
   assert.ok(
     block.indexOf("allowsGenericPutRecordKind") < block.indexOf('rpc("head_coach_put_record"'),
     "protected kinds must be rejected before reaching the generic RPC",
   );
-  assert.match(gateway, /from "\.\/policy\.mjs"/);
+  assert.match(gatewayHandler, /from "\.\/policy\.mjs"/);
+  assert.match(gateway, /createGatewayHandler/);
   assert.match(gatewayPolicy, /GENERIC_PUT_RECORD_KINDS = new Set\(\["game_model"\]\)/);
   assert.match(gatewayWriteMigration, /'put_record_write_kinds',\s*jsonb_build_array\('game_model'\)/);
   assert.match(gatewayWriteMigration, /grant execute on function public\.head_coach_capabilities\(uuid,text\)\s+to service_role/i);
