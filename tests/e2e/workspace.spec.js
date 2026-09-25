@@ -5,6 +5,24 @@ const fs = require("node:fs");
 const path = require("node:path");
 const appVersion = fs.readFileSync(path.join(__dirname, "..", "..", "index.html"), "utf8").match(/const serviceWorkerVersion = (\d+);/)?.[1];
 
+test("controlos de ação do Workspace têm alvos de toque com pelo menos 44 px no telemóvel", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await expect(page.locator("[data-workspace-current-week]")).toBeVisible();
+  const targets = await page.locator(".btn, .topbar-settings, #quick-capture, .bottom-nav a").evaluateAll((elements) =>
+    elements.filter((element) => {
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    }).map((element) => ({
+      label: element.getAttribute("aria-label") || element.textContent.trim(),
+      width: element.getBoundingClientRect().width,
+      height: element.getBoundingClientRect().height,
+    })),
+  );
+  expect(targets.length).toBeGreaterThan(5);
+  expect(targets.filter((target) => target.height < 44), JSON.stringify(targets)).toEqual([]);
+});
+
 test("atividade sincronizada sem origem relacional apresenta a proveniência preservada", async ({ page }) => {
   await page.goto("/");
   await page.evaluate(async () => {
