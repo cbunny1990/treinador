@@ -14,6 +14,7 @@ const migrations = fs.readdirSync(path.join(root, "supabase", "migrations"))
 const manager = fs.readFileSync(path.join(root, "supabase", "functions", "vision-coach-connectors", "index.ts"), "utf8");
 const mcp = fs.readFileSync(path.join(root, "supabase", "functions", "vision-coach-mcp", "index.ts"), "utf8");
 const gateway = fs.readFileSync(path.join(root, "supabase", "functions", "head-coach-gateway", "index.ts"), "utf8");
+const gatewayPolicy = fs.readFileSync(path.join(root, "supabase", "functions", "head-coach-gateway", "policy.mjs"), "utf8");
 const gatewayWriteMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20260923145609_constrain_head_coach_generic_writes.sql"), "utf8");
 const config = fs.readFileSync(path.join(root, "supabase", "config.toml"), "utf8");
 const browser = fs.readFileSync(path.join(root, "js", "mcp_connectors.js"), "utf8");
@@ -145,15 +146,24 @@ test("gateway limita put_record genérico a game_model e capability anuncia o me
   const start = gateway.indexOf('case "put_record":');
   const end = gateway.indexOf('\n      case "soft_delete_record":', start);
   const block = gateway.slice(start, end);
-  assert.match(block, /GENERIC_PUT_RECORD_KINDS\.has\(String\(params\.kind\)\)/);
+  assert.match(gateway, /allowsGenericPutRecordKind\(params\.kind\)/);
   assert.match(block, /use_semantic_operation_for_record_kind/);
   assert.ok(
-    block.indexOf("GENERIC_PUT_RECORD_KINDS.has") < block.indexOf('rpc("head_coach_put_record"'),
+    block.indexOf("allowsGenericPutRecordKind") < block.indexOf('rpc("head_coach_put_record"'),
     "protected kinds must be rejected before reaching the generic RPC",
   );
-  assert.match(gateway, /GENERIC_PUT_RECORD_KINDS = new Set\(\["game_model"\]\)/);
+  assert.match(gateway, /from "\.\/policy\.mjs"/);
+  assert.match(gatewayPolicy, /GENERIC_PUT_RECORD_KINDS = new Set\(\["game_model"\]\)/);
   assert.match(gatewayWriteMigration, /'put_record_write_kinds',\s*jsonb_build_array\('game_model'\)/);
   assert.match(gatewayWriteMigration, /grant execute on function public\.head_coach_capabilities\(uuid,text\)\s+to service_role/i);
+});
+
+test("gateway runtime policy accepts only game_model for generic writes", async () => {
+  const { allowsGenericPutRecordKind } = await import("../supabase/functions/head-coach-gateway/policy.mjs");
+  assert.equal(allowsGenericPutRecordKind("game_model"), true);
+  for (const kind of ["player", "match", "training", "exercise", "memory", "document", "unknown", ""]) {
+    assert.equal(allowsGenericPutRecordKind(kind), false, `${kind} must use its semantic operation`);
+  }
 });
 
 

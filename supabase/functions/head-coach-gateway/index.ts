@@ -1,8 +1,8 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { allowsGenericPutRecordKind } from "./policy.mjs";
 
 const jsonHeaders = { "content-type": "application/json; charset=utf-8" };
-const GENERIC_PUT_RECORD_KINDS = new Set(["game_model"]);
 
 function respond(status: number, body: unknown) {
   return new Response(JSON.stringify(body), { status, headers: jsonHeaders });
@@ -148,7 +148,7 @@ Deno.serve(async (req: Request) => {
       case "put_record":
         if (!params.kind || !params.payload) return respond(400, { ok: false, error: "kind_and_payload_required" });
         requireWriteConfirmation();
-        if (!GENERIC_PUT_RECORD_KINDS.has(String(params.kind))) {
+        if (!allowsGenericPutRecordKind(params.kind)) {
           const e = new Error("use_semantic_operation_for_record_kind");
           (e as any).status = 400;
           throw e;
