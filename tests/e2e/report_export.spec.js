@@ -76,6 +76,7 @@ test('long match report flows across A4 pages without keeping the whole section 
  await expect(report.locator('body')).toContainText('Acontecimento 100');await report.emulateMedia({media:'print'});
  const styles=await report.evaluate(()=>({section:getComputedStyle(document.querySelector('section')).breakInside,heading:getComputedStyle(document.querySelector('section h2')).breakAfter,actions:getComputedStyle(document.querySelector('.actions')).display}));
  expect(styles).toEqual({section:'auto',heading:'avoid',actions:'none'});
+ const printCss=await report.locator('style').textContent();expect(printCss).toContain('@bottom-right{content:"Página " counter(page) " de " counter(pages)');
  const pdf=await report.pdf({format:'A4',printBackground:true});expect(pdf.subarray(0,5).toString()).toBe('%PDF-');expect((pdf.toString('latin1').match(/\/Type\s*\/Page\b/g)||[]).length).toBeGreaterThan(1);
 });
 test('training report includes ordered plan blocks and the approved original image',async({page})=>{
