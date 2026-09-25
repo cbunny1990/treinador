@@ -284,20 +284,36 @@ window.addEventListener("hashchange",router);
 window.addEventListener("DOMContentLoaded",router);
 if(document.readyState!=="loading") router();
 
+function markWorkspaceFormDirty(event){
+  var form=event.target?.closest?.("form[data-form], form[data-event-form]");
+  if(form&&app.contains(form))form.dataset.dirty="true";
+}
+document.addEventListener("input",markWorkspaceFormDirty);
+document.addEventListener("change",markWorkspaceFormDirty);
+document.addEventListener("reset",function(event){
+  var form=event.target;
+  if(form instanceof HTMLFormElement&&form.matches("form[data-form], form[data-event-form]"))setTimeout(function(){delete form.dataset.dirty;},0);
+});
+
 window.addEventListener("visioncoach:sync-complete",async function(syncEvent){
   remoteSyncFailed=false;
   refreshRemoteIndicator();
   await refreshPlayerPhotoSyncStatus(false);
   var notice=app.querySelector('.notice[role="status"]');
   if(notice&&notice.textContent.includes("Não foi possível confirmar a sincronização."))notice.remove();
-  if(app.querySelector('form[data-form]')) return;
   if(app.querySelector('[data-training-session], [data-session-duplicate], [data-training-continuity], [data-match-visual]')) return;
   if(document.querySelector('#exercise-image-viewer[open]')) return;
   var detail=syncEvent.detail||{},conflictSignature=syncConflictSignature(detail.conflicts);
   var conflictsChanged=lastSyncConflictSignature!==null&&lastSyncConflictSignature!==conflictSignature;
   lastSyncConflictSignature=conflictSignature;
   if(!(Number(detail.pulled||0)>0||Number(detail.deleted||0)>0||conflictsChanged))return;
-  var activeRoot=((location.hash||"#/").slice(1).split("?")[0].split("/").filter(Boolean)[0]||"");
+  var dirtyForm=app.querySelector('form[data-form][data-dirty="true"], form[data-event-form][data-dirty="true"]');
+  if(dirtyForm){
+    var refreshNotice=app.querySelector('[data-sync-refresh-notice]');
+    if(!refreshNotice){refreshNotice=document.createElement("p");refreshNotice.className="notice section";refreshNotice.setAttribute("role","status");refreshNotice.dataset.syncRefreshNotice="true";dirtyForm.insertAdjacentElement("beforebegin",refreshNotice);}
+    refreshNotice.textContent="Chegaram alterações de outro dispositivo. O texto por guardar foi preservado; guarda ou cancela antes de atualizar esta vista.";
+    return;
+  }
   skipNextRemoteSync=true;
   await router();
 });
