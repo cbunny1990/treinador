@@ -57,6 +57,11 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     }).select("id").single();
     assert.ifError(createdTeam.error);
     teams.push(createdTeam.data.id);
+    const foreignTeam = await admin.from("teams").insert({
+      owner_id: users[0], name: "RAG HTTP outra equipa", metadata: { escalao: "Sub-10" },
+    }).select("id").single();
+    assert.ifError(foreignTeam.error);
+    teams.push(foreignTeam.data.id);
     const headCoachAuthorization = await admin.from("agent_authorizations").insert({
       team_id: teams[0], owner_id: users[0], agent_subject: "head-coach", scopes: ["read", "write"], enabled: true,
     });
@@ -70,6 +75,7 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
         payload: { data: date, estado: "concluido", adversario: `Adversário local ${index + 1}` },
       })),
       { id: matchIds[6], team_id: teams[0], kind: "match", actor_type: "human", payload: { estado: "concluido", adversario: "Jogo local sem data" } },
+      { id: uuid(), team_id: teams[1], kind: "match", actor_type: "human", payload: { data: "2026-09-25", estado: "concluido", adversario: "SEGREDO_EQUIPA_EXTERNA" } },
     ]);
     assert.ifError(seededMatches.error);
 
@@ -143,11 +149,12 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     assert.equal(tools.find((tool) => tool.name === "search_team_knowledge").inputSchema.properties.per_match_limit.maximum, 4);
 
     const recentMatches = await mcpRequest(token, "tools/call", {
-      name: "list_matches", arguments: { state: "concluido", date_order: "desc", limit: 5 },
+      name: "list_matches", arguments: { state: "concluido", date_order: "desc", limit: 5, team_id: teams[1] },
     });
     assert.equal(recentMatches.status, 200);
     const recentResult = JSON.parse((await recentMatches.json()).result.content[0].text);
     assert.deepEqual(recentResult.map((row) => row.payload.data), ["2026-09-22", "2026-09-20", "2026-09-17", "2026-09-10", "2026-09-05"]);
+    assert.doesNotMatch(JSON.stringify(recentResult), /SEGREDO_EQUIPA_EXTERNA/);
 
     const search = await mcpRequest(token, "tools/call", {
       name: "search_team_knowledge", arguments: { query: "problemas nos jogos recentes", match_refs: recentResult.map((row) => row.id) },
