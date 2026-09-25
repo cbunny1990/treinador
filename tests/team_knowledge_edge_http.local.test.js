@@ -94,9 +94,15 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     });
     assert.equal(initialize.status, 200, await initialize.clone().text());
     const initialized = await initialize.json();
-    assert.equal(initialized.result.serverInfo.version, "1.14.2");
+    assert.equal(initialized.result.serverInfo.version, "1.14.3");
     assert.match(initialized.result.instructions, /get_training_planning_context/);
     assert.match(initialized.result.instructions, /get_recent_match_context/);
+    assert.match(initialized.result.instructions, /roster and availability, use list_players/i);
+    assert.match(initialized.result.instructions, /attendance and actual timings, use get_training_session/i);
+    assert.match(initialized.result.instructions, /recorded attendance and match usage, use get_player_participation_history/i);
+    assert.match(initialized.result.instructions, /recorded match events, statistics, and player usage, use get_match_report/i);
+    assert.match(initialized.result.instructions, /structured facts such as roster, availability, dates, attendance, duration, results, counted events, and minutes/i);
+    assert.match(initialized.result.instructions, /semantic retrieval is not their source of truth/i);
     assert.match(initialized.result.instructions, /evidence is insufficient/);
 
     const listed = await mcpRequest(token, "tools/list");
