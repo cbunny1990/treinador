@@ -206,7 +206,7 @@ test("RAG migrations executam em Postgres WASM e preservam limites de equipa e o
   assert.equal(hardDeleted.rows[0].n, 0, "physical deletion removes derived chunks");
 });
 
-test("edição de fonte invalida excertos antigos, coalesce alterações e reindexa sem duplicados", async (t) => {
+test("edição de fonte invalida chunks antigos, recusa workers obsoletos e reindexa sem duplicados", async (t) => {
   const db = await fixture();
   t.after(() => db.close());
 
@@ -218,6 +218,11 @@ test("edição de fonte invalida excertos antigos, coalesce alterações e reind
 
   const firstEditAt = "2026-09-24T10:00:00.000Z";
   await db.query(`update public.workspace_records set payload=jsonb_set(payload,'{report}','"apoio atualizado uma vez"'),updated_at=$2 where id=$1`, [SOURCE_A1, firstEditAt]);
+  const staleClaims = await db.query("select * from public.claim_team_knowledge_jobs($1::uuid, 64)", [TEAM_A]);
+  const staleWorker = staleClaims.rows.find((row) => row.source_id === SOURCE_A1);
+  assert.ok(staleWorker);
+  assert.equal(new Date(staleWorker.source_updated_at).toISOString(), firstEditAt);
+
   const secondEditAt = "2026-09-24T10:01:00.000Z";
   await db.query(`update public.workspace_records set payload=jsonb_set(payload,'{report}','"apoio atualizado final"'),updated_at=$2 where id=$1`, [SOURCE_A1, secondEditAt]);
 
@@ -225,6 +230,8 @@ test("edição de fonte invalida excertos antigos, coalesce alterações e reind
   const queued = await db.query("select source_updated_at from private.team_knowledge_jobs where team_id=$1 and source_id=$2", [TEAM_A, SOURCE_A1]);
   assert.equal(queued.rows.length, 1, "multiple edits coalesce into one pending source job");
   assert.equal(new Date(queued.rows[0].source_updated_at).toISOString(), secondEditAt, "the pending job points at the newest source revision");
+  await assert.rejects(indexSource(db, TEAM_A, SOURCE_A1, MATCH_A1, staleWorker, 1, "apoio obsoleto"), /knowledge_source_changed_or_deleted/,
+    "a worker finishing an older embedding request cannot replace the newer source revision");
 
   const changedClaims = await db.query("select * from public.claim_team_knowledge_jobs($1::uuid, 64)", [TEAM_A]);
   const changedSource = changedClaims.rows.find((row) => row.source_id === SOURCE_A1);

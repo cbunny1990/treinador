@@ -1,6 +1,6 @@
 # Vision Coach — pesquisa RAG da equipa
 
-Atualização idempotente do índice após editar a origem (25/09/2026): a regressão Postgres WASM confirma que editar duas vezes antes do worker indexar mantém um único job na revisão mais recente; a revisão antiga deixa de aparecer na pesquisa durante a fila e a substituição gera apenas os chunks atuais. Vetores sintéticos iguais podem devolver o texto atual para uma pergunta lexicalmente antiga, por isso o teste valida a revisão e o conteúdo do excerto, sem exigir uma ausência semântica que os dados de teste não conseguem sustentar.
+Atualização idempotente do índice após editar a origem (25/09/2026): a regressão Postgres WASM reclama uma revisão no worker, edita a origem durante o embedding e confirma que o worker obsoleto não consegue substituir a revisão nova. Fica um único job atualizado, a revisão antiga sai da pesquisa enquanto aguarda e a substituição gera só os chunks atuais. Vetores sintéticos iguais podem devolver o texto atual para uma pergunta lexicalmente antiga, por isso o teste valida revisão e conteúdo do excerto, sem exigir uma ausência semântica que os dados de teste não conseguem sustentar.
 
 ## Avaliação local de relevância
 
