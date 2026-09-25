@@ -168,6 +168,64 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
     expect(weeklyPlanOnDesktop).toEqual({ conflicts: [], count: 1, objective: "Foco semanal editado no telemóvel", dirty: false });
     await expect(page.locator("[data-workspace-current-week]")).toContainText("Foco semanal editado no telemóvel");
 
+    await context.setOffline(true);
+    await mobileContext.setOffline(true);
+    await page.evaluate(async (syncId) => {
+      const row = (await DB.listar("workspace_documents")).find((item) => item.sync_id === syncId);
+      const prior = TeamDevelopment.week(row);
+      const updated = TeamDevelopment.saveWeek(row, {
+        ...prior, objective: "Foco concorrente editado no PC",
+      }, { expected_revision: prior.revision });
+      await DB.modificar("workspace_documents", row.id, (current) => ({ ...current, body: JSON.stringify(updated) }));
+    }, weeklyPlanSyncId);
+    await phone.evaluate(async (syncId) => {
+      const row = (await DB.listar("workspace_documents")).find((item) => item.sync_id === syncId);
+      const prior = TeamDevelopment.week(row);
+      const updated = TeamDevelopment.saveWeek(row, {
+        ...prior, objective: "Foco concorrente editado no telemóvel",
+      }, { expected_revision: prior.revision });
+      await DB.modificar("workspace_documents", row.id, (current) => ({ ...current, body: JSON.stringify(updated) }));
+    }, weeklyPlanSyncId);
+    await context.setOffline(false);
+    const pcConcurrentPush = await page.evaluate(async () => RemoteWorkspace.syncNow());
+    expect(pcConcurrentPush.conflicts).toEqual([]);
+    await mobileContext.setOffline(false);
+    const phoneConflict = await phone.evaluate(async (syncId) => {
+      const result = await RemoteWorkspace.syncNow();
+      const local = (await DB.listar("workspace_documents")).find((item) => item.sync_id === syncId);
+      const versions = await RemoteWorkspace.readVersionConflict(syncId, "workspace_documents");
+      const status = await RemoteWorkspace.status();
+      return {
+        conflictReasons: result.conflicts.filter((item) => item.sync_id === syncId).map((item) => item.reason),
+        statusConflict: status.conflicts.some((item) => item.sync_id === syncId && item.reason === "version_mismatch"),
+        localObjective: TeamDevelopment.week(local).objective,
+        localDirty: local.sync_dirty,
+        comparedLocalObjective: TeamDevelopment.week({ body: versions.local.body }).objective,
+        remoteObjective: TeamDevelopment.week({ body: versions.remote.body }).objective,
+        expectedRemote: versions.remote_updated_at,
+        expectedLocal: versions.local_updated_at,
+      };
+    }, weeklyPlanSyncId);
+    expect(phoneConflict).toMatchObject({
+      conflictReasons: ["version_mismatch"],
+      statusConflict: true,
+      localObjective: "Foco concorrente editado no telemóvel",
+      localDirty: true,
+      comparedLocalObjective: "Foco concorrente editado no telemóvel",
+      remoteObjective: "Foco concorrente editado no PC",
+    });
+    expect(phoneConflict.expectedRemote).toBeTruthy();
+    expect(phoneConflict.expectedLocal).toBeTruthy();
+    const conflictResolution = await phone.evaluate(async ({ syncId, expectedRemote, expectedLocal }) => {
+      const result = await RemoteWorkspace.resolveVersionConflict(
+        syncId, "workspace_documents", "keep_remote", expectedRemote, expectedLocal,
+      );
+      const row = (await DB.listar("workspace_documents")).find((item) => item.sync_id === syncId);
+      return { conflicts: result.conflicts, objective: TeamDevelopment.week(row).objective, dirty: row.sync_dirty };
+    }, { syncId: weeklyPlanSyncId, expectedRemote: phoneConflict.expectedRemote, expectedLocal: phoneConflict.expectedLocal });
+    expect(conflictResolution).toEqual({ conflicts: [], objective: "Foco concorrente editado no PC", dirty: false });
+    await expect(phone.locator("[data-workspace-current-week]")).toContainText("Foco concorrente editado no PC");
+
     await mobileContext.setOffline(true);
     await phone.evaluate(async (id) => {
       await DB.modificar("jogos", id, (row) => ({ ...row, adversario: "Editado offline no telemóvel" }));
