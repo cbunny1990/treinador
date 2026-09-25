@@ -1254,6 +1254,15 @@ test("sync do Workspace corre em fundo, atualiza a vista uma vez e preserva o sc
 test("emblema do Sub-8 de Figueiró aparece na identidade da equipa", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => typeof DB !== "undefined" && typeof router === "function");
+  const brandColors = await page.evaluate(() => {
+    const style = getComputedStyle(document.documentElement);
+    return {
+      accent: style.getPropertyValue("--accent").trim().toLowerCase(),
+      surface: style.getPropertyValue("--surface").trim().toLowerCase(),
+      ink: style.getPropertyValue("--ink").trim().toLowerCase(),
+    };
+  });
+  expect(brandColors).toEqual({ accent: "#c8102e", surface: "#ffffff", ink: "#0f172a" });
   await page.evaluate(async () => {
     await DB.modificar("teams", DEFAULT_TEAM_ID, team => ({
       ...team, nome: "Sub-8 do 1.º de Maio de Figueiró", clube: "1.º de Maio de Figueiró", escalao: "sub-8",
