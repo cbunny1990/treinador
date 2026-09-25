@@ -22,13 +22,15 @@ A conversa pode acontecer fora da app, por exemplo no ChatGPT. A app continua a 
 
 A navegação principal tem seis áreas:
 
-- **Workspace** — estado atual da equipa, próximos eventos, prioridades, planos recentes e atividade.
+- **Workspace** — estado atual da equipa, próximos eventos, prioridades, observações recentes ativas, planos recentes e atividade.
 - **Equipa** — perfil, jogadores e jogos.
 - **Planos** — planos de treino, análises de jogo, notas e briefings.
 - **Media** — biblioteca visual partilhada.
 - **Timeline** — histórico de dados, documentos e ações de humano/agente.
 
 Pesquisa e histórico (`#/pesquisa`), Semana e evolução (`#/evolucao`) e Épocas (`#/epocas`) são páginas secundárias, acessíveis a partir do Workspace e dos registos relacionados; não são separadores da navegação principal.
+
+O painel operacional apresenta até quatro observações ativas mais recentes, com data, origem, excerto e ligação à ficha completa. Memórias arquivadas e outros tipos de memória não aparecem neste cartão; a pesquisa abre o histórico completo.
 
 Chat embutido, OpenRouter, gerador de treino IA, biblioteca antiga de exercícios e dashboard Head Coach antigo foram removidos do produto ativo.
 

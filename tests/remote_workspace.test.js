@@ -1986,7 +1986,13 @@ test("edições concorrentes em dois dispositivos produzem conflito sem overwrit
     assert.equal(remote.rows[0].payload.nota_tatica, "Versão do telemóvel");
     const conflictStorage = new Map([["treinador.remote.supabase.v1", JSON.stringify({ remoteTeamId, conflicts: conflict.conflicts })]]);
     globalThis.localStorage = { getItem: (key) => conflictStorage.get(key) || null, setItem: (key, value) => conflictStorage.set(key, value) };
-    const versions = await RemoteWorkspace.readVersionConflict(firstLocal.sync_id, "jogos");
+    const localStore = globalThis.DB, originalList = localStore.listar;
+    let scannedLocalRows = 0;
+    localStore.listar = async (...args) => { scannedLocalRows++; return originalList.apply(localStore, args); };
+    let versions;
+    try { versions = await RemoteWorkspace.readVersionConflict(firstLocal.sync_id, "jogos"); }
+    finally { localStore.listar = originalList; }
+    assert.equal(scannedLocalRows, 0, "comparar um conflito usa a chave local em vez de reler toda a tabela");
     assert.equal(versions.local.nota_tatica, "Versão do PC");
     assert.equal(versions.remote.nota_tatica, "Versão do telemóvel");
     assert.equal(versions.merge_suggestion, null, "overlapping edits to the same field still require a coach decision");
@@ -2177,7 +2183,8 @@ test("pré-visualização e resolução agrupada sincronizam só combinações i
     const preview = await RemoteWorkspace.previewIndependentConflictBatch();
     assert.equal(preview.examined, 5);
     assert.equal(preview.safe.length, 4);
-    assert.equal(preview.needs_review.length, 1);
+    assert.equal(preview.manual_review.length, 1);
+    assert.equal(preview.needs_review.length, 0);
     const remoteOnly = preview.safe.find((item) => item.sync_id === detected.conflicts.find((conflict) => conflict.local_id === unchangedRemoteOnly.id).sync_id);
     assert.equal(remoteOnly.resolution, "keep_remote");
     assert.equal(remoteOnly.single_change, true);
@@ -2188,15 +2195,18 @@ test("pré-visualização e resolução agrupada sincronizam só combinações i
     assert.equal(localOnly.single_change, true);
     assert.deepEqual(localOnly.local_changes, ["nota_tatica"]);
     assert.deepEqual(localOnly.remote_changes, []);
-    assert.equal(preview.needs_review[0].sync_id, detected.conflicts.find((item) => item.local_id === ids[2]).sync_id);
+    assert.equal(preview.manual_review[0].sync_id, detected.conflicts.find((item) => item.local_id === ids[2]).sync_id);
+    assert.deepEqual(preview.manual_review[0].manual_merge_fields.map((field) => field.key), ["adversario"]);
     assert.deepEqual(remote.rows.map((row) => ({ id: row.id, payload: row.payload })), beforePreview, "a pré-visualização não escreve no remoto");
 
     let syncCalls = 0;
     RemoteWorkspace.syncNow = async () => { syncCalls++; return RemoteWorkspace._syncRecords(remoteTeamId, "coach"); };
-    const applied = await RemoteWorkspace.resolveIndependentConflictBatch(preview.safe);
+    const applied = await RemoteWorkspace.resolveIndependentConflictBatch([...preview.safe, {
+      ...preview.manual_review[0], mergeable: true, resolution: "merge_manual_fields", field_choices: { adversario: "local" },
+    }]);
     assert.equal(syncCalls, 1);
-    assert.equal(applied.pushed, 3, "a versão remota escolhida já estava persistida; as duas combinações e a única alteração local são enviadas");
-    assert.equal(applied.conflicts.length, 1, "a versão com campos sobrepostos fica para decisão explícita");
+    assert.equal(applied.pushed, 4, "a versão remota escolhida já estava persistida; as duas combinações, a escolha manual e a única alteração local são enviadas");
+    assert.equal(applied.conflicts.length, 0, "a escolha manual explícita resolve a sobreposição");
     assert.equal(remote.rows.length, 5, "nenhum registo duplicado foi criado");
     const merged1 = remote.rows.find((row) => row.payload.adversario === "Rivais 1");
     assert.equal(merged1.payload.nota_tatica, "Nota do telemóvel");
@@ -2204,8 +2214,10 @@ test("pré-visualização e resolução agrupada sincronizam só combinações i
     const merged2 = remote.rows.find((row) => row.payload.adversario === "Rivais 2");
     assert.equal(merged2.payload.local, "Campo novo");
     assert.equal(merged2.payload.observacao, "Nota do PC");
+    const resolvedOverlap = remote.rows.find((row) => row.payload.adversario === "Rival do PC");
+    assert.ok(resolvedOverlap, "a escolha local explícita prevalece no campo sobreposto");
     const stillPending = await devices[0].obter("jogos", ids[2]);
-    assert.equal(stillPending.sync_dirty, true);
+    assert.equal(stillPending.sync_dirty, false);
     const remoteOnlyAfterReview = await devices[0].obter("jogos", unchangedRemoteOnly.id);
     assert.equal(remoteOnlyAfterReview.nota_tatica, "Alteração remota");
     assert.equal(remoteOnlyAfterReview.sync_dirty, false);

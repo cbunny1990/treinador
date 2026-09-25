@@ -254,6 +254,14 @@ test('sensitive-personal-data filter blocks health, neurodevelopmental and ident
   'The player has swelling in the knee.',
   'Allergy symptoms after exercise.',
   'Recent COVID infection.',
+  'A atleta sentiu enjoos e foi observada no hospital.',
+  'O relatório indica acompanhamento psicológico regular.',
+  'Realizar uma ressonância magnética ao joelho.',
+  'O atleta está em tratamento oncológico.',
+  'Começou a tomar antibiótico por indicação médica.',
+  'A atleta partilhou informação sobre a sua identidade de género.',
+  'Foi encaminhada para o hospital.',
+  'O atleta teve um internamento no mês passado.',
  ];
  for(const [index,note] of sensitive.entries()){
   const source=match();source.payload.match_events.events[0].note=note;
@@ -263,6 +271,8 @@ test('sensitive-personal-data filter blocks health, neurodevelopmental and ident
  assert.ok(rag.teamKnowledgeTestAPI.chunkRecord(tactical).some(item=>item.source_path==='post_game.analysis.fields.summary'));
  const tacticalReason=match();tacticalReason.payload.match_events.events[0].note='A pressão alta do adversário obrigou a equipa a jogar longo.';
  assert.ok(rag.teamKnowledgeTestAPI.chunkRecord(tacticalReason).some(item=>item.source_path==='match_events.events[0]'),'pressão tática não é um dado de saúde');
+ const bodyOrientation=match();bodyOrientation.payload.match_events.events[0].note='Trabalhar orientação corporal antes da receção.';
+ assert.ok(rag.teamKnowledgeTestAPI.chunkRecord(bodyOrientation).some(item=>item.source_path==='match_events.events[0]'),'orientação corporal é contexto tático, não orientação sexual');
 });
 
 test('exercise definitions and game-model principles are not labelled as match observations',()=>{
@@ -348,11 +358,11 @@ test('RAG validates exact team/scope/filters and searches only with the authoriz
 });
 
 test('sensitive-personal search queries stay out of embeddings and return no echoed text',async()=>{
- for(const query of ['A atleta tem tonturas e tosse após o treino?','O que fazer com uma jogadora com dislexia?','Como adaptar o treino à menstruação?','O que fazer com um jogador com deficiência auditiva?','A atleta pode treinar após consumo de álcool?']){
+ for(const query of ['A atleta tem tonturas e tosse após o treino?','O que fazer com uma jogadora com dislexia?','Como adaptar o treino à menstruação?','O que fazer com um jogador com deficiência auditiva?','A atleta pode treinar após consumo de álcool?','O que significa o exame de ressonância da atleta?','O atleta foi encaminhado para o hospital?','A jogadora tem acompanhamento psiquiátrico?','Como falar sobre a identidade de género da atleta?']){
   const db=fakeAdmin([]),provider=fakeProvider();
   const result=await rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query},{provider});
   assert.equal(result.retrieval_status,'sensitive_query_not_sent',query);assert.equal(result.answer_mode,'structured_data_only');assert.equal(result.evidence_status,'sensitive_query_not_sent');assert.deepEqual(result.results,[]);
-  assert.deepEqual(db.calls,[],query);assert.deepEqual(db.fromCalls,[],query);assert.deepEqual(provider.requests,[],query);assert.doesNotMatch(JSON.stringify(result),/tonturas|tosse|dislexia|menstrua|defici[eê]ncia|álcool/i);
+  assert.deepEqual(db.calls,[],query);assert.deepEqual(db.fromCalls,[],query);assert.deepEqual(provider.requests,[],query);assert.doesNotMatch(JSON.stringify(result),/tonturas|tosse|dislexia|menstrua|defici[eê]ncia|álcool|resson|hospital|psiqui|g[eé]nero/i);
  }
 });
 

@@ -99,6 +99,18 @@ try {
   check(tool, "The multi-source Jev tool is not exposed over MCP HTTP.");
   check(tool.inputSchema.properties.match_sources.minItems === 2, "MCP did not expose the minimum distinct-match evidence contract.");
   check(tool.inputSchema.properties.training_sources.minItems === 1, "MCP did not require training evidence.");
+  const knowledgeTool = listed.result.tools.find((item: any) => item.name === "search_team_knowledge");
+  check(knowledgeTool, "The RAG search tool is not exposed over MCP HTTP.");
+  const beforeSensitiveSearch = networkPaths.length;
+  const sensitiveSearch = await call("tools/call", {
+    name: "search_team_knowledge",
+    arguments: { query: "O que fazer com a atleta encaminhada para o hospital?" },
+  });
+  const sensitiveSearchResult = sensitiveSearch.result.structuredContent;
+  check(sensitiveSearchResult.retrieval_status === "sensitive_query_not_sent", "A sensitive query was not refused over MCP HTTP.");
+  check(sensitiveSearchResult.answer_mode === "structured_data_only", "The sensitive query did not direct the caller to structured data.");
+  check(!JSON.stringify(sensitiveSearchResult).includes("encaminhada para o hospital"), "The sensitive query was echoed to the MCP caller.");
+  check(networkPaths.slice(beforeSensitiveSearch).every((path) => path.endsWith("/rest/v1/rpc/mcp_connector_lookup")), "The sensitive query reached a workspace/RAG RPC or external provider.");
   const archivedPlayerTool = listed.result.tools.find((item: any) => item.name === "get_archived_player_development");
   check(archivedPlayerTool?.annotations?.readOnlyHint === true, "Archived athlete development must be available as a read-only MCP tool.");
   check(archivedPlayerTool.inputSchema.properties.player_ref.format === "uuid", "Archived athlete development must use the shared UUID.");
@@ -130,7 +142,7 @@ try {
   check(refused.result.isError === true, "A call without a provider key should return an MCP error result.");
   check(/typesafe_api_not_configured/.test(refused.result.content?.[0]?.text || ""), "The missing Jev provider was not identified.");
   check(networkPaths.every((path) => path.endsWith("/rest/v1/rpc/mcp_connector_lookup") || path.endsWith("/rest/v1/workspace_records")), "The synthetic test attempted a non-fixture database or external provider request.");
-  console.log("MCP HTTP synthetic contract: initialize, archived athlete read, tools/list, tool refusal without provider key — passed; external network calls: 0.");
+  console.log("MCP HTTP synthetic contract: initialize, archived athlete read, tools/list, RAG sensitive-query refusal, tool refusal without provider key — passed; external network calls: 0.");
 } finally {
   if (server) {
     server.shutdown();

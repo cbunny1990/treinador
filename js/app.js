@@ -405,6 +405,17 @@ function activityHTML(rows,limit){
   }).join("")+'</div>';
 }
 
+function recentObservationsHTML(rows,limit){
+  var items=(rows||[]).filter(function(item){return item.kind==="observation";}).slice(0,limit||4);
+  if(!items.length)return '<div class="empty">Ainda não há observações ativas. <a class="link" href="#/capturar">Registar observação</a></div>';
+  return '<div class="list">'+items.map(function(item){
+    var href=Number.isInteger(Number(item.id))&&Number(item.id)>0?'#/timeline/memory/'+Number(item.id):'#/pesquisa?kind=observation';
+    var source=item.source&&item.source.label||"Origem não identificada";
+    var content=String(item.content||"").trim(),preview=content.length>150?content.slice(0,147).trimEnd()+"…":content;
+    return '<a class="list-item" data-workspace-observation href="'+esc(href)+'"><span class="title">'+esc(item.title||"Observação")+'</span><span class="meta">'+fmtDate(item.occurred_at)+' · Origem: '+esc(source)+'</span>'+(preview?'<span class="body-copy">'+esc(preview)+'</span>':'')+'</a>';
+  }).join('')+'</div>';
+}
+
 async function viewWorkspace(options){
   options=options||{};
   var workspaceReads=await Promise.all([
@@ -460,7 +471,8 @@ async function viewWorkspace(options){
   html+='<div class="panel metric"><div class="metric-label">Media</div><div class="metric-value">'+(s.media_count??s.media.length)+'</div><div class="metric-sub">ficheiros e links</div></div>';
   html+='<div class="panel metric"><div class="metric-label">Memória</div><div class="metric-value">'+s.memory.length+'</div><div class="metric-sub">registos operacionais</div></div></div>';
   html+='<section class="section"><div class="section-head"><div><h2>Foco e prioridades</h2><p>Objetivo semanal e foco confirmado para a equipa</p></div><a class="link" href="#/capturar">Adicionar contexto</a></div>'+currentWeekFocusHTML+priorityHTML(s.priorities)+'</section>';
-  html+='<div class="grid cols-2 section"><section><div class="section-head"><div><h2>Planos recentes</h2><p>Produzidos pelo treinador ou agente</p></div><a class="link" href="#/planos">Ver todos</a></div><div class="list">'+recentDocs+'</div></section>';
+  html+='<div class="grid cols-2 section"><section><div class="section-head"><div><h2>Observações recentes</h2><p>Registos ativos e respetiva origem</p></div><a class="link" href="#/pesquisa?kind=observation">Ver histórico</a></div><div data-workspace-observations-list>'+recentObservationsHTML(s.memory)+'</div></section>';
+  html+='<section><div class="section-head"><div><h2>Planos recentes</h2><p>Produzidos pelo treinador ou agente</p></div><a class="link" href="#/planos">Ver todos</a></div><div class="list">'+recentDocs+'</div></section>';
   html+='<section><div class="section-head"><div><h2>Atividade partilhada</h2><p>Quem fez o quê</p></div><a class="link" href="#/timeline">Timeline</a></div>'+activityHTML(s.recent_activity)+'</section></div>';
   setView(teamName,html,"Workspace");
   if(!options.skipRemoteSync&&navigator.onLine&&remoteStatus.signedIn&&remoteStatus.remoteTeamId){
@@ -934,15 +946,18 @@ function remoteConflictQueueHTML(conflicts){
   return html+'<div class="list section">'+conflicts.map(remoteConflictCardHTML).join('')+'</div></div>';
 }
 function remoteConflictBatchReviewHTML(result){
-  var safe=result?.safe||[],blocked=result?.needs_review||[];
+  var safe=result?.safe||[],manual=result?.manual_review||[],blocked=result?.needs_review||[];
   var stores={jogadores:"Atleta",jogos:"Jogo",treinos:"Treino",exercicios:"Exercício",workspace_documents:"Documento",head_coach_memory:"Memória",teams:"Equipa",activity_items:"Atividade"};
   var label=function(key){return ({nome:"Nome",title:"Título",titulo:"Título",objetivo:"Objetivo",descricao:"Descrição",note:"Nota",data:"Data",hora:"Hora",local:"Local",adversario:"Adversário",status:"Estado",observacoes:"Observações",nota_tatica:"Nota tática",summary:"Resumo"})[key]||String(key||"").replace(/_/g," ");};
   var safeLabel=safe.length===1?'1 resolução segura':safe.length+' resoluções seguras';
+  var manualLabel=manual.length===1?'1 conflito com escolha por campo':manual.length+' conflitos com escolha por campo';
   var blockedLabel=blocked.length===1?'1 conflito para rever':blocked.length+' conflitos para rever';
-  var html='<div class="notice"><strong>'+safeLabel+' · '+blockedLabel+'</strong><p>Pré-visualização apenas. As combinações juntam campos independentes; quando só uma versão mudou desde a base comum, a prévia seleciona essa versão. Os restantes conflitos continuam preservados para escolha explícita.</p></div>';
+  var summary=[safeLabel];if(manual.length)summary.push(manualLabel);if(blocked.length)summary.push(blockedLabel);
+  var html='<div class="notice"><strong>'+summary.join(' · ')+'</strong><p>Pré-visualização apenas. As combinações juntam campos independentes; quando só uma versão mudou desde a base comum, a prévia seleciona essa versão. Em campos sobrepostos, escolhe o valor que queres manter. As versões só são gravadas após confirmação e nova validação.</p></div>';
   if(safe.length)html+='<div class="list section">'+safe.map(function(item){var oneSide=item.single_change===true,changedSide=item.changed_side==="local"?"Neste dispositivo":"Workspace remoto",proposal=oneSide?"Só "+changedSide.toLowerCase()+" alterou: "+(item.changed_side==="local"?(item.local_changes||[]):(item.remote_changes||[])).map(label).join(", ")+". Será mantida essa versão.":"Neste dispositivo: "+((item.local_changes||[]).map(label).join(", ")||"sem alterações")+" · Workspace remoto: "+((item.remote_changes||[]).map(label).join(", ")||"sem alterações")+". Campos diferentes serão combinados.";return '<article class="list-item"><strong>'+esc(item.display_name||stores[item.store]||"Registo")+'</strong><p>'+esc(proposal)+'</p><details><summary>'+ (oneSide?'Pré-visualizar versão selecionada':'Pré-visualizar resultado combinado')+'</summary><pre class="conflict-preview">'+esc(JSON.stringify(item.payload,null,2))+'</pre></details></article>';}).join('')+'</div>';
+  if(manual.length)html+='<div class="list section">'+manual.map(function(item){var fields=item.manual_merge_fields||[];return '<article class="list-item"><strong>'+esc(item.display_name||stores[item.store]||"Registo")+'</strong><p>'+esc(item.reason||"Os mesmos campos foram alterados nas duas versões. Escolhe um valor por campo.")+'</p><div class="grid">'+fields.map(function(field){var localValue=field.local_present?JSON.stringify(field.local_value,null,2):"Campo removido nesta versão",remoteValue=field.remote_present?JSON.stringify(field.remote_value,null,2):"Campo removido nesta versão";return '<section class="list-item"><strong>'+esc(label(field.key))+'</strong><label><span>Versão a manter</span><select data-batch-merge-choice data-sync-id="'+esc(item.sync_id)+'" data-store="'+esc(item.store)+'" data-field="'+esc(field.key)+'" required><option value="">Escolher valor</option><option value="local">Neste dispositivo</option><option value="remote">Workspace remoto</option></select></label><details><summary>Comparar valores</summary><div class="grid cols-2"><section><h4>Neste dispositivo</h4><pre class="conflict-preview">'+esc(localValue)+'</pre></section><section><h4>No workspace remoto</h4><pre class="conflict-preview">'+esc(remoteValue)+'</pre></section></div></details></section>';}).join('')+'</div></article>';}).join('')+'</div>';
   if(blocked.length)html+='<details class="section"><summary>'+blocked.length+' conflito(s) precisam de escolha campo a campo</summary><div class="list section">'+blocked.map(function(item){return '<article class="list-item"><strong>'+esc(item.display_name||stores[item.store]||"Registo")+'</strong><p>'+esc(item.reason||"Não é seguro combinar automaticamente.")+'</p></article>';}).join('')+'</div></details>';
-  if(safe.length)html+='<button class="btn accent" type="button" data-action="resolve-independent-conflict-batch">Aplicar e sincronizar '+safe.length+(safe.length===1?' resolução segura':' resoluções seguras')+'</button>';
+  if(safe.length||manual.length){var decisionCount=safe.length+manual.length,decisionLabel=decisionCount===1?'1 decisão':decisionCount+' decisões';html+='<button class="btn accent" type="button" data-action="resolve-independent-conflict-batch">Aplicar e sincronizar '+esc(decisionLabel)+'</button>';}
   else html+='<p class="notice section">Não há resoluções sem sobreposição. Abre cada conflito para escolher explicitamente os campos.</p>';
   return html;
 }
@@ -1250,17 +1265,25 @@ app.addEventListener("click",async function(event){
   if(action==="review-independent-conflict-batch"){
     target.disabled=true;pendingIndependentConflictPreviews=null;
     var batchReviewBox=target.parentElement.querySelector('[data-conflict-batch-preview]');
-    try{var batchReview=await RemoteWorkspace.previewIndependentConflictBatch();pendingIndependentConflictPreviews=batchReview.safe||[];batchReviewBox.innerHTML=remoteConflictBatchReviewHTML(batchReview);batchReviewBox.hidden=false;}
+    try{var batchReview=await RemoteWorkspace.previewIndependentConflictBatch();pendingIndependentConflictPreviews={safe:batchReview.safe||[],manual:batchReview.manual_review||[]};batchReviewBox.innerHTML=remoteConflictBatchReviewHTML(batchReview);batchReviewBox.hidden=false;}
     catch(error){alert("Não foi possível analisar os conflitos: "+error.message);}
     finally{target.disabled=false;}
     return;
   }
   if(action==="resolve-independent-conflict-batch"){
-    var batchItems=pendingIndependentConflictPreviews;
-    if(!Array.isArray(batchItems)||!batchItems.length){alert("Volta a analisar os conflitos antes de os combinar.");return;}
-    if(!confirm("Aplicar e sincronizar "+batchItems.length+(batchItems.length===1?" resolução segura":" resoluções seguras")+" da pré-visualização? As versões escolhidas e combinadas serão verificadas novamente antes da gravação; conflitos sobrepostos não serão alterados."))return;
+    var batchPreview=pendingIndependentConflictPreviews;
+    if(!batchPreview||!Array.isArray(batchPreview.safe)||!Array.isArray(batchPreview.manual)){alert("Volta a analisar os conflitos antes de os combinar.");return;}
+    var batchItems=batchPreview.safe.slice(),manualChoices=new Map(),batchBox=target.closest('[data-conflict-batch-preview]');
+    (batchBox?.querySelectorAll('[data-batch-merge-choice]')||[]).forEach(function(select){var key=select.dataset.store+"|"+select.dataset.syncId;if(!manualChoices.has(key))manualChoices.set(key,{});if(select.value)manualChoices.get(key)[select.dataset.field]=select.value;});
+    for(var manualItem of batchPreview.manual){
+      var manualKey=manualItem.store+"|"+manualItem.sync_id,choices=manualChoices.get(manualKey)||{},requiredFields=(manualItem.manual_merge_fields||[]).map(function(field){return field.key;});
+      if(!requiredFields.length||requiredFields.some(function(key){return !["local","remote"].includes(choices[key]);})){var firstMissing=batchBox?.querySelector('[data-batch-merge-choice][data-store="'+CSS.escape(manualItem.store)+'"][data-sync-id="'+CSS.escape(manualItem.sync_id)+'"]:invalid');alert("Escolhe Neste dispositivo ou Workspace remoto para cada campo diferente antes de aplicar.");firstMissing?.focus();return;}
+      batchItems.push({...manualItem,mergeable:true,resolution:"merge_manual_fields",field_choices:choices});
+    }
+    if(!batchItems.length){alert("Não há decisões preparadas para aplicar.");return;}
+    if(!confirm("Aplicar e sincronizar "+batchItems.length+(batchItems.length===1?" decisão":" decisões")+" revistas? As versões serão verificadas novamente antes da gravação. Conflitos sem escolha explícita continuam preservados."))return;
     target.disabled=true;
-    try{var batchResult=await RemoteWorkspace.resolveIndependentConflictBatch(batchItems);pendingIndependentConflictPreviews=null;var remaining=batchResult.conflicts?.length||0;var batchMessage=remaining?"Resoluções seguras sincronizadas. "+remaining+(remaining===1?" conflito continua preservado para revisão.":" conflitos continuam preservados para revisão."):"Resoluções seguras sincronizadas: "+batchItems.length+(batchItems.length===1?" registo.":" registos.");alert(batchMessage);return router();}
+    try{var batchResult=await RemoteWorkspace.resolveIndependentConflictBatch(batchItems);pendingIndependentConflictPreviews=null;var remaining=batchResult.conflicts?.length||0;var batchMessage=remaining?"Decisões sincronizadas. "+remaining+(remaining===1?" conflito continua preservado para revisão.":" conflitos continuam preservados para revisão."):"Decisões sincronizadas: "+batchItems.length+(batchItems.length===1?" registo.":" registos.");alert(batchMessage);return router();}
     catch(error){pendingIndependentConflictPreviews=null;alert("Não foi possível concluir todas as combinações: "+error.message+" Volta a analisar os conflitos para obter versões atuais.");return router();}
     finally{target.disabled=false;}
   }

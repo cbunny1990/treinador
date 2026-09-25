@@ -2210,8 +2210,9 @@ const RemoteWorkspace = {
     if (!conflict || !conflict.remote_updated_at) throw new Error("O conflito mudou. Sincroniza novamente antes de rever as versões.");
     const store = conflict.store;
     if (!REMOTE_STORE_KINDS[store] && store !== "media_items") throw new Error("Tipo de conflito não suportado para comparação.");
-    const locals = await DB.listar(store);
-    const local = locals.find((item) => item.id === conflict.local_id && item.sync_id === syncId && item.sync_dirty);
+    if (conflict.local_id == null) throw new Error("A edição local já não está pendente neste dispositivo.");
+    const local = await DB.obter(store, conflict.local_id);
+    if (local?.sync_id !== syncId || !local.sync_dirty) throw new Error("A edição local já não está pendente neste dispositivo.");
     if (!local) throw new Error("A edição local já não está pendente neste dispositivo.");
     const client = await this.init();
     const remoteTeamId = config.remoteTeamId;
@@ -2302,6 +2303,12 @@ const RemoteWorkspace = {
             payload: suggestion.changed_side === "local" ? versions.local : versions.remote,
           };
         }
+        if (versions.manual_merge_fields?.length && versions.remote_updated_at && versions.local_updated_at) return {
+          sync_id: conflict.sync_id, store: conflict.store, display_name: conflict.display_name || null,
+          requires_manual_choice: true, expected_remote: versions.remote_updated_at, expected_local: versions.local_updated_at,
+          reason: versions.merge_unavailable || "As versões alteraram os mesmos campos. Escolhe o valor a manter em cada campo.",
+          manual_merge_fields: versions.manual_merge_fields,
+        };
         return {
           sync_id: conflict.sync_id, store: conflict.store, display_name: conflict.display_name || null,
           mergeable: false, reason: versions.merge_unavailable || "As versões exigem decisão campo a campo.",
@@ -2316,7 +2323,8 @@ const RemoteWorkspace = {
     return {
       examined: conflicts.length,
       safe: reviewed.filter((item) => item.mergeable),
-      needs_review: reviewed.filter((item) => !item.mergeable),
+      manual_review: reviewed.filter((item) => item.requires_manual_choice),
+      needs_review: reviewed.filter((item) => !item.mergeable && !item.requires_manual_choice),
     };
   },
 
@@ -2325,9 +2333,15 @@ const RemoteWorkspace = {
     const seen = new Set();
     for (const item of previews) {
       const key = `${item?.store}|${item?.sync_id}`;
+      const validManualChoices = item?.resolution !== "merge_manual_fields" || (() => {
+        const choices = item.field_choices && typeof item.field_choices === "object" && !Array.isArray(item.field_choices) ? item.field_choices : {};
+        const keys = Object.keys(choices).sort();
+        return keys.length > 0 && keys.every((name) => ["local", "remote"].includes(choices[name]));
+      })();
       if (!item?.mergeable || !remoteIsUuid(item.sync_id) || !REMOTE_STORE_KINDS[item.store]
         || !item.expected_remote || !item.expected_local
-        || !["merge_non_overlapping", "keep_local", "keep_remote"].includes(item.resolution)
+        || !["merge_non_overlapping", "keep_local", "keep_remote", "merge_manual_fields"].includes(item.resolution)
+        || !validManualChoices
         || seen.has(key)) {
         throw new Error("A pré-visualização em lote é inválida ou repetida. Analisa novamente os conflitos.");
       }
@@ -2337,7 +2351,7 @@ const RemoteWorkspace = {
     try {
       for (const item of previews) {
         await this.resolveVersionConflict(item.sync_id, item.store, item.resolution,
-          item.expected_remote, item.expected_local, null, { deferSync: true });
+          item.expected_remote, item.expected_local, item.field_choices || null, { deferSync: true });
         applied++;
       }
     } catch (error) {

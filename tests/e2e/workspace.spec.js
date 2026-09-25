@@ -434,6 +434,35 @@ test("Workspace surfaces ready training plans in the explicit approval queue", a
   await expect(queue.getByRole("link", { name: /Plano arquivado E2E/ })).toHaveCount(0);
 });
 
+test("Workspace mostra observações recentes ativas com origem e ligação à ficha", async ({ page }) => {
+  await page.goto("/");
+  const ids = await page.evaluate(async () => {
+    RemoteWorkspace.scheduleSync = () => {};
+    const recent = await HeadCoachMemory.create({ team_id: DEFAULT_TEAM_ID, kind: "observation", title: "Apoio após passe", content: "O apoio apareceu depois do passe.", occurred_at: "2026-09-24", source: { type: "match", label: "Jogo vs União" } });
+    const older = await HeadCoachMemory.create({ team_id: DEFAULT_TEAM_ID, kind: "observation", title: "Pressão na saída", content: "A equipa recuperou a bola no meio campo.", occurred_at: "2026-09-20", source: { type: "coach", label: "Treinador" } });
+    const archived = await HeadCoachMemory.create({ team_id: DEFAULT_TEAM_ID, kind: "observation", title: "Observação arquivada", content: "Registo antigo.", occurred_at: "2026-09-25", source: { type: "coach", label: "Treinador" } });
+    await HeadCoachMemory.archive(archived);
+    return { recent, older };
+  });
+  await page.goto("/");
+  const panel = page.locator("[data-workspace-observations-list]");
+  const rows = panel.locator("[data-workspace-observation]");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("Apoio após passe");
+  await expect(rows.nth(0)).toContainText("Origem: Jogo vs União");
+  await expect(rows.nth(0)).toContainText("O apoio apareceu depois do passe.");
+  await expect(rows.nth(0)).toHaveAttribute("href", `#/timeline/memory/${ids.recent}`);
+  await expect(rows.nth(1)).toHaveAttribute("href", `#/timeline/memory/${ids.older}`);
+  await expect(panel).not.toContainText("Observação arquivada");
+});
+
+test("Workspace oferece captura quando não existem observações ativas", async ({ page }) => {
+  await page.goto("/");
+  const panel = page.locator("[data-workspace-observations-list]");
+  await expect(panel).toContainText("Ainda não há observações ativas.");
+  await expect(panel.getByRole("link", { name: "Registar observação" })).toHaveAttribute("href", "#/capturar");
+});
+
 test("Workspace shows the current weekly objective and explains duplicate or empty focus", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => typeof DB !== "undefined" && typeof TeamDevelopment !== "undefined");
@@ -603,13 +632,13 @@ test("Workspace next events skip cancelled, completed matches and completed sess
 
 test("treinador regista observação e ela entra na atividade partilhada", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("link", { name: "Registar observação" }).click();
+  await page.locator(".hero-main").getByRole("link", { name: "Registar observação" }).click();
 
   await page.getByLabel("Título").fill("Saída sob pressão");
   await page.getByRole("textbox", { name: "Observação", exact: true }).fill("Faltaram linhas de passe quando o adversário pressionou alto.");
   await page.getByRole("button", { name: "Guardar observação" }).click();
 
-  await expect(page.getByText("Saída sob pressão")).toBeVisible();
+  await expect(page.locator("[data-workspace-observation]").filter({ hasText: "Saída sob pressão" })).toBeVisible();
   await expect(page.getByText(/Registou observação/)).toBeVisible();
 
   await page.getByRole("link", { name: "Timeline", exact: true }).first().click();
@@ -1487,6 +1516,7 @@ test("conflito com uma só versão alterada mostra a proposta antes de confirmar
 });
 
 test("pré-visualização em lote deixa os conflitos sobrepostos para revisão e só grava após confirmação", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined" && typeof router === "function" && typeof MCPConnectors !== "undefined");
   await page.evaluate(() => {
@@ -1501,7 +1531,9 @@ test("pré-visualização em lote deixa os conflitos sobrepostos para revisão e
         { sync_id: "m1", store: "jogos", display_name: "Jogo 1", mergeable: true, resolution: "merge_non_overlapping", expected_remote: "r1", expected_local: "l1", local_changes: ["resultado"], remote_changes: ["nota_tatica"], payload: { resultado: "2-1", nota_tatica: "Apoio" } },
         { sync_id: "m2", store: "jogos", display_name: "Jogo 2", mergeable: true, resolution: "merge_non_overlapping", expected_remote: "r2", expected_local: "l2", local_changes: ["local"], remote_changes: ["data"], payload: { local: "Campo A", data: "2026-10-04" } },
         { sync_id: "m3", store: "jogos", display_name: "Jogo 3", mergeable: true, resolution: "keep_remote", single_change: true, changed_side: "remote", expected_remote: "r3", expected_local: "l3", local_changes: [], remote_changes: ["nota_tatica"], payload: { nota_tatica: "Versão remota" } },
-      ], needs_review: [{ sync_id: "m4", store: "jogos", display_name: "Jogo 4", mergeable: false, reason: "Os dois lados alteraram o mesmo campo." }] };
+      ], manual_review: [{ sync_id: "m4", store: "jogos", display_name: "Jogo 4", requires_manual_choice: true, reason: "Os dois lados alteraram o mesmo campo.", expected_remote: "r4", expected_local: "l4", manual_merge_fields: [
+        { key: "adversario", local_present: true, remote_present: true, local_value: "Rival local", remote_value: "Rival remoto" },
+      ] }], needs_review: [] };
     };
     RemoteWorkspace.resolveIndependentConflictBatch = async (items) => {
       window.__batchWrites++;
@@ -1511,16 +1543,30 @@ test("pré-visualização em lote deixa os conflitos sobrepostos para revisão e
     go("#/definicoes");
   });
   await page.getByRole("button", { name: "Analisar resoluções seguras (4)" }).click();
-  await expect(page.getByText("3 resoluções seguras · 1 conflito para rever")).toBeVisible();
-  await page.getByText("1 conflito(s) precisam de escolha campo a campo", { exact: true }).click();
+  await expect(page.getByText("3 resoluções seguras · 1 conflito com escolha por campo")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true, "a pré-visualização não deve criar scroll horizontal no telemóvel");
   await expect(page.getByText("Os dois lados alteraram o mesmo campo.")).toBeVisible();
   await expect(page.getByText("Só workspace remoto alterou: Nota tática. Será mantida essa versão.")).toBeVisible();
+  const manualChoiceBox = await page.locator('[data-batch-merge-choice][data-sync-id="m4"]').boundingBox();
+  expect(manualChoiceBox.height).toBeGreaterThanOrEqual(44);
+  await page.getByText("Comparar valores").click();
+  await expect(page.getByText('"Rival local"')).toBeVisible();
+  await expect(page.getByText('"Rival remoto"')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true, "os valores comparados devem caber no telemóvel");
+  let missingChoiceMessage = "";
+  page.on("dialog", async dialog => { if (dialog.type() === "alert") missingChoiceMessage = dialog.message(); await dialog.accept(); });
+  await page.getByRole("button", { name: "Aplicar e sincronizar 4 decisões" }).click();
+  expect(missingChoiceMessage).toContain("Escolhe Neste dispositivo ou Workspace remoto para cada campo diferente");
+  expect(await page.evaluate(() => window.__batchWrites)).toBe(0);
+  await page.locator('[data-batch-merge-choice][data-sync-id="m4"]').selectOption("local");
   expect(await page.evaluate(() => window.__batchWrites)).toBe(0);
   let resultMessage = "";
+  page.removeAllListeners("dialog");
   page.on("dialog", async dialog => { if (dialog.type() === "alert") resultMessage = dialog.message(); await dialog.accept(); });
-  await page.getByRole("button", { name: "Aplicar e sincronizar 3 resoluções seguras" }).click();
-  await expect.poll(() => page.evaluate(() => window.__batchItems?.length)).toBe(3);
-  expect(await page.evaluate(() => window.__batchItems.map(item => item.sync_id))).toEqual(["m1", "m2", "m3"]);
+  await page.getByRole("button", { name: "Aplicar e sincronizar 4 decisões" }).click();
+  await expect.poll(() => page.evaluate(() => window.__batchItems?.length)).toBe(4);
+  expect(await page.evaluate(() => window.__batchItems.map(item => item.sync_id))).toEqual(["m1", "m2", "m3", "m4"]);
+  expect(await page.evaluate(() => window.__batchItems[3].field_choices)).toEqual({ adversario: "local" });
   expect(resultMessage).toContain("1 conflito continua preservado");
 });
 
@@ -1692,6 +1738,8 @@ test("conflito antigo permite escolher valores por campo e bloqueia escolhas inc
   await page.getByRole("button", { name: "Comparar versões" }).click();
   await expect(page.getByRole("heading", { name: "Escolher campo a campo" })).toBeVisible();
   await expect(page.locator("[data-manual-merge-field]")).toHaveCount(2);
+  const manualChoiceBox = await page.locator('[data-manual-merge-field="nota_tatica"]').boundingBox();
+  expect(manualChoiceBox.height).toBeGreaterThanOrEqual(44);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   let alertMessage = "";
   page.once("dialog", async (dialog) => { alertMessage = dialog.message(); await dialog.accept(); });
