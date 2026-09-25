@@ -54,6 +54,7 @@ try {
   check(initialized.result.serverInfo.name === "vision-coach", "Unexpected MCP server identity.");
   check(/first locate candidate citations with search_team_knowledge or get_cross_session_evidence/i.test(initialized.result.instructions), "Missing evidence-retrieval instruction.");
   check(/Never invent a source UUID, revision, field or quote/i.test(initialized.result.instructions), "Missing anti-fabrication instruction.");
+  check(/category player_goal_archive or evidence type historical_coach_goal/i.test(initialized.result.instructions), "Missing instruction to preserve archived athlete goals as historical evidence.");
 
   const listed = await call("tools/list");
   const tool = listed.result.tools.find((item: any) => item.name === "evaluate_cross_session_pattern");
