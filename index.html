@@ -107,6 +107,8 @@
             const notice=document.createElement('div');notice.id='sw-update-notice';notice.className='notice sw-update-notice';notice.setAttribute('role','status');notice.setAttribute('aria-live','polite');notice.append('Atualização disponível. Termina ou guarda o trabalho em curso para poderes atualizar. ');
             const reload=document.createElement('button');reload.type='button';reload.className='btn secondary';reload.textContent='Atualizar app';
             const syncSafety=()=>{reload.disabled=hasUnsavedOrOpenSession()||window.VisionAppReloadGuard.hasActiveSession();};
+            window.addEventListener('visioncoach:reload-guard-change',syncSafety);
+            window.addEventListener('hashchange',syncSafety);
             reload.addEventListener('click',()=>{syncSafety();if(!reload.disabled)location.reload();});
             notice.append(reload);document.body.appendChild(notice);syncSafety();
             new MutationObserver(syncSafety).observe(document.body,{childList:true,subtree:true});
@@ -129,6 +131,7 @@
           if(inUse){items.add(key);activeWorkInMemory.add(key);}else{items.delete(key);activeWorkInMemory.delete(key);}
           if(items.size)sessionStorage.setItem(activeWorkKey,JSON.stringify([...items]));else sessionStorage.removeItem(activeWorkKey);
         }catch(_){if(inUse)activeWorkInMemory.add(String(kind)+":"+String(id));else activeWorkInMemory.delete(String(kind)+":"+String(id));}
+        window.dispatchEvent(new Event('visioncoach:reload-guard-change'));
       },
       hasActiveSession(){try{return activeWorkInMemory.size>0||JSON.parse(sessionStorage.getItem(activeWorkKey)||"[]").length>0;}catch(_){return true;}}
     };
