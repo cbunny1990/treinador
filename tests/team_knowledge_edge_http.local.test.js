@@ -72,7 +72,14 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     const seededMatches = await admin.from("workspace_records").insert([
       ...matchDates.map((date, index) => ({
         id: matchIds[index], team_id: teams[0], kind: "match", actor_type: "human",
-        payload: { data: date, estado: "concluido", adversario: `Adversário local ${index + 1}` },
+        payload: {
+          data: date, estado: "concluido", adversario: `Adversário local ${index + 1}`,
+          ...(index === 5 ? { golos_favor: 2, golos_contra: 1 } : {}),
+          match_events: { events: index === 5 ? [
+            { id: uuid(), type: "loss", at_ms: 60000, reason: "pass", zone: "def_c", note: "Passe errado na saída" },
+            { id: uuid(), type: "recovery", at_ms: 120000, zone: "med_c", note: "Recuperação central" },
+          ] : [] },
+        },
       })),
       { id: matchIds[6], team_id: teams[0], kind: "match", actor_type: "human", payload: { estado: "concluido", adversario: "Jogo local sem data" } },
       { id: uuid(), team_id: teams[1], kind: "match", actor_type: "human", payload: { data: "2026-09-25", estado: "concluido", adversario: "SEGREDO_EQUIPA_EXTERNA" } },
@@ -155,6 +162,29 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     const recentResult = JSON.parse((await recentMatches.json()).result.content[0].text);
     assert.deepEqual(recentResult.map((row) => row.payload.data), ["2026-09-22", "2026-09-20", "2026-09-17", "2026-09-10", "2026-09-05"]);
     assert.doesNotMatch(JSON.stringify(recentResult), /SEGREDO_EQUIPA_EXTERNA/);
+
+    const recentContextResponse = await mcpRequest(token, "tools/call", {
+      name: "get_recent_match_context", arguments: { question: "O que aconteceu nos últimos jogos?", match_count: 5 },
+    });
+    assert.equal(recentContextResponse.status, 200);
+    const recentContext = JSON.parse((await recentContextResponse.json()).result.content[0].text);
+    assert.equal(recentContext.schema, "vision-recent-match-context@1");
+    assert.equal(recentContext.selection.returned, 5);
+    assert.deepEqual(recentContext.matches.map((match) => match.date), ["2026-09-22", "2026-09-20", "2026-09-17", "2026-09-10", "2026-09-05"]);
+    assert.deepEqual(recentContext.matches[0].result, { for: 2, against: 1, provenance: "introduced_manual" });
+    assert.equal(recentContext.matches[0].recorded_event_count, 2);
+    assert.equal(recentContext.matches[0].statistics_provenance, "counted_from_recorded_events");
+    assert.deepEqual(recentContext.matches[0].registered_event_counts, {
+      goals_for: 0, goals_against: 0, shots_on_target: 0, shots_off_target: 0, corners_for: 0,
+      corners_against: 0, losses: 1, recoveries: 1, through_balls: 0, striker_foot_balls: 0,
+    });
+    assert.deepEqual(recentContext.matches[0].losses_by_reason, { "passe errado": 1 });
+    assert.deepEqual(recentContext.matches[0].losses_by_zone, { "defesa central": 1 });
+    assert.deepEqual(recentContext.matches[0].recoveries_by_zone, { "meio-campo central": 1 });
+    assert.equal(recentContext.missing_data.structured_event_counts, false);
+    assert.equal(recentContext.semantic_retrieval_status, "provider_not_configured");
+    assert.deepEqual(recentContext.semantic_evidence, []);
+    assert.doesNotMatch(JSON.stringify(recentContext), /SEGREDO_EQUIPA_EXTERNA/);
 
     const search = await mcpRequest(token, "tools/call", {
       name: "search_team_knowledge", arguments: { query: "problemas nos jogos recentes", match_refs: recentResult.map((row) => row.id) },
