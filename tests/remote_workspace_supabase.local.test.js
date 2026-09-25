@@ -10,6 +10,8 @@ const { RemoteWorkspace } = require("../js/remote_workspace.js");
 const MatchVisual = require("../js/match_visual.js");
 const MatchAnalysis = require("../js/match_analysis.js");
 const MatchEvidence = require("../js/match_evidence.js");
+const PlayerGoals = require("../js/player_goals.js");
+const TeamDevelopment = require("../js/team_development.js");
 
 const url = process.env.VISION_COACH_SUPABASE_LOCAL_URL || "";
 const anonKey = process.env.VISION_COACH_SUPABASE_LOCAL_ANON_KEY || "";
@@ -138,15 +140,20 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     }).select("id");
     assert.ok(forbiddenInsert.error, "RLS must reject a write to another team's workspace.");
 
-    const refs = { player: crypto.randomUUID(), liveMatch: crypto.randomUUID(), evidenceMatch: crypto.randomUUID(), videoMoment: crypto.randomUUID(), deletedVideoMoment: crypto.randomUUID(), deletedMatch: crypto.randomUUID(), historyMatch: crypto.randomUUID(), historyTraining: crypto.randomUUID(), exercise: crypto.randomUUID(), proposal: crypto.randomUUID(), pcDeletedProposal: crypto.randomUUID(), playerArchive: crypto.randomUUID(), photo: crypto.randomUUID(), latestPhoto: crypto.randomUUID(), lossEvent: crypto.randomUUID() };
+    const refs = { player: crypto.randomUUID(), playerGoal: crypto.randomUUID(), teamGoal: crypto.randomUUID(), liveMatch: crypto.randomUUID(), evidenceMatch: crypto.randomUUID(), videoMoment: crypto.randomUUID(), deletedVideoMoment: crypto.randomUUID(), deletedMatch: crypto.randomUUID(), historyMatch: crypto.randomUUID(), historyTraining: crypto.randomUUID(), exercise: crypto.randomUUID(), proposal: crypto.randomUUID(), pcDeletedProposal: crypto.randomUUID(), playerArchive: crypto.randomUUID(), photo: crypto.randomUUID(), latestPhoto: crypto.randomUUID(), lossEvent: crypto.randomUUID() };
     globalThis.DEFAULT_TEAM_ID = "local-coach";
     globalThis.mediaSubjectKey = (team, type, id) => `${team}|${type}|${id}`;
     globalThis.DB = devices[0];
     RemoteWorkspace.init = async () => owner.client;
-    const playerId = await devices[0].criar("jogadores", {
+    let initialPlayer = {
       team_id: "local-coach", sync_id: refs.player, remote_team_id: teamId, sync_dirty: true,
       nome: "Atleta sintético", plantel_ativo: true,
-    });
+    };
+    initialPlayer = PlayerGoals.apply(initialPlayer, { type: "save", expected_revision: 0, goal: {
+      id: refs.playerGoal, title: "Apoiar após o passe", started_at: "2026-09-01", status: "active",
+      evidence_refs: [{ type: "match", id: refs.evidenceMatch }], exercise_refs: [refs.exercise], notes: "Objetivo definido pelo treinador",
+    } }, { now: "2026-09-01T12:00:00.000Z" });
+    const playerId = await devices[0].criar("jogadores", initialPlayer);
     await devices[0].criar("jogos", {
       team_id: "local-coach", remote_team_id: teamId, sync_dirty: true,
       external_key: "local-sync-legacy-player-ref", adversario: "Jogo histórico",
@@ -227,9 +234,16 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
       team_id: "local-coach", sync_id: refs.historyTraining, remote_team_id: teamId, sync_dirty: true,
       external_key: "local-player-history-training", data: "2026-09-02", objetivo: "Passe + apoio",
       blocos: [{ exercise_ref: String(exerciseId), duration_min: 12 }],
-      session: { attendance: [{ player_ref: refs.player, name: "Atleta sintético", status: "present" }], blocks: [{ exercise_ref: String(exerciseId), planned_min: 12, elapsed_ms: 60_000 }] },
+      status: "completed",
+      session: { status: "completed", attendance: [{ player_ref: refs.player, name: "Atleta sintético", status: "present" }], blocks: [{ exercise_ref: String(exerciseId), planned_min: 12, elapsed_ms: 60_000 }] },
     });
-    const proposalBody = { objective: "Apoio após passe", agent_proposal: { status: "proposed", rationale: "Proposta para revisão do treinador", evidence: [{ type: "match", id: refs.liveMatch }, { type: "training", id: refs.historyTraining }] } };
+    const proposalBody = TeamDevelopment.saveGoal(null, {
+      title: "Apoio após passe", identified_at: "2026-09-01", stage: "planned",
+      sessions: [{ type: "match", id: refs.liveMatch }, { type: "training", id: refs.historyTraining }],
+      worked_sessions: [], exercises: [{ type: "exercise", id: refs.exercise }],
+      observations: "Identificado no último jogo", interpretation: "O portador precisa de linha de passe",
+      agent_proposal: { status: "proposed", rationale: "Proposta para revisão do treinador", evidence_refs: [] },
+    }, { expected_revision: 0, now: "2026-09-01T12:00:00.000Z" });
     await devices[0].criar("workspace_documents", {
       team_id: "local-coach", sync_id: refs.proposal, remote_team_id: teamId, sync_dirty: true,
       external_key: "local-sync-team-goal-proposal", type: "team_goal", title: "Proposta de prioridade",
@@ -336,6 +350,14 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.equal(phonePlayerArchive.status, "archived");
     assert.equal(JSON.parse(phonePlayerArchive.body).development_goals.items[0].history[0].status, "active");
     assert.equal(JSON.parse(phonePlayerArchive.body).development_goals.items[0].evidence_refs[0].id, refs.evidenceMatch);
+    assert.equal(PlayerGoals.state(phonePlayer).items.length, 1, "O objetivo longitudinal do atleta deve sincronizar sem criar um segundo registo.");
+    assert.equal(PlayerGoals.state(phonePlayer).items[0].id, refs.playerGoal);
+    assert.equal(PlayerGoals.state(phonePlayer).items[0].exercise_refs[0], refs.exercise);
+    const initialTeamGoal = TeamDevelopment.teamGoal(phoneProposal);
+    assert.equal(initialTeamGoal.schema, TeamDevelopment.schemas.goal);
+    assert.equal(initialTeamGoal.stage, "planned");
+    assert.equal(initialTeamGoal.evidence.length, 0);
+    assert.equal(initialTeamGoal.agent_proposal.status, "proposed");
     assert.equal(phoneLive.match_events.events[0].id, refs.lossEvent);
     assert.equal(phoneLive.match_events.events[0].note, "Passe interceptado no PC");
     assert.equal(phoneLive.visual_match.period, 2);
@@ -362,10 +384,21 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
       fields: { ...MatchAnalysis.fromMatch(editedEvidenceMatch).fields, summary: "Análise revista no telemóvel" },
     }, { expected_revision: 1, actor: "Treinador", now: "2026-09-03T12:05:00.000Z" });
     await devices[1].atualizar("jogos", { ...editedEvidenceMatch, sync_dirty: true });
-    await devices[1].atualizar("workspace_documents", { ...phoneProposal, body: JSON.stringify({ ...JSON.parse(phoneProposal.body), coach_review: "Rever apoio no próximo treino" }), sync_dirty: true });
+    const revisedTeamGoal = TeamDevelopment.saveGoal(phoneProposal, {
+      ...initialTeamGoal, stage: "observed", worked_sessions: [{ type: "training", id: refs.historyTraining }],
+      evidence: [{ type: "match", id: refs.liveMatch }],
+      observations: "O apoio apareceu em parte do exercício; requer nova observação.",
+      evaluation: "Evidência observada, ainda insuficiente para concluir melhoria.",
+      coach_decision: "Continuar a observar no próximo jogo.",
+    }, { expected_revision: initialTeamGoal.revision, now: "2026-09-03T12:03:00.000Z" });
+    await devices[1].atualizar("workspace_documents", { ...phoneProposal, body: JSON.stringify(revisedTeamGoal), sync_dirty: true });
+    const revisedPlayer = PlayerGoals.apply(phonePlayer, { type: "save", expected_revision: PlayerGoals.state(phonePlayer).revision, goal: {
+      ...PlayerGoals.state(phonePlayer).items[0], notes: "Praticado na sessão; progresso ainda não avaliado.", status: "continue",
+    } }, { now: "2026-09-03T12:03:00.000Z" });
+    await devices[1].atualizar("jogadores", { ...revisedPlayer, sync_dirty: true });
     await devices[1].atualizar("treinos", { ...phoneHistoryTraining, session: { ...phoneHistoryTraining.session, attendance: [{ ...phoneHistoryTraining.session.attendance[0], status: "late" }] }, sync_dirty: true });
     const phonePush = await RemoteWorkspace._syncRecords(teamId, coach.user.id);
-    assert.equal(phonePush.pushed, 4);
+    assert.equal(phonePush.pushed, 5);
     globalThis.DB = devices[0];
     RemoteWorkspace.init = async () => owner.client;
     const stalePc = await devices[0].obter("jogos", liveId);
@@ -373,9 +406,20 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     const conflict = await RemoteWorkspace._syncRecords(teamId, owner.user.id);
     assert.equal(conflict.pushed, 0);
     assert.equal(conflict.conflicts.some((item) => item.sync_id === refs.liveMatch && item.reason === "version_mismatch"), true);
-    assert.equal(conflict.pulled, 3, "As edições da proposta, presença, análise e evidências feitas no telemóvel devem regressar ao PC apesar do conflito noutro registo.");
+    assert.equal(conflict.pulled, 4, "As edições dos objetivos, presença, análise e evidências feitas no telemóvel devem regressar ao PC apesar do conflito noutro registo.");
     const pcProposal = (await devices[0].listar("workspace_documents")).find((row) => row.sync_id === refs.proposal);
-    assert.equal(JSON.parse(pcProposal.body).coach_review, "Rever apoio no próximo treino");
+    const pcTeamGoal = TeamDevelopment.teamGoal(pcProposal);
+    assert.equal(pcTeamGoal.stage, "observed");
+    assert.equal(pcTeamGoal.observations, "O apoio apareceu em parte do exercício; requer nova observação.");
+    assert.equal(pcTeamGoal.worked_sessions[0].id, refs.historyTraining);
+    assert.equal(pcTeamGoal.evidence[0].id, refs.liveMatch);
+    assert.equal(pcTeamGoal.history.length, 2, "O histórico conserva o estado inicial e a etapa planeada antes da observação.");
+    const pcPlayer = (await devices[0].listar("jogadores")).find((row) => row.sync_id === refs.player);
+    assert.equal(PlayerGoals.state(pcPlayer).items.length, 1, "Editar um objetivo individual não deve duplicar o atleta nem o objetivo.");
+    assert.equal(PlayerGoals.state(pcPlayer).items[0].id, refs.playerGoal);
+    assert.equal(PlayerGoals.state(pcPlayer).items[0].status, "continue", "A sincronização não infere melhoria a partir de uma sessão trabalhada.");
+    assert.equal(PlayerGoals.state(pcPlayer).items[0].notes, "Praticado na sessão; progresso ainda não avaliado.");
+    assert.equal(PlayerGoals.state(pcPlayer).items[0].history.length, 1);
     const pcHistoryTraining = (await devices[0].listar("treinos")).find((row) => row.sync_id === refs.historyTraining);
     assert.equal(pcHistoryTraining.session.attendance[0].status, "late");
     const pcEvidenceMatch = (await devices[0].listar("jogos")).find((row) => row.sync_id === refs.evidenceMatch);
