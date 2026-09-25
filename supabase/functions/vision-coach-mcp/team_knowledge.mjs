@@ -158,13 +158,32 @@ function sourceFields(row){
     const leaves=[];extractTextLeaves({title:p.title,body:p.body,principles:p.principles,attacking:p.attacking,defending:p.defending,transitions:p.transitions},'',leaves);
     for(const item of leaves)add(item.path,'Princípio do modelo de jogo',item.text,'game_model_principle',{category:'game_model',source_date:null});
   } else if(kind==='document'){
-    add('title','Documento · '+text(p.title,180),p.title,'coach_observation',{category:text(p.type,80)||'document',source_date:isoDate(p.target_date)});
+    const archivedPlayer=p.type==='player_archive';
+    add('title',archivedPlayer?'Arquivo histórico de atleta':'Documento · '+text(p.title,180),archivedPlayer?'Arquivo histórico de atleta':p.title,'coach_observation',{category:archivedPlayer?'player_archive':text(p.type,80)||'document',source_date:isoDate(p.target_date)});
     let body=p.body;
     if(typeof body==='string'){
       try{const parsed=JSON.parse(body);if(parsed&&typeof parsed==='object')body=parsed;}catch{}
     }
     if(body&&typeof body==='object'){
-      if(p.type==='team_goal'){
+      if(p.type==='player_archive'){
+        const archive=obj(body),archivedPlayer=obj(archive.player),playerRef=safeRef(archivedPlayer.ref),nameTerms=redactionTerms([archivedPlayer.name]);
+        if(playerRef){
+          const goals=arr(obj(archive.development_goals).items);
+          for(const [i,goal] of goals.entries()){
+            const versions=[...arr(goal.history).map((version,j)=>({version,index:j,history:true})),{version:goal,index:null,history:false}];
+            for(const entry of versions){
+              const version=obj(entry.version),raw=[version.title,version.notes].filter(Boolean).join('\n'),content=redactNamesFromText(raw,nameTerms);
+              if(containsSensitivePersonalText(content))continue;
+              const evidence=arr(version.evidence_refs).map(ref=>({type:ref?.type==='observation'?'memory':ref?.type,id:ref?.id}));
+              const exercises=arr(version.exercise_refs).map(id=>({type:'exercise',id}));
+              const suffix=entry.history?`.history[${entry.index}]`:'';
+              add(`body.development_goals.items[${i}]${suffix}`,
+                entry.history?'Objetivo individual arquivado · revisão histórica':'Objetivo individual arquivado',content,'coach_goal',
+                {category:'player_goal_archive',source_date:isoDate(version.updated_at)||isoDate(version.started_at),player_ref:playerRef,related_refs:relatedRefs([...evidence,...exercises])});
+            }
+          }
+        }
+      } else if(p.type==='team_goal'){
         const goal=obj(body),refs=relatedRefs(goal.evidence,goal.sessions,goal.worked_sessions,goal.exercises),types={observations:'coach_observation',interpretation:'interpretation',hypothesis:'hypothesis',evaluation:'coach_evaluation',coach_decision:'coach_decision'};
         for(const [key,evidenceType] of Object.entries(types))add(`body.${key}`,'Objetivo de equipa · '+key,goal[key],evidenceType,{category:'team_goal',source_date:isoDate(p.target_date),related_refs:refs});
         const proposal=obj(goal.agent_proposal),proposalEvidence=relatedRefs(proposal.evidence_refs);add('body.agent_proposal.rationale','Proposta do Head Coach',proposal.rationale,'agent_proposal',{category:'team_goal',source_date:isoDate(p.target_date),related_refs:proposalEvidence.length?proposalEvidence:refs});

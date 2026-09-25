@@ -139,6 +139,26 @@ test('RAG indexes only player development notes, redacts the athlete name and ex
  const withName=match();withName.payload.match_events.events[0].note='Passe intercetado por Maria Silva';const redacted=rag.teamKnowledgeTestAPI.chunkRecord(withName,{redactNames:['Maria Silva']});assert.doesNotMatch(redacted.find(x=>x.source_path==='match_events.events[0]').content,/Maria Silva/);
 });
 
+test('RAG preserves archived player-goal history by stable player UUID without embedding the archived name or sensitive notes',()=>{
+ const exerciseRef='70000000-0000-4000-8000-000000000007',matchRef='60000000-0000-4000-8000-000000000006',trainingRef='50000000-0000-4000-8000-000000000005';
+ const archive={schema:'vision-player-archive@1',player:{ref:PLAYER,name:'Maria Silva',number:8,age_group:'Sub-8'},development_goals:{schema:'vision-player-goals@1',items:[
+  {id:'goal-1',title:'Apoio após passe de Maria Silva',started_at:'2026-09-01',status:'continue',notes:'Antes demorava a apoiar; agora oferece linha de passe cedo.',evidence_refs:[{type:'match',id:matchRef},{type:'training',id:trainingRef},{type:'observation',id:SOURCE}],exercise_refs:[exerciseRef],history:[{title:'Maria Silva espera antes de apoiar',started_at:'2026-09-01',status:'active',notes:'No início precisava de um sinal verbal para apoiar.',updated_at:'2026-09-05T10:00:00.000Z'}]},
+  {id:'goal-2',title:'Objetivo individual',started_at:'2026-09-02',status:'continue',notes:'Acompanhamento de saúde mental e ansiedade.'}
+ ]}};
+ const row={id:SOURCE,team_id:TEAM,kind:'document',updated_at:'v1',payload:{type:'player_archive',title:'Arquivo · Maria Silva',body:JSON.stringify(archive)}};
+ const chunks=rag.teamKnowledgeTestAPI.chunkRecord(row),goalChunks=chunks.filter(chunk=>chunk.category==='player_goal_archive');
+ assert.equal(chunks.find(chunk=>chunk.source_path==='title').content,'Arquivo histórico de atleta: Arquivo histórico de atleta');
+ assert.equal(goalChunks.length,2);const historical=goalChunks.find(chunk=>chunk.source_path.endsWith('.history[0]')),current=goalChunks.find(chunk=>!chunk.source_path.includes('.history['));
+ assert.equal(historical.player_ref,PLAYER);assert.equal(historical.source_date,'2026-09-05');assert.equal(current.player_ref,PLAYER);
+ assert.equal(current.evidence_type,'coach_goal');assert.equal(current.category,'player_goal_archive');
+ assert.deepEqual(current.metadata.related_refs,[
+  {type:'match',id:matchRef,field:null,event_ref:null},{type:'training',id:trainingRef,field:null,event_ref:null},
+  {type:'memory',id:SOURCE,field:null,event_ref:null},{type:'exercise',id:exerciseRef,field:null,event_ref:null}
+ ]);
+ assert.match(current.content,/atleta/);assert.match(historical.content,/sinal verbal/);
+ assert.doesNotMatch(JSON.stringify(chunks),/Maria Silva|ansiedade|saúde mental|Arquivo · Maria/);
+});
+
 test('RAG redacts athlete names and filters health terms in chunk labels as well as text',()=>{
  const training={id:SOURCE,team_id:TEAM,kind:'training',updated_at:'v1',payload:{data:'2026-09-24',session:{blocks:[{exercise_name:'Apoio orientado da Maria Silva',exercise_snapshot:{objetivo:'Apoiar depois do passe.'}}]}}};
  const chunks=rag.teamKnowledgeTestAPI.chunkRecord(training,{redactNames:['Maria Silva']});
@@ -346,6 +366,20 @@ test('indexer replaces source chunks idempotently and only indexes allowlisted p
  assert.doesNotMatch(provider.requests.flatMap(request=>request.input).join('\n'),/hypertension|hipertens/i,'conteúdo de saúde não pode chegar ao provider');
  assert.match(provider.requests.flatMap(request=>request.input).join('\n'),/pressão alta/i,'observação tática não deve ser confundida com pressão arterial');
  assert.equal(db.fromCalls[0].table,'teams');assert.equal(db.fromCalls[1].table,'workspace_records');assert.ok(db.fromCalls[1].filters[0]({team_id:TEAM}));assert.equal(db.fromCalls[1].filters[0]({team_id:'40000000-0000-4000-8000-000000000004'}),false);
+});
+
+test('indexer embeds archived goal history with stable provenance while withholding archived identity and health text',async()=>{
+ const matchRef='60000000-0000-4000-8000-000000000006',archive={schema:'vision-player-archive@1',player:{ref:PLAYER,name:'Maria Silva',number:8,age_group:'Sub-8'},development_goals:{items:[
+  {title:'Apoiar após passar a bola',started_at:'2026-09-01',status:'continue',notes:'O objetivo continua ativo no arquivo.',evidence_refs:[{type:'match',id:matchRef}],exercise_refs:[]},
+  {title:'Nota privada',started_at:'2026-09-02',notes:'O atleta tem hipertensão.'}
+ ]}},row={id:SOURCE,team_id:TEAM,kind:'document',updated_at:'v1',payload:{type:'player_archive',title:'Arquivo · Maria Silva',body:JSON.stringify(archive)}};
+ const db=fakeAdmin([row]),provider=fakeProvider(),result=await rag.indexPendingTeamKnowledge(db,TEAM,{provider,limit:16});
+ assert.equal(result.indexed_sources,1);
+ const indexed=db.calls.find(x=>x.name==='replace_team_knowledge_source').args.p_chunks,goal=indexed.find(chunk=>chunk.category==='player_goal_archive');
+ assert.equal(indexed.length,2);assert.equal(goal.player_ref,PLAYER);assert.equal(goal.category,'player_goal_archive');
+ assert.deepEqual(goal.metadata.related_refs,[{type:'match',id:matchRef,field:null,event_ref:null}]);
+ const embedded=provider.requests.flatMap(request=>request.input).join('\n');
+ assert.match(embedded,/apoiar após passar a bola/i);assert.doesNotMatch(embedded,/Maria Silva|hipertensão|número 8|Arquivo · Maria/i);
 });
 
 test('indexer redacts names of deleted players from retained match notes without indexing deleted player records',async()=>{
