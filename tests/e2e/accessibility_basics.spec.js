@@ -79,6 +79,12 @@ test("controlos principais têm nomes acessíveis e campos com rótulos", async 
 
     expect(unlabeled, `${routeName}: controlos sem nome acessível`).toEqual([]);
   }
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/#/equipa/jogo/" + fixture.match);
+  const rosterCheck = page.locator('form[data-form="match-callup"] input[name="player_ids"]').first();
+  await rosterCheck.focus();
+  expect(await rosterCheck.evaluate((element) => getComputedStyle(element.nextElementSibling).outlineStyle)).toBe("solid");
 });
 
 test("teclado alcança os campos e a ação principal da ficha de jogador", async ({ page }) => {
