@@ -139,6 +139,7 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     const sensitiveResult = JSON.parse((await sensitiveSearch.json()).result.content[0].text);
     assert.equal(sensitiveResult.retrieval_status, "sensitive_query_not_sent");
     assert.equal(sensitiveResult.answer_mode, "structured_data_only");
+    assert.match(sensitiveResult.message, /outros dados pessoais sensíveis/i);
     assert.doesNotMatch(JSON.stringify(sensitiveResult), /dislexia/i);
 
     const hybridContext = await mcpRequest(token, "tools/call", {

@@ -148,7 +148,7 @@ test('RAG redacts athlete names and filters health terms in chunk labels as well
  assert.deepEqual(rag.teamKnowledgeTestAPI.chunkRecord(titledHealth),[],'health-bearing labels must not leak through otherwise safe body text');
 });
 
-test('health privacy filter excludes common cardiovascular, glucose and mental-health wording without blocking tactical high press',()=>{
+test('sensitive-personal-data filter blocks health, neurodevelopmental and identity-related text without blocking tactical high press',()=>{
  const sensitive=[
   'O atleta tem hipertensão e deve evitar esforço intenso.',
   'A tensão arterial foi elevada no controlo médico.',
@@ -292,7 +292,7 @@ test('RAG validates exact team/scope/filters and searches only with the authoriz
  await assert.rejects(rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query:'ok',from:'2026-09-30',to:'2026-09-01'},{provider}),/invalid_knowledge_date_range/);
 });
 
-test('health-related search queries stay out of embeddings and return no echoed text',async()=>{
+test('sensitive-personal search queries stay out of embeddings and return no echoed text',async()=>{
  for(const query of ['A atleta tem tonturas e tosse após o treino?','O que fazer com uma jogadora com dislexia?','Como adaptar o treino à menstruação?','O que fazer com um jogador com deficiência auditiva?','A atleta pode treinar após consumo de álcool?']){
   const db=fakeAdmin([]),provider=fakeProvider();
   const result=await rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query},{provider});
