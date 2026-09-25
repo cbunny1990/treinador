@@ -1712,6 +1712,11 @@ test("foto do atleta persiste na fila local antes de iniciar a sincronização r
   });
   await page.getByRole("button", { name: "Guardar", exact: true }).click();
   await expect(page).toHaveURL(/#\/equipa\/jogador\/\d+$/);
+  await expect(page.locator("[data-player-photo-sync-status]")).toHaveAttribute("data-state", "pending");
+  await expect(page.locator("[data-player-photo-sync-message]")).toHaveText("Fotografia guardada neste dispositivo; sincronização pendente.");
+  await expect(page.locator("[data-player-photo-sync-link]")).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("visioncoach:sync-failed", { detail: { attempt: 1 } })));
+  await expect(page.locator("[data-player-photo-sync-message]")).toHaveText("A fotografia continua guardada neste dispositivo. A sincronização falhou; consulta Definições.");
   const saved = await page.evaluate(async () => {
     const player = (await DB.listar("jogadores")).find((row) => row.nome === "Foto Upload Recuperação E2E");
     const media = await HeadCoachMedia.listForSubject("player", player.id);

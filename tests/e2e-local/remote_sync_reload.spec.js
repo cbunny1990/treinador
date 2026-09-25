@@ -301,6 +301,8 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
     });
     await phone.getByRole("button", { name: "Guardar", exact: true }).click();
     await expect(phone).toHaveURL(new RegExp("#/equipa/jogador/" + phonePlayerId + "$"));
+    await expect(phone.locator("[data-player-photo-sync-status]")).toHaveAttribute("data-state", "pending");
+    await expect(phone.locator("[data-player-photo-sync-message]")).toHaveText("Fotografia guardada neste dispositivo; sincronização pendente.");
     const queuedPhoto = await phone.evaluate(async (playerId) => {
       const player = await DB.obter("jogadores", playerId);
       const photo = (await HeadCoachMedia.listForSubject("player", playerId))
@@ -326,6 +328,8 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
     }, { syncId: profilePhotoSyncId, localId: localPhotoId });
     expect(photoPush.conflicts).toEqual([]);
     expect(photoPush.local.sync_dirty).toBe(false);
+    await expect(phone.locator("[data-player-photo-sync-status]")).toHaveAttribute("data-state", "synced");
+    await expect(phone.locator("[data-player-photo-sync-message]")).toHaveText("Fotografia sincronizada com o workspace.");
     const remotePhoto = await admin.from("media_assets").select("storage_path,title,deleted_at,subject_ref").eq("id", profilePhotoSyncId).single();
     expect(remotePhoto.error).toBeNull();
     expect(remotePhoto.data.subject_ref).toBe(photoPlayerSyncId);
