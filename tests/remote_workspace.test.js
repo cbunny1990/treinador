@@ -1327,12 +1327,13 @@ test("consolidação pagina registos e media antes de decidir que IDs remotos de
   const originals={navigator:Object.getOwnPropertyDescriptor(globalThis,"navigator"),localStorage:globalThis.localStorage,
    getSession:RemoteWorkspace.getSession,ensureSelectedTeam:RemoteWorkspace.ensureSelectedTeam,syncNow:RemoteWorkspace.syncNow};
   const count=1007,idAt=(group,index)=>`${group}-0000-4000-8000-${String(index+1).padStart(12,"0")}`;
-  const lateRecordId=idAt("80000000",count-1),lateMediaId=idAt("83000000",count-1);
   remote.rows.push(...Array.from({length:count},(_,index)=>({id:idAt("80000000",index),team_id:remoteTeamId,kind:"player",payload:{nome:`Atleta ${index+1}`},updated_at:`v${index+1}`,deleted_at:null})));
   remote.mediaRows.push(...Array.from({length:count},(_,index)=>({id:idAt("83000000",index),team_id:remoteTeamId,subject_type:"team",subject_ref:remoteTeamId,media_type:"file",title:`Ficheiro ${index+1}`,external_url:`https://example.test/file/${index+1}`,updated_at:`m${index+1}`,deleted_at:null})));
   useDevice(0);
-  await devices[0].criar("jogadores",{team_id:"default",sync_id:lateRecordId,remote_updated_at:"v1007",remote_team_id:remoteTeamId,sync_dirty:false,nome:"Atleta existente"});
-  await devices[0].criar("media_items",{team_id:"default",sync_id:lateMediaId,remote_updated_at:"m1007",remote_team_id:remoteTeamId,sync_dirty:false,subject_type:"team",subject_id:"default",type:"file",title:"Ficheiro existente"});
+  for(let index=0;index<count;index++){
+   await devices[0].criar("jogadores",{team_id:"default",sync_id:idAt("80000000",index),remote_updated_at:`v${index+1}`,remote_team_id:remoteTeamId,sync_dirty:false,nome:`Atleta ${index+1}`});
+   await devices[0].criar("media_items",{team_id:"default",sync_id:idAt("83000000",index),remote_updated_at:`m${index+1}`,remote_team_id:remoteTeamId,sync_dirty:false,subject_type:"team",subject_id:"default",type:"file",title:`Ficheiro ${index+1}`});
+  }
   Object.defineProperty(globalThis,"navigator",{configurable:true,value:{onLine:true}});
   globalThis.localStorage={setItem(){}};
   RemoteWorkspace.getSession=async()=>({user:{id:"coach"}});
@@ -1343,18 +1344,23 @@ test("consolidação pagina registos e media antes de decidir que IDs remotos de
    const result=await RemoteWorkspace.consolidateNow();
    assert.equal(result.repaired,0,"registos depois do primeiro lote não podem ser confundidos com IDs desaparecidos");
    assert.equal(syncCalls,2);
-   assert.equal((await devices[0].listar("jogadores"))[0].sync_dirty,false);
-   assert.equal((await devices[0].listar("media_items"))[0].sync_dirty,false);
+   assert.equal((await devices[0].listar("jogadores")).filter((row)=>row.sync_dirty).length,0);
+   assert.equal((await devices[0].listar("media_items")).filter((row)=>row.sync_dirty).length,0);
    const consolidationReads=remote.queryLog.filter((query)=>["workspace_records","media_assets"].includes(query.table));
    assert.ok(consolidationReads.length>0);
    assert.ok(consolidationReads.every((query)=>query.filters.some(([op,key])=>op==="in"&&key==="id")),
     "consolidação deve verificar apenas os UUIDs locais, sem descarregar o histórico remoto da equipa");
+   assert.ok(consolidationReads.every((query)=>query.filters.find(([op,key])=>op==="in"&&key==="id")[2].length<=100));
+   for(const table of ["workspace_records","media_assets"]){
+    const requested=new Set(consolidationReads.filter((query)=>query.table===table).flatMap((query)=>query.filters.find(([op,key])=>op==="in"&&key==="id")[2]));
+    assert.equal(requested.size,count,`${table} deve verificar cada UUID local`);
+   }
   }finally{
    if(originals.navigator)Object.defineProperty(globalThis,"navigator",originals.navigator);else delete globalThis.navigator;
    globalThis.localStorage=originals.localStorage;RemoteWorkspace.getSession=originals.getSession;
    RemoteWorkspace.ensureSelectedTeam=originals.ensureSelectedTeam;RemoteWorkspace.syncNow=originals.syncNow;
   }
- },{maxRows:250});
+ },{maxRows:25});
 });
 
 test("sync pagina todos os registos, media e atividade acima do limite de linhas da API", async () => {

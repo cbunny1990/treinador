@@ -142,11 +142,23 @@ async function remoteReadTeamIds(client, table, teamId, ids) {
   const found = new Set();
   for (let start = 0; start < uniqueIds.length; start += REMOTE_CONSOLIDATION_ID_BATCH) {
     const batch = uniqueIds.slice(start, start + REMOTE_CONSOLIDATION_ID_BATCH);
-    const { data, error } = await client.from(table).select("id")
-      .eq("team_id", teamId).in("id", batch);
-    if (error) throw error;
-    for (const row of Array.isArray(data) ? data : []) {
-      if (remoteIsUuid(row?.id)) found.add(row.id);
+    let afterId = null;
+    while (true) {
+      let query = client.from(table).select("id")
+        .eq("team_id", teamId).in("id", batch);
+      if (afterId) query = query.gt("id", afterId);
+      const { data, error } = await query.order("id", { ascending: true }).limit(REMOTE_CONSOLIDATION_ID_BATCH);
+      if (error) throw error;
+      const page = Array.isArray(data) ? data : [];
+      if (!page.length) break;
+      for (const row of page) {
+        if (remoteIsUuid(row?.id)) found.add(row.id);
+      }
+      const nextId = page[page.length - 1]?.id;
+      if (!remoteIsUuid(nextId) || (afterId && String(nextId) <= afterId)) {
+        throw new Error("A paginação dos IDs da consolidação não avançou para o próximo registo.");
+      }
+      afterId = String(nextId);
     }
   }
   return found;
