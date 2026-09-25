@@ -102,6 +102,24 @@ test('chunks use an allowlist of coaching text and preserve epistemic provenance
  assert.deepEqual(rag.teamKnowledgeTestAPI.chunkRecord({...match(),kind:'player'}),[]);
 });
 
+test('RAG indexes coach video evidence with stable clip links but never embeds the video URL',()=>{
+ const memoryRef='40000000-0000-4000-8000-000000000004',source=match();
+ source.payload.match_evidence={schema:'vision-match-evidence@1',revision:1,moments:[
+  {id:'moment-video-1',url:'https://private.example/video?token=never-embed-this',seconds:83,category:'loss',player_ref:PLAYER,
+   description:'A perda acontece na saída curta sob pressão.',observation:'Maria Silva fecha a linha de passe tarde.',relation_type:'observation',relation_ref:memoryRef},
+  {id:'moment-video-2',url:'https://private.example/medical',seconds:91,category:'individual',
+   description:'Nota com informação de saúde: lesão muscular recente.',observation:'Não deve ser indexada.',relation_type:'none',relation_ref:null}
+ ]};
+ const chunks=rag.teamKnowledgeTestAPI.chunkRecord(source,{redactNames:['Maria Silva']}),moment=chunks.find(x=>x.source_path==='match_evidence.moments[0]');
+ assert.ok(moment);assert.equal(moment.category,'video_evidence');assert.equal(moment.evidence_type,'coach_observation');
+ assert.equal(moment.match_ref,SOURCE);assert.equal(moment.player_ref,PLAYER);assert.match(moment.content,/Perda · segundo 83/);
+ assert.match(moment.content,/fecha a linha de passe tarde/);assert.doesNotMatch(moment.content,/Maria Silva|private\.example|never-embed-this/);
+ assert.equal(moment.metadata.video_moment_ref,'moment-video-1');assert.equal(moment.metadata.video_seconds,83);
+ assert.equal(moment.metadata.video_relation_type,'observation');assert.equal(moment.metadata.video_relation_ref,memoryRef);
+ assert.deepEqual(moment.metadata.related_refs,[{type:'memory',id:memoryRef,field:null,event_ref:'moment-video-1'}]);
+ assert.equal(chunks.some(x=>x.source_path==='match_evidence.moments[1]'),false,'observações de saúde não podem entrar nos embeddings');
+});
+
 test('RAG indexes the coach-entered opponent analysis and tactical preparation with distinct provenance',()=>{
  const source=match();source.payload.pre_game={adversario_notas:'O adversário pressiona alto após reposição curta.',adversario_sistema:'1-2-1',adversario_estilo:'pressao_alta',adversario_pontos_fortes:['Reação rápida à perda.'],adversario_vulnerabilidades:['Espaço nas costas dos alas.'],pontos_observar:['Saída pelo corredor esquerdo.'],plano_jogo:'Atrair a pressão e procurar apoio interior.'};
  const chunks=rag.teamKnowledgeTestAPI.chunkRecord(source),vulnerability=chunks.find(item=>item.source_path==='pre_game.adversario_vulnerabilidades[0]'),plan=chunks.find(item=>item.source_path==='pre_game.plano_jogo');

@@ -45,6 +45,7 @@ const relatedRefs = (...groups) => [...new Map(groups.flatMap(arr).map(item=>({t
 const escapeRegExp = value => String(value).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 const SKIP_KEY = /(?:availability|disponib|les[aã]o|injur|medical|health|sa[uú]de|suspens|castig|absence|absent|attendance|presen[cç]|photo|foto|image|visual|storage|url|token|secret|password|name|nome|jersey|dorsal|number|n[uú]mero)/i;
 const EVENT_LABELS={goal_for:'Golo a favor',goal_against:'Golo sofrido',shot_on:'Remate à baliza',shot_off:'Remate para fora',corner_for:'Canto a favor',corner_against:'Canto contra',recovery:'Recuperação de bola',loss:'Perda de bola',through_ball:'Bola em profundidade',striker_foot:'Bola no pé do avançado',note:'Acontecimento livre'};
+const VIDEO_EVIDENCE_LABELS={goal:'Golo',goal_against:'Golo sofrido',chance:'Oportunidade',loss:'Perda',recovery:'Recuperação',attack:'Organização ofensiva',defense:'Organização defensiva',transition:'Transição',set_piece:'Bola parada',individual:'Momento individual',other:'Outro'};
 const REASON_LABELS={pass:'passe errado',reception:'receção',dribble:'condução',decision:'decisão',pressure:'pressão adversária',duel:'duelo',other:'outro'};
 const ZONE_LABELS={def_e:'defesa esquerda',def_c:'defesa central',def_d:'defesa direita',med_e:'meio-campo esquerdo',med_c:'meio-campo central',med_d:'meio-campo direito',ata_e:'ataque esquerdo',ata_c:'ataque central',ata_d:'ataque direito'};
 const SENSITIVE_PERSONAL_TEXT=/(?:lesao|lesionad|injur|fratur|fractur|tendin|entors|torc(?:ao|eu|ido)\b|sprain|strain|ligament|concuss|contus|bruis|distens|estiram|contractur|ruptur|luxac|dislocat|inflamac|edema|swelling|cirurg|operac|fisioterap|reabilitac|diagnost|tratament|medic|clinic|pacient|patient|prontuario|ficha medica|medical record|saude|doenca|sintoma|dor muscular|dor no\s|dor de\s|\bpain\b|alerg|allerg|asma|epilep|diabet|cardiac|heartbeat|heart beat|palpit|arritm|arrhythm|respirator|falta de ar|shortness of breath|breathless|dispnei|dyspn|atestado|baixa medica|hipertens|hypertens|hipotens|hypotens|pressao arterial|tensao arterial|blood pressure|arterial pressure|hipoglicem|hiperglicem|hypoglyc|hyperglyc|glicemia|glucose|blood sugar|saude mental|mental health|ansiedade|ansioso|ansiosa|anxiet|depress|tdah|adhd|bipolar|esquizofren|schizophren|autismo|autista|autism|ataque de panico|panic attack|fobia|phobia|caibr|cramp|tontur|dizz|desmai|faint|convuls|seizur|dislex|dyslex|neurodiverg|neurodevelopmental (?:disorder|condition)|transtorno (?:do )?neurodesenvolvimento|learning disability|intellectual disability|deficiencia (?:intelectual|motora|auditiva|visual)|menstr|ciclo menstrual|period pain|gravidez|gravid|pregnan|obes|anorex|bulim|transtorno alimentar|disturbio alimentar|eating disorder|uso de alcool|consumo de alcool|alcohol use|uso de drog|drug use|substance abuse|abuso de substancias|tosse|cough|febr|fever|vomit|nause|diarre|diarrh|cefale|headache|enxaquec|migraine|desidrat|dehydrat|covid|varicela|chickenpox)/i;
@@ -126,6 +127,24 @@ function sourceFields(row){
       const minute=event.minute??(Number.isFinite(Number(event.at_ms))?Math.floor(Number(event.at_ms)/60000):null);
       const type=EVENT_LABELS[event.type]||'Acontecimento do jogo',parts=[type,minute!=null?`minuto ${minute}`:'',ZONE_LABELS[event.zone]||'',REASON_LABELS[event.reason]||'',text(event.note,1000)].filter(Boolean);
       if(parts.join(' ').length>=18)add(`match_events.events[${i}]`,type,parts.join(' · '),'registered_fact',{category:text(event.type,80)||'match_event',source_date:date,match_ref:row.id,player_ref:safeRef(event.player_ref),event_ref:String(event.id||i)});
+    }
+    for(const [i,moment] of arr(obj(p.match_evidence).moments).entries()){
+      const category=VIDEO_EVIDENCE_LABELS[moment?.category]||VIDEO_EVIDENCE_LABELS.other;
+      const seconds=Number.isInteger(moment?.seconds)&&moment.seconds>=0&&moment.seconds<=86400?moment.seconds:null;
+      const relationType=['observation','statistic','problem'].includes(moment?.relation_type)?moment.relation_type:null;
+      const relationLabels={observation:'observação associada',statistic:'estatística associada',problem:'problema da análise associado'};
+      const evidenceRef=text(moment?.id,100)||String(i);
+      const linkedRefs=relationType==='observation'&&safeRef(moment?.relation_ref)
+        ?[{type:'memory',id:moment.relation_ref,event_ref:evidenceRef}]
+        :relationType==='problem'||relationType==='statistic'
+          ?[{type:'match',id:row.id,field:relationType==='problem'?`post_game.analysis.fields.${text(moment?.relation_ref,80)}`:`statistic.${text(moment?.relation_ref,80)}`,event_ref:evidenceRef}]
+          :[];
+      const parts=[category,seconds!=null?`segundo ${seconds}`:'',relationLabels[relationType]||'',text(moment?.description,2000),text(moment?.observation,1000)].filter(Boolean);
+      if(parts.join(' · ').length>=18)add(`match_evidence.moments[${i}]`,`Evidência de vídeo · ${category}`,parts.join(' · '),'coach_observation',{
+        category:'video_evidence',source_date:date,match_ref:row.id,player_ref:safeRef(moment?.player_ref),
+        video_moment_ref:evidenceRef,video_seconds:seconds,video_relation_type:relationType,
+        video_relation_ref:text(moment?.relation_ref,100)||null,related_refs:linkedRefs
+      });
     }
   } else if(kind==='training'){
     const date=isoDate(p.data),session=obj(p.session),review=trainingReview(p);
@@ -216,7 +235,10 @@ export function chunkRecord(row,{maxChars=1800,overlap=220,redactNames=[],ageGro
       result.push({team_id:row.team_id,source_id:row.id,source_kind:row.kind,source_path:field.path,chunk_no,
         source_date:field.source_date||null,match_ref:field.match_ref||null,training_ref:field.training_ref||null,player_ref:field.player_ref||null,
         category:field.category||null,evidence_type:field.evidence_type,title:safeLabel,content,
-        metadata:{event_ref:field.event_ref||null,source_actor:row.actor_type||null,age_group:text(ageGroup,80)||null,related_refs:relatedRefs(field.related_refs)}});
+        metadata:{event_ref:field.event_ref||null,video_moment_ref:field.video_moment_ref||null,
+          video_seconds:Number.isInteger(field.video_seconds)?field.video_seconds:null,
+          video_relation_type:field.video_relation_type||null,video_relation_ref:field.video_relation_ref||null,
+          source_actor:row.actor_type||null,age_group:text(ageGroup,80)||null,related_refs:relatedRefs(field.related_refs)}});
     }
   }
   return result;
