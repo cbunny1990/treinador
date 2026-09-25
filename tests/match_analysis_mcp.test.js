@@ -184,7 +184,7 @@ test('Jev can judge a recurring match relation against exact evidence from multi
   const matchTwo = { id: matchTwoId, team_id: 'team', kind: 'match', updated_at: 'm2', deleted_at: null,
     payload: { data: '2026-09-15', adversario: 'Rivais B', post_game: { analysis: { fields: { observations: 'Outra perda na construção sob pressão.' } } } } };
   const training = { id: trainingId, team_id: 'team', kind: 'training', updated_at: 't1', deleted_at: null,
-    payload: { data: '2026-09-22', session: { status: 'completed' }, review: { status: 'done', continua: 'O apoio após passe continua irregular.' } } };
+    payload: { data: '2026-09-22', session: { status: 'completed', blocks: [{ key: 'b1', exercise_name: 'Tomás Pereira', notes: [{ id: 'note-1', text: 'Repetir apoio após passe.' }] }] }, review: { status: 'done', continua: 'O apoio após passe continua irregular.' } } };
   f.rows.push(matchTwo, training, { id: '77777777-7777-4777-8777-777777777777', team_id: 'team', kind: 'player', updated_at: 'p1', deleted_at: null,
     payload: { nome: 'Tomás Pereira', plantel_ativo: true } });
   const originalFetch = globalThis.fetch, originalDeno = globalThis.Deno;
@@ -210,6 +210,8 @@ test('Jev can judge a recurring match relation against exact evidence from multi
     assert.equal(request.state.training_evidence[0].quote, 'O apoio após passe continua irregular.');
     assert.equal(request.state.training_evidence[0].session_status, 'completed');
     assert.equal(request.state.training_evidence[0].review_status, 'done');
+    assert.equal(request.state.training_evidence[0].source_ref, undefined);
+    assert.equal(request.state.training_evidence[0].record_updated_at, undefined);
     assert.doesNotMatch(JSON.stringify(request.state), /Tomás|Pereira/);
     assert.equal(result.probability, 0.77);
     assert.equal(result.distinct_match_count, 2);
@@ -218,6 +220,37 @@ test('Jev can judge a recurring match relation against exact evidence from multi
     assert.equal(result.coach_review_required, true);
     assert.equal(result.writes_performed, false);
     assert.equal(f.calls.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDeno === undefined) delete globalThis.Deno;
+    else globalThis.Deno = originalDeno;
+  }
+});
+
+test('multi-source Jev judgment checks and redacts free-text exercise labels before transmission', async () => {
+  const f = fixture(), matchTwoId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', trainingId = '88888888-8888-4888-8888-888888888888';
+  f.match.payload.post_game.analysis.fields = { observations: 'Perda na saída sob pressão' };
+  f.rows.push({ id: matchTwoId, team_id: 'team', kind: 'match', updated_at: 'm2', deleted_at: null,
+    payload: { post_game: { analysis: { fields: { observations: 'Outra perda na construção' } } } },
+  }, { id: trainingId, team_id: 'team', kind: 'training', updated_at: 't1', deleted_at: null,
+    payload: { session: { blocks: [{ key: 'b1', exercise_name: 'Tomás Pereira', notes: [{ id: 'note-1', text: 'Apoio irregular.' }] }] } } },
+  { id: '77777777-7777-4777-8777-777777777777', team_id: 'team', kind: 'player', updated_at: 'p1', deleted_at: null,
+    payload: { nome: 'Tomás Pereira', plantel_ativo: true } });
+  const originalFetch = globalThis.fetch, originalDeno = globalThis.Deno;
+  let request;
+  globalThis.Deno = { env: { get: () => 'test-secret' } };
+  globalThis.fetch = async (_url, options) => { request = JSON.parse(options.body); return { ok: true, async json() { return { answers: { support: { type: 'noul', noul: 0.6 } } }; } }; };
+  const args = { claim: 'O tema repete-se nos jogos e treino.', match_sources: [
+    { ref: MATCH, field: 'analysis.observations', expected_updated_at: 'v0' },
+    { ref: matchTwoId, field: 'analysis.observations', expected_updated_at: 'm2' },
+  ], training_sources: [{ ref: trainingId, field: 'session.note:note-1', expected_updated_at: 't1' }] };
+  try {
+    await api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_pattern', args);
+    assert.equal(request.state.training_evidence[0].label, 'Observação · atleta');
+    assert.doesNotMatch(JSON.stringify(request.state), /Tomás|Pereira|88888888-8888/);
+    const training = f.rows.find(row => row.id === trainingId);
+    training.payload.session.blocks[0].exercise_name = 'Alergia';
+    await assert.rejects(api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_pattern', args), /typesafe_sensitive_content_not_sent/);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalDeno === undefined) delete globalThis.Deno;
