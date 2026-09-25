@@ -131,6 +131,8 @@ O contrato público do agente **não inclui `data_url` local**. Um ficheiro guar
 
 Exceção explícita por operação: `evaluate_cross_session_relation` envia ao TypeSafe apenas a afirmação escolhida e duas citações textuais selecionadas pelo Head Coach, com tipo de origem e contexto mínimo (data/adversário/zona quando disponíveis). A operação só é executada quando o agente a invoca, revalida as revisões antes do envio, e não transmite media, fotos, o registo completo ou dados de outras equipas. Antes do pedido, aplica o filtro de dados de saúde/pessoais sensíveis, oculta nomes reconhecidos do plantel e falha fechada se não conseguir carregar o plantel para redigi-los. A chamada usa `TYPESAFE_API_KEY` configurada no servidor Edge Function; a chave não é exposta ao browser nem ao treinador. O resultado é uma probabilidade interpretativa sujeita a revisão humana.
 
+`evaluate_cross_session_pattern` aplica as mesmas regras de privacidade e isolamento às citações explicitamente escolhidas de vários jogos/treinos (2–5 jogos distintos e 1–3 treinos distintos). Cada fonte é verificada por UUID e revisão antes do envio. A operação devolve probabilidade e proveniência; não grava nem aprova prioridades.
+
 A fundação remota usa Storage privado Supabase. Ficheiros remotos são acedidos com sessão autorizada ou URLs assinadas temporárias; `data_url` local continua excluído do contrato do agente. Falhas de sincronização com o dispositivo ainda online são repetidas com espera progressiva limitada (2 s até 60 s); alterações locais mantêm-se na base local até uma passagem posterior sincronizar ou apresentar conflito.
 
 ## Estado atual da ligação remota
