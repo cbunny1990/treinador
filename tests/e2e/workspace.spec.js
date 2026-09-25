@@ -416,6 +416,49 @@ test("Workspace surfaces ready training plans in the explicit approval queue", a
   await expect(queue.getByRole("link", { name: /Plano arquivado E2E/ })).toHaveCount(0);
 });
 
+test("Workspace shows the current weekly objective and explains duplicate or empty focus", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => typeof DB !== "undefined" && typeof TeamDevelopment !== "undefined");
+  const weekStart = await page.evaluate(() => TeamDevelopment.monday(new Date().toISOString().slice(0, 10)));
+  const focus = page.locator("[data-workspace-current-week]");
+  await expect(focus).toContainText("Sem objetivo semanal registado para esta semana");
+
+  await page.evaluate(async (weekStart) => {
+    const weeklyPlan = TeamDevelopment.saveWeek(null, {
+      week_start: weekStart,
+      objective: "Saída de bola com apoio",
+      evaluation: { summary: "", evidence: [] },
+    }, { expected_revision: 0, now: new Date().toISOString() });
+    await DB.criar("workspace_documents", {
+      team_id: DEFAULT_TEAM_ID, type: "weekly_plan", title: "Semana atual",
+      body: JSON.stringify(weeklyPlan), status: "ready", target_date: weekStart,
+      sync_id: crypto.randomUUID(), external_key: "team-week:" + weekStart,
+    });
+  }, weekStart);
+  await page.reload();
+  const currentFocus = page.locator("[data-workspace-current-week]");
+  await expect(currentFocus).toContainText("Saída de bola com apoio");
+  await expect(currentFocus).toContainText("Avaliação por preencher");
+  await expect(currentFocus.getByRole("link", { name: "Abrir semana" })).toHaveAttribute("href", "#/evolucao");
+
+  await page.evaluate(async (weekStart) => {
+    const weeklyPlan = TeamDevelopment.saveWeek(null, {
+      week_start: weekStart,
+      objective: "Segundo rascunho",
+      evaluation: { summary: "", evidence: [] },
+    }, { expected_revision: 0, now: new Date().toISOString() });
+    await DB.criar("workspace_documents", {
+      team_id: DEFAULT_TEAM_ID, type: "weekly_plan", title: "Semana duplicada",
+      body: JSON.stringify(weeklyPlan), status: "ready", target_date: weekStart,
+      sync_id: crypto.randomUUID(), external_key: "team-week-duplicate:" + weekStart,
+    });
+  }, weekStart);
+  await page.reload();
+  const duplicateFocus = page.locator("[data-workspace-current-week]");
+  await expect(duplicateFocus).toContainText("Existem 2 planos para esta semana");
+  await expect(duplicateFocus).not.toContainText("Saída de bola com apoio");
+});
+
 test("Workspace assessment queue respects top-level and session review records", async ({ page }) => {
   await page.goto("/#/calendario");
   await page.waitForFunction(() => typeof DB !== "undefined");
