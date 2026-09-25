@@ -400,7 +400,9 @@ async function executeTool(admin: any, connector: any, name: string, args: any, 
   if (SEASON_TOOLS.some((tool) => tool.name === name)) return executeSeasonTool(admin,connector,name,args);
   if (REPORT_TOOLS.some((tool) => tool.name === name)) return executeReportTool(admin,connector,name,args);
   if (TEAM_KNOWLEDGE_TOOLS.some((tool) => tool.name === name)) return executeTeamKnowledgeTool(admin,connector,name,args);
-  if (CONTINUITY_TOOLS.some((tool) => tool.name === name)) return executeContinuityTool(admin,connector,name,args);
+  if (CONTINUITY_TOOLS.some((tool) => tool.name === name)) return executeContinuityTool(admin,connector,name,args,{
+    getPlanningContext: (contextArgs) => executeTeamKnowledgeTool(admin,connector,"get_training_planning_context",contextArgs),
+  });
   if (SESSION_TOOLS.some((tool) => tool.name === name)) return executeSessionTool(admin,connector,name,args);
   if (IMAGE_TOOLS.some((tool) => tool.name === name)) return executeImageTool(admin,connector,name,args,Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "");
 

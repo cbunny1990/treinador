@@ -156,7 +156,7 @@ Implementação nesta entrega: presenças e histórico individual, iniciar/pausa
 O treino planeado é preservado. Imagens e consulta anteriores não são redesenhadas.
 
 ## Fase 2 — continuidade do Head Coach
-Implementado: avaliação ligada a memória única, rascunho com evidências, revisão pela IA autorizada, aprovação explícita e ligação ao treino seguinte com resultado assinalado. Guia: training-continuity.md. O rascunho inicial é um modelo local, não análise automática de toda a época; agregação de tendências fica para aprofundamento posterior.
+Implementado: avaliação ligada a memória única, rascunho com evidências, revisão pela IA autorizada, aprovação explícita e ligação ao treino seguinte com resultado assinalado. Guia: training-continuity.md. O rascunho local continua determinístico. A preparação pelo MCP aceita a data exata e anexa contexto híbrido com jogos, sessões concluídas, exercício usado, disponibilidade, modelo de jogo, excertos citados e lacunas de dados. Alterar a data depois da consulta exige preparar novamente o contexto; criar o treino continua a exigir aprovação explícita.
 
 ## Fase 3 — jogo e quadro tático
 Implementado o primeiro incremento: campo 5v5, alinhamento e suplentes, plano de rotações, substituições e trocas de funções confirmadas, cronómetro e minutos registados por atleta/GR. O quadro destaca também a diferença de utilização e quem ficou abaixo de metade do tempo decorrido, em ordem alfabética e sem ranking. Guia: match-visual.md.
@@ -422,6 +422,8 @@ Controlo de largura e foco de seleção (25/09/2026): inputs de texto mantêm la
 Preservação da avaliação de treino durante sync (25/09/2026): novo E2E envia sync-complete enquanto há texto não guardado em melhora/continua e confirma que ambos persistem na avaliação aberta. npm run check, npm test (420 aprovados, 7 integrações opcionais ignoradas) e Playwright completo 166/166 passaram. A integração Supabase local foi tentada read-only; preflight recusou antes dos testes porque o Docker engine está desligado, sem abrir ou alterar a stack existente. Sem publicação.
 
 Refresh da continuidade após sync (25/09/2026): a página agora atualiza a proposta se o formulário estiver limpo; quando há alterações locais, mantém os campos e avisa que chegaram dados, sem permitir aprovação desatualizada. Regressões cobrem refresh limpo, avaliação de treino não guardada e proposta editada em conflito. npm run check, npm test (420 aprovados, 7 integrações opcionais ignoradas) e Playwright completo 167/167 passaram. Sem alterações remotas ou publicação.
+
+Continuidade com contexto híbrido (25/09/2026): `prepare_training_continuity` no MCP requer a data exata do próximo treino e anexa snapshot estruturado, excertos RAG com UUID/data/origem e flags de cobertura ao rascunho. A UI distingue o rascunho com contexto e indica lacunas; mudar a data obriga nova consulta. Preparar continua sem criar treino. Validação: `npm run check`, `npm test` (422 aprovados, 7 integrações opcionais ignoradas) e continuidade Playwright 11/11; sem escrita remota nem publicação.
 
 Continuidade após eliminação remota (25/09/2026): se a sessão aberta deixar de existir, a UI limpa o contexto da proposta e remove ações de aprovação; a leitura atrasada também verifica rota/token antes de renderizar. E2E cobre alteração recebida, texto não guardado, conflito de revisão e eliminação. npm run check, npm test (420 aprovados, 7 integrações opcionais ignoradas) e Playwright completo 168/168 passaram. Sem dados reais ou publicação.
 

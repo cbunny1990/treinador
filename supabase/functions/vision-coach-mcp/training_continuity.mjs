@@ -12,7 +12,7 @@ export const CONTINUITY_TOOLS=[
  tool('get_training_continuity','Read review, original quoted evidence, current proposal/revision and follow-up progress. Read-only: never creates a proposal or training.',{},[],true),
  tool('save_training_review','Save the explicitly confirmed, coach-provided review and upsert ONE linked memory atomically. Do not infer improvement. Preserve existing content not explicitly replaced.',{...baseline,confirmed:{type:'boolean',const:true},review},['expected_updated_at','expected_revision','confirmed','review']),
  tool('clear_training_review','Remove the explicitly confirmed review and archive its linked memory. Preserves the training, notes and approved follow-up.',{...baseline,confirmed:{type:'boolean',const:true}},['expected_updated_at','expected_revision','confirmed'],false,true),
- tool('prepare_training_continuity','Prepare a DRAFT from the recorded next action or remaining issue. Reuses existing exercises; never invents evidence. An unchanged draft is returned as-is unless replace_existing=true was explicitly requested.',{...baseline,replace_existing:{type:'boolean'}},['expected_updated_at','expected_revision']),
+ tool('prepare_training_continuity','Prepare an editable DRAFT from the recorded next action or remaining issue, enriched with read-only hybrid context for the exact next-training date. Supply the scheduled target_date. Reuses existing exercises; preserves cited sources and missing-data flags. Never creates a training. An unchanged draft is returned as-is unless replace_existing=true was explicitly requested.',{...baseline,target_date:{type:'string',format:'date'},replace_existing:{type:'boolean'}},['expected_updated_at','expected_revision','target_date']),
  tool('update_training_continuity','Revise a draft as the authorized Head Coach, using recorded evidence and existing exercises. Explain your reasoning and specify observable success criteria. This does NOT create a training.',{...baseline,changes},['expected_updated_at','expected_revision','changes']),
  tool('dismiss_training_continuity','Dismiss an unapproved draft only with explicit confirmation. Preserves source review and exercises.',{...baseline,confirmed:{type:'boolean',const:true}},['expected_updated_at','expected_revision','confirmed'],false,true),
  tool('approve_training_continuity','Create the linked follow-up only AFTER the coach explicitly approves the displayed proposal. Needs valid date, time, exercises, rationale and observable success criteria. Atomic and no duplicated or resurrected training.',{...baseline,confirmed:{type:'boolean',const:true}},['expected_updated_at','expected_revision','confirmed'])
@@ -31,7 +31,17 @@ async function output(admin,c,row,extra={}){
  const reviewState=C.effectiveReview(r);
  return {id:row.id,updated_at:row.updated_at,external_key:r.external_key||null,date:r.data,review:reviewState,review_key:C.reviewKey(reviewState),continuity:C.state(r),evidence:C.evidence(r),progress:C.progress(r,target?model(target):null),followup:target?{id:target.id,updated_at:target.updated_at,date:target.payload.data,objective:target.payload.objetivo}:null,...extra};
 }
-export async function executeContinuityTool(admin,c,name,args){
+function proposalContext(context){
+ const semantic=(context.semantic_evidence||[]).map(item=>({source_type:item.source?.kind||'document',source_ref:item.source?.ref||null,date:item.source?.date||null,field:item.source?.path||'semantic_excerpt',label:item.title||'Excerto recuperado',quote:item.excerpt||'',provenance:'retrieved',updated_at:item.source?.updated_at||null})).filter(item=>item.source_ref&&item.quote);
+ const structured=[];
+ for(const match of context.recent_matches||[]){
+  const result=match.result?`${match.result.for}-${match.result.against}`:'resultado não registado';
+  structured.push({source_type:'match',source_ref:match.ref,date:match.date,field:'structured_match_context',label:`Jogo · ${match.opponent||'adversário não identificado'}`,quote:`Resultado: ${result}. Estatísticas estruturadas e proveniência: ${JSON.stringify(match.registered_event_counts)}.`,provenance:'counted_or_manual',updated_at:match.updated_at||null});
+ }
+ for(const training of context.recent_trainings||[])structured.push({source_type:'training',source_ref:training.ref,date:training.date,field:'completed_training_context',label:'Treino concluído',quote:`Objetivo registado: ${training.objective||'não registado'}; duração planeada: ${training.planned_minutes??'não registada'} minutos; avaliação: ${training.reviewed?'disponível':'não registada'}.`,provenance:'structured_record',updated_at:training.updated_at||null});
+ return {schema:context.schema||'vision-training-planning-context@1',target_date:context.target_date,team:context.team,target_training:context.target_training,roster:context.roster,recent_matches:context.recent_matches,recent_trainings:context.recent_trainings,recent_exercise_use:context.recent_exercise_use,recent_exercise_use_status:context.recent_exercise_use_status,semantic_retrieval_statuses:context.semantic_retrieval_statuses,evidence_status:context.evidence_status,missing_data:context.missing_data,evidence:[...structured,...semantic]};
+}
+export async function executeContinuityTool(admin,c,name,args,{getPlanningContext}={}){
  if(!c.scopes?.includes('read'))throw new Error('connector_scope_read_required');
  if(!CONTINUITY_TOOLS.some(tool=>tool.name===name))throw new Error('unknown_continuity_tool');
  const source=await find(admin,c,'training',args),row=model(source),state=C.state(row);
@@ -54,7 +64,16 @@ export async function executeContinuityTool(admin,c,name,args){
  else if(name==='clear_training_review'){action='clear_review';const reviewState=C.effectiveReview(row);next=C.clearReview(row,{expected_review_key:C.reviewKey(reviewState),confirmed:args.confirmed});}
  else if(name==='prepare_training_continuity'){
   if(state.proposal?.status==='draft'&&state.proposal.source_key===C.sourceKey(row)&&!args.replace_existing)return output(admin,c,source,{already_prepared:true});
+  if(!getPlanningContext)throw new Error('training_planning_context_unavailable');
+  const reviewState=C.effectiveReview(row),focus=reviewState.proxima_acao||reviewState.continua;
+  if(String(focus||'').trim().length<2)throw new Error('Regista a próxima ação ou o que continua por corrigir antes de preparar a continuidade.');
+  const context=await getPlanningContext({target_date:args.target_date,question:String(focus||'').slice(0,1200)});
+  const snapshot=proposalContext(context);
   action='propose';next=C.prepare(row,exercises,await C.identities(row),{actor:'Regra de continuidade'});
+  next.continuity.proposal.planning_context=snapshot;
+  next.continuity.proposal.evidence=[...next.continuity.proposal.evidence,...snapshot.evidence];
+  next.continuity.proposal.rationale='Rascunho a partir da avaliação registada. O contexto estruturado e os excertos citados abaixo ajudam o Head Coach a preparar uma proposta; confirma a relevância, completa a justificação e o critério de sucesso antes de aprovar.';
+  next.continuity.proposal.method='hybrid_context_draft';
  }
  else if(name==='update_training_continuity'){action='save_proposal';next=C.update(row,args.changes||{},exercises,{expected_revision:args.expected_revision,actor:'Head Coach'});next.continuity.proposal.method='agent_proposal';next.continuity.proposal.author='Head Coach';}
  else if(name==='dismiss_training_continuity'){action='dismiss';next=C.dismiss(row,{expected_revision:args.expected_revision,confirmed:args.confirmed,actor:'Head Coach'});}
