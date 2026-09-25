@@ -55,33 +55,15 @@ async function evaluateCrossSessionRelation(admin,c,args,{apiKey=globalThis.Deno
  if(!apiKey)throw new Error('typesafe_api_not_configured');
  if(typeof fetchImpl!=='function')throw new Error('typesafe_fetch_unavailable');
  const [matchRow,trainingRow]=await Promise.all([findExactSource(admin,c,'match',args.match_ref),findExactSource(admin,c,'training',args.training_ref)]);
- function exact(type,ref,field,eventRef,updatedAt){
-  const row=type==='match'?matchRow:trainingRow;
-  const sourceEvidence=(type==='match'?matchEvidence(row):trainingEvidence(row));
-  const found=sourceEvidence.filter(item=>item.source_type===type&&item.source_ref===ref&&item.field===field&&(eventRef?item.event_ref===eventRef:!item.event_ref));
-  if(found.length!==1)throw new Error(found.length?'cross_session_evidence_ambiguous':'cross_session_evidence_not_found');
-  if(found[0].record_updated_at!==updatedAt)throw new Error('cross_session_evidence_source_changed');
-  return found[0];
- }
- const match=exact('match',args.match_ref,args.match_field,args.match_event_ref,args.match_expected_updated_at);
- const training=exact('training',args.training_ref,args.training_field,args.training_event_ref,args.training_expected_updated_at);
+ const match=exactSourceEvidence(matchRow,'match',args.match_ref,args.match_field,args.match_event_ref,args.match_expected_updated_at);
+ const training=exactSourceEvidence(trainingRow,'training',args.training_ref,args.training_field,args.training_event_ref,args.training_expected_updated_at);
  const claim=String(args.claim||'').trim();if(!claim||claim.length>1200)throw new Error('invalid_cross_session_claim');
  const rawState={claim,match_evidence:{type:match.evidence_type,date:match.date,opponent:match.opponent,field:match.field,event_ref:match.event_ref||null,quote:match.quote,zone:match.zone||null,reason:match.reason||null},training_evidence:{type:training.evidence_type,date:training.date,field:training.field,quote:training.quote}};
- if([rawState.claim,rawState.match_evidence.opponent,rawState.match_evidence.quote,rawState.training_evidence.quote].some(containsSensitivePersonalText))throw new Error('typesafe_sensitive_content_not_sent');
- let rosterNames;try{rosterNames=await getTeamRedactionNames(admin,c.team_id);}catch(_){throw new Error('typesafe_privacy_metadata_unavailable');}
- const nameTerms=redactionTerms(rosterNames),state={...rawState,claim:redactNamesFromText(rawState.claim,nameTerms),match_evidence:{...rawState.match_evidence,opponent:redactNamesFromText(rawState.match_evidence.opponent,nameTerms)||null,quote:redactNamesFromText(rawState.match_evidence.quote,nameTerms)},training_evidence:{...rawState.training_evidence,quote:redactNamesFromText(rawState.training_evidence.quote,nameTerms)}};
- const body={model:'jev-latest',state,questions:{support:{type:'noul',instructions:{question:'Does the proposed relation have direct support in both the match and training evidence?',claim:state.claim,match_evidence:state.match_evidence,training_evidence:state.training_evidence,guardrails:'Judge only whether the same underlying football principle is addressed. Do not infer cause, learning, improvement, transfer, or effectiveness from shared wording or temporal order. Coach interpretations and hypotheses are claims, not registered facts; a coach evaluation is an explicit evaluation, not proof of causation.'},criteria:{true:'Both exact sources provide direct, compatible support for the proposed relation.',false:'The relation is absent, weak, ambiguous, contradicted, or supported by only one source.'}}}};
- let response;for(let attempt=0;attempt<3;attempt++){
-  try{response=await fetchImpl('https://api.typesafe.ai/v1/systemone',{method:'POST',headers:{Authorization:'Bearer '+apiKey,'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(12000)});}catch(_){throw new Error('typesafe_request_failed');}
-  if(response.ok||![429,529].includes(response.status)||attempt===2)break;
-  const retryAfter=response.headers?.get?.('retry-after'),retryAfterMs=retryAfter&&Number.isFinite(Number(retryAfter))?Number(retryAfter)*1000:retryAfter?Date.parse(retryAfter)-Date.now():NaN,delay=Number.isFinite(retryAfterMs)?Math.max(0,Math.min(5000,retryAfterMs)):250*2**attempt;
-  await sleepImpl(delay);
- }
- if(!response.ok)throw new Error('typesafe_request_failed_'+response.status);
- let result;try{result=await response.json();}catch(_){throw new Error('typesafe_response_invalid');}
- const answer=result?.answers?.support?.noul;
- if(result?.answers?.support?.type!=='noul'||typeof answer!=='number'||!Number.isFinite(answer)||answer<0||answer>1)throw new Error('typesafe_response_invalid');
- return{schema:'cross-session-relation-judgment@1',judgment:'semantic_support_probability',probability:answer,model:result.model||null,claim:state.claim,evidence:[{source_type:'match',source_ref:match.source_ref,record_updated_at:match.record_updated_at,field:match.field,event_ref:match.event_ref||null,evidence_type:match.evidence_type,quote:match.quote},{source_type:'training',source_ref:training.source_ref,record_updated_at:training.record_updated_at,field:training.field,event_ref:training.event_ref||null,evidence_type:training.evidence_type,quote:training.quote}],coach_review_required:true,writes_performed:false,interpretation:'Probabilidade de apoio semântico do Jev; não é facto desportivo, causa, transferência de aprendizagem nem decisão do treinador.'};
+ const state=await privacySafeJevState(admin,c.team_id,rawState),{probability,model}=await askJev(state,{apiKey,fetchImpl,sleepImpl,
+  question:'Does the proposed relation have direct support in both the match and training evidence?',
+  criteria:{true:'Both exact sources provide direct, compatible support for the proposed relation.',false:'The relation is absent, weak, ambiguous, contradicted, or supported by only one source.'}
+ });
+ return{schema:'cross-session-relation-judgment@1',judgment:'semantic_support_probability',probability,model,claim:state.claim,evidence:[{source_type:'match',source_ref:match.source_ref,record_updated_at:match.record_updated_at,field:match.field,event_ref:match.event_ref||null,evidence_type:match.evidence_type,quote:match.quote},{source_type:'training',source_ref:training.source_ref,record_updated_at:training.record_updated_at,field:training.field,event_ref:training.event_ref||null,evidence_type:training.evidence_type,quote:training.quote}],coach_review_required:true,writes_performed:false,interpretation:'Probabilidade de apoio semântico do Jev; não é facto desportivo, causa, transferência de aprendizagem nem decisão do treinador.'};
 }
 async function evaluateCrossSessionPattern(admin,c,args,{apiKey=globalThis.Deno?.env?.get?.('TYPESAFE_API_KEY'),fetchImpl=globalThis.fetch,sleepImpl=ms=>new Promise(resolve=>setTimeout(resolve,ms))}={}){
  if(!c.scopes?.includes('read'))throw new Error('connector_scope_read_required');
