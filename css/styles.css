@@ -144,6 +144,7 @@ tr:last-child td{border-bottom:0}
   .sidebar{display:none}.content-shell{margin-left:0}
   .topbar{padding:14px 16px}.topbar h1{font-size:19px}
   button{min-width:44px;min-height:44px}
+  .btn{min-height:44px}
   .topbar-settings{width:44px;height:44px}
   .page{padding:16px}
   .bottom-nav{position:fixed;z-index:30;left:0;right:0;bottom:0;display:grid;grid-template-columns:repeat(6,1fr);background:rgba(255,255,255,.96);backdrop-filter:blur(16px);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
