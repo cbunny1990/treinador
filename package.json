@@ -11,6 +11,8 @@
     "audit:supabase-migrations": "node scripts/audit-supabase-linked-migrations.mjs",
     "test": "node --test tests/*.test.js && node js/db.js",
     "test:e2e": "node ./node_modules/@playwright/test/cli.js test",
+    "test:e2e:subpath": "node ./node_modules/@playwright/test/cli.js test --config playwright.subpath.config.js",
+    "build:static": "node scripts/build-static-site.mjs",
     "test:e2e:webkit-scroll": "node ./node_modules/@playwright/test/cli.js test --config playwright.webkit-scroll.config.js",
     "test:e2e:webkit-photo": "node ./node_modules/@playwright/test/cli.js test --config playwright.webkit-photo.config.js",
     "test:e2e:webkit-report": "node ./node_modules/@playwright/test/cli.js test --config playwright.webkit-report.config.js",

@@ -66,7 +66,11 @@ test('service worker caches only public allowlisted shell assets', async () => {
   const worker = loadServiceWorker();
   const asset = new Request('https://coach.test/treinador/js/app.js');
   await dispatchFetch(worker.listeners, asset);
-  assert.deepEqual(worker.cacheWrites, [{ name: 'vision-coach-v190', key: asset.url }]);
+  const cacheVersion = fs.readFileSync(path.join(root, 'sw.js'), 'utf8').match(/const CACHE = "vision-coach-v(\d+)";/)?.[1];
+  const registrationVersion = fs.readFileSync(path.join(root, 'index.html'), 'utf8').match(/const serviceWorkerVersion = (\d+);/)?.[1];
+  assert.ok(cacheVersion, 'the service worker declares an app shell version');
+  assert.equal(registrationVersion, cacheVersion, 'registration and app shell use the same version');
+  assert.deepEqual(worker.cacheWrites, [{ name: `vision-coach-v${cacheVersion}`, key: asset.url }]);
 
   const privateResponseWorker = loadServiceWorker({ responseHeaders: { 'cache-control': 'private, no-store' } });
   await dispatchFetch(privateResponseWorker.listeners, asset);

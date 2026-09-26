@@ -1,6 +1,6 @@
 // Camada de dados offline (IndexedDB). Sem servidor: tudo vive no telemóvel.
 const DB_NOME = "treinador";
-const DB_VERSAO = 15;
+const DB_VERSAO = 16;
 const DEFAULT_TEAM_ID = "default";
 const STORES = [
   "jogadores", "exercicios", "treinos", "treino_itens", "presencas", "avaliacoes", "jogos",
@@ -96,6 +96,9 @@ function abrirDB() {
         memoryItems.createIndex("team_kind", ["team_id", "kind"], { unique: false });
         memoryItems.createIndex("external_key", "external_key", { unique: false });
       } else memoryItems = e.target.transaction.objectStore("memory_items");
+      if ((e.newVersion || DB_VERSAO) >= 16 && !memoryItems.indexNames.contains("sync_id")) {
+        memoryItems.createIndex("sync_id", "sync_id", { unique: false });
+      }
 
       if (!db.objectStoreNames.contains("head_coach_conversations")) {
         const conversations = db.createObjectStore("head_coach_conversations", { keyPath: "id", autoIncrement: true });
@@ -154,6 +157,8 @@ function abrirDB() {
         if (nome === "workspace_documents" && !os.indexNames.contains("team_timeline_status")) {
           os.createIndex("team_timeline_status", ["team_id", "operational_timeline_status", "operational_timeline_date"], { unique: false });
         }
+        // A v15 já normalizou estes campos. A v16 só acrescenta o índice UUID da memória.
+        if (e.oldVersion >= 15) continue;
         os.openCursor().onsuccess = (ev) => {
           const cursor = ev.target.result;
           if (!cursor) return;

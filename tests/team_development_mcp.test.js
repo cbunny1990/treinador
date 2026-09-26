@@ -16,6 +16,13 @@ test('MCP exposes semantic operations, supports unfiltered read and guards coach
  await assert.rejects(executeTeamDevelopmentTool(a.client,c,'save_team_development_goal',{...goalArgs,evaluation:''}),/avaliação do treinador/);
  const goal=await executeTeamDevelopmentTool(a.client,c,'save_team_development_goal',goalArgs);assert.equal(goal.record.evaluation,goalArgs.evaluation);assert.equal(goal.record.coach_decision,goalArgs.coach_decision);assert.deepEqual(goal.record.worked_sessions,goalArgs.worked_sessions);
 });
+test('MCP edits to a weekly plan preserve the coach-owned final evaluation and its evidence',async()=>{
+ const a=admin(),created=await executeTeamDevelopmentTool(a.client,c,'save_weekly_plan',{week_start:'2026-09-23',objective:'Criar apoio',expected_revision:0,confirmed:true});
+ const stored=a.records.find(row=>row.id===created.id),value=JSON.parse(stored.payload.body);
+ value.evaluation={summary:'O apoio foi observado pelo treinador.',evidence:[{type:'training',id:TRAIN},{type:'match',id:MATCH}]};stored.payload.body=JSON.stringify(value);
+ const updated=await executeTeamDevelopmentTool(a.client,c,'save_weekly_plan',{id:created.id,week_start:'2026-09-23',objective:'Progressão do apoio',expected_updated_at:created.updated_at,expected_revision:created.record.revision,confirmed:true});
+ assert.equal(updated.record.evaluation.summary,value.evaluation.summary);assert.deepEqual(updated.record.evaluation.evidence,value.evaluation.evidence);
+});
 test('weekly progression is a cited proposal until explicit coach approval and never creates trainings',async()=>{
  const a=admin(),trainingCount=()=>a.records.filter(x=>x.kind==='training').length,evidence=[{source_type:'match',source_ref:MATCH,field:'analysis.problems',quote:'Perdas na saída',record_updated_at:'match-v1'},{source_type:'training',source_ref:TRAIN,field:'review.continua',quote:'Apoio irregular',record_updated_at:'training-v1'}],args={week_start:'2026-09-23',objective:'Manter passe e introduzir oposição progressiva',training1:TRAIN,match:MATCH,relation_note:'Aumentar a pressão na progressão',rationale:'A saída foi identificada como problema no jogo e o apoio continua irregular no treino.',hypothesis:'Verificar se os apoios permanecem disponíveis sob oposição.',evidence,confirmed:true};
  await assert.rejects(executeTeamDevelopmentTool(a.client,c,'prepare_weekly_plan_proposal',{...args,confirmed:false}),/explicit_confirmation_required/);
@@ -59,11 +66,19 @@ test('new source revision creates a new proposal identity instead of reusing sta
  const refreshed=await executeTeamDevelopmentTool(a.client,c,'prepare_cross_session_priority',{...base,rationale:'A avaliação mais recente acrescenta o contexto de pressão.',evidence:[{...base.evidence[0],quote:'Apoio irregular sob pressão',record_updated_at:'training-v2'}]});assert.notEqual(refreshed.id,first.id);assert.equal(refreshed.record.agent_proposal.evidence_refs[0].quote,'Apoio irregular sob pressão');assert.equal(a.records.filter(x=>x.kind==='document').length,2);
 });
 test('team goals validate and preserve exercise and evidence references within the team on create and update',async()=>{
- const a=admin(),args={external_key:'team-goal:exercise-link',title:'Apoio na saída',identified_at:'2026-09-20',stage:'identified',sessions:[{type:'training',id:TRAIN}],evidence:[{type:'match',id:MATCH}],exercises:[{type:'exercise',id:EXERCISE}],expected_revision:0,confirmed:true};
+ const a=admin(),args={external_key:'team-goal:exercise-link',title:'Apoio na saída',identified_at:'2026-09-20',stage:'identified',sessions:[{type:'training',id:TRAIN}],worked_sessions:[{type:'training',id:TRAIN}],evidence:[{type:'match',id:MATCH}],exercises:[{type:'exercise',id:EXERCISE}],observations:'Facto observado.',interpretation:'Interpretação atual.',hypothesis:'Hipótese por confirmar.',evaluation:'Avaliação do treinador.',coach_decision:'Manter o foco.',expected_revision:0,confirmed:true};
  const tool=TEAM_DEVELOPMENT_TOOLS.find(x=>x.name==='save_team_development_goal');assert.equal(tool.inputSchema.properties.exercises.items.properties.type.const,'exercise');
  await assert.rejects(executeTeamDevelopmentTool(a.client,c,'save_team_development_goal',{...args,evidence:[{type:'match',id:'ffffffff-ffff-4fff-8fff-ffffffffffff'}]}),/session_reference_not_found_in_team/);
  await assert.rejects(executeTeamDevelopmentTool(a.client,c,'save_team_development_goal',{...args,exercises:[{type:'exercise',id:'ffffffff-ffff-4fff-8fff-ffffffffffff'}]}),/exercise_reference_not_found_in_team/);
  await assert.rejects(executeTeamDevelopmentTool(a.client,c,'save_team_development_goal',{...args,evidence:[{type:'exercise',id:EXERCISE}]}),/invalid_stable_reference/);
  const saved=await executeTeamDevelopmentTool(a.client,c,'save_team_development_goal',args);assert.deepEqual(saved.record.exercises,args.exercises);assert.deepEqual(saved.record.evidence,args.evidence);
  const edited=await executeTeamDevelopmentTool(a.client,c,'save_team_development_goal',{...args,id:saved.id,external_key:undefined,title:'Apoio após passe',expected_updated_at:saved.updated_at,expected_revision:saved.record.revision});assert.deepEqual(edited.record.exercises,args.exercises);assert.equal(edited.record.title,'Apoio após passe');
+ const partial=await executeTeamDevelopmentTool(a.client,c,'save_team_development_goal',{id:saved.id,title:'Apoio no primeiro passe',stage:'identified',expected_updated_at:edited.updated_at,expected_revision:edited.record.revision,confirmed:true});
+ for(const key of ['identified_at','sessions','worked_sessions','evidence','exercises','observations','interpretation','hypothesis','evaluation','coach_decision'])assert.deepEqual(partial.record[key],edited.record[key],key+' must survive a partial MCP update');
+});
+test('partial MCP edits preserve unknown worked-session history on legacy team goals',async()=>{
+ const a=admin(),created=await executeTeamDevelopmentTool(a.client,c,'save_team_development_goal',{external_key:'team-goal:legacy-work',title:'Objetivo histórico',stage:'identified',expected_revision:0,confirmed:true});
+ assert.equal(created.record.worked_sessions,null);
+ const updated=await executeTeamDevelopmentTool(a.client,c,'save_team_development_goal',{id:created.id,title:'Objetivo histórico revisto',stage:'identified',expected_updated_at:created.updated_at,expected_revision:created.record.revision,confirmed:true});
+ assert.equal(updated.record.worked_sessions,null);
 });

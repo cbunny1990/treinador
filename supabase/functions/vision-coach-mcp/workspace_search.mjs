@@ -1,13 +1,22 @@
+import { containsSensitivePersonalText } from "./team_knowledge.mjs";
+import { sanitizeMcpOutput } from "./output_safety.mjs";
+
 const KINDS = new Set(["player", "match", "training", "exercise", "memory", "document", "game_model"]);
 const PAGE_SIZE = 500;
 const SCAN_LIMIT = 10000;
 const MAX_OFFSET = 10000000;
-
 export async function searchWorkspace(admin, teamId, { query, kinds = null, limit = 20, offset = 0 } = /** @type {{ query?: unknown, kinds?: string[] | null, limit?: number, offset?: number }} */ ({})) {
   const needle = String(query || "").trim().toLowerCase();
   if (!needle) throw new Error("query_required");
   if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error("invalid_search_limit");
   if (!Number.isSafeInteger(offset) || offset < 0 || offset > MAX_OFFSET) throw new Error("invalid_search_offset");
+  if (containsSensitivePersonalText(needle)) {
+    return {
+      results: [], limit, offset, scanned_records: 0, search_complete: false,
+      has_more_results: null, next_offset: null, retrieval_status: "sensitive_query_not_searched",
+      message: "A pesquisa textual foi omitida por conter informação pessoal sensível. Usa apenas os campos estruturados autorizados; não reformules a pergunta para contornar este filtro.",
+    };
+  }
   const selectedKinds = Array.isArray(kinds) && kinds.length ? [...new Set(kinds.map(String))] : null;
   if (selectedKinds?.some(kind => !KINDS.has(kind))) throw new Error("invalid_search_kind");
   const results = [];
@@ -34,7 +43,7 @@ export async function searchWorkspace(admin, teamId, { query, kinds = null, limi
         nextOffset = cursor + index;
         break;
       }
-      results.push(row);
+      results.push(sanitizeMcpOutput(row));
     }
     if (foundExtra) break;
     scanned += rows.length;

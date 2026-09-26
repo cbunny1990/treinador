@@ -11,6 +11,16 @@ const connector = {
   label: "Synthetic MCP contract test",
 };
 const archivePlayerRef = "40000000-0000-4000-8000-000000000004";
+const archiveObservationRef = "a0000000-0000-4000-8000-00000000000a";
+const archiveObservation = {
+  id: archiveObservationRef,
+  kind: "memory",
+  team_id: connector.team_id,
+  updated_at: "2026-09-25T12:00:00.000Z",
+  payload: { sync_id: archiveObservationRef, kind: "observation", status: "active", occurred_at: "2026-09-25",
+    title: "Observação segura", content: "Ofereceu apoio depois do passe.", source: { type: "coach" },
+    subject_refs: [{ type: "player", id: archivePlayerRef }] },
+};
 const archiveRecord = {
   id: "50000000-0000-4000-8000-000000000005",
   kind: "document",
@@ -37,6 +47,22 @@ const weeklyTrainingRecord = {
   team_id: connector.team_id,
   updated_at: "synthetic-training-v1",
   payload: { data: "2026-09-22", review: { status: "done", continua: "Apoio irregular" }, session: { status: "completed" } },
+};
+const sanitizationMatchRef = "b0000000-0000-4000-8000-00000000000b";
+const sanitizationMatch = {
+  id: sanitizationMatchRef,
+  kind: "match",
+  team_id: connector.team_id,
+  updated_at: "synthetic-match-v1",
+  payload: {
+    data: "2026-09-26", adversario: "Adversário sintético", estado: "concluido",
+    notas: "O atleta foi diagnosticado com asma.",
+    medical_diagnosis: "asma",
+    visual_url: "https://private.invalid/player-photo",
+    player: { estado_disponibilidade: "indisponivel" },
+    session: { attendance: [{ player_ref: archivePlayerRef, status: "present" }] },
+    analysis: { summary: "Criámos oportunidades em ataque rápido." },
+  },
 };
 const weeklyDocuments = new Map<string, any>();
 let weeklyProposalRpcWrites = 0;
@@ -98,6 +124,12 @@ globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     check(query.get("team_id") === `eq.${connector.team_id}`, "Archived athlete read was not scoped to the authorized team.");
     check(query.get("deleted_at") === "is.null", "Archived athlete read included deleted archive documents.");
     const kind = query.get("kind");
+    if (kind === "eq.memory") {
+      return Response.json([archiveObservation]);
+    }
+    if (kind === "eq.match") {
+      return Response.json([sanitizationMatch]);
+    }
     if (kind === "eq.training" && query.get("id") === `eq.${weeklyTrainingRef}`) return Response.json([weeklyTrainingRecord]);
     if (kind === "eq.document" && query.get("payload->>type") !== "eq.player_archive") {
       const byId = query.get("id")?.replace(/^eq\./, "");
@@ -184,17 +216,27 @@ try {
   const archivedPlayerTool = listed.result.tools.find((item: any) => item.name === "get_archived_player_development");
   check(archivedPlayerTool?.annotations?.readOnlyHint === true, "Archived athlete development must be available as a read-only MCP tool.");
   check(archivedPlayerTool.inputSchema.properties.player_ref.format === "uuid", "Archived athlete development must use the shared UUID.");
+  check(archivedPlayerTool.inputSchema.properties.observations_offset.maximum === 10000 && archivedPlayerTool.inputSchema.properties.observations_limit.maximum === 50, "Archived athlete observation pagination is not bounded.");
 
   const archivedPlayer = await call("tools/call", {
     name: "get_archived_player_development",
-    arguments: { player_ref: archivePlayerRef },
+    arguments: { player_ref: archivePlayerRef, observations_limit: 1 },
   });
-  check(!archivedPlayer.result.isError, "The archived athlete read failed over MCP HTTP.");
+  check(!archivedPlayer.result.isError, `The archived athlete read failed over MCP HTTP: ${JSON.stringify(archivedPlayer.result)}`);
   check(archivedPlayer.result.structuredContent.historical_only === true && archivedPlayer.result.structuredContent.archive_status === "archived", "The MCP archive result did not identify its contents as historical only.");
   check(archivedPlayer.result.structuredContent.player.ref === archivePlayerRef, "The MCP archive result lost the stable athlete UUID.");
   check(archivedPlayer.result.structuredContent.goals[0].history.length === 0, "The MCP archive result changed the historical goals.");
+  check(archivedPlayer.result.structuredContent.observations.items.length === 1 && archivedPlayer.result.structuredContent.observations.items[0].ref === archiveObservationRef, "The MCP archive result did not return the linked coach observation.");
+  check(archivedPlayer.result.structuredContent.observations.has_more === false, "The MCP archive result returned an incorrect observation page state.");
+  const observationQuery = workspaceQueries.find((query) => query.get("kind") === "eq.memory");
+  check(observationQuery?.get("payload->>kind") === "eq.observation" && observationQuery?.get("payload->>status") === "eq.active", "Archived observations included a different memory state or kind.");
+  check(observationQuery?.get("payload->source->>type") === "eq.coach", `Archived observations included non-coach-authored text: ${JSON.stringify(observationQuery && Object.fromEntries(observationQuery))}`);
+  const payloadContains = observationQuery?.get("payload") || "";
+  check(payloadContains.startsWith("cs.") && JSON.parse(payloadContains.slice(3)).subject_refs?.[0]?.id === archivePlayerRef, `Archived observations were not filtered to the athlete UUID: ${JSON.stringify(observationQuery && Object.fromEntries(observationQuery))}`);
+  check(observationQuery?.get("offset") === "0" && observationQuery?.get("limit") === "2", `Archived observations did not request one extra row for pagination: ${JSON.stringify(observationQuery && Object.fromEntries(observationQuery))}`);
+  check(observationQuery?.get("order")?.includes("payload->>occurred_at.desc") && observationQuery?.get("order")?.includes("id.desc"), `Archived observations have no stable chronological order: ${JSON.stringify(observationQuery && Object.fromEntries(observationQuery))}`);
   check(archivedPlayer.result.structuredContent.participation_history.player_ref === archivePlayerRef, "The MCP archive result did not resolve participation by stable athlete UUID.");
-  check(workspaceQueries.length === 3, "The MCP archive read did not query the archive and its historical game/training records.");
+  check(workspaceQueries.length === 4, "The MCP archive read did not query archive, observations and historical game/training records.");
 
   connector.scopes = ["read", "write"];
   const weeklyArgs = {
@@ -242,6 +284,18 @@ try {
   check(lexicalSearch.result.structuredContent.search_complete === true, "The lexical search did not report its scan coverage.");
   check(lexicalSearch.result.structuredContent.results[0].id === "70000000-0000-4000-8000-000000000007", "The lexical search lost its matching record.");
 
+  const fullMatch = await call("tools/call", {
+    name: "get_match", arguments: { id: sanitizationMatchRef },
+  });
+  const safeMatch = fullMatch.result.structuredContent;
+  check(!fullMatch.result.isError && safeMatch.id === sanitizationMatchRef, `The sanitized full-match read lost its stable record identity: ${JSON.stringify(fullMatch.result)}`);
+  check(safeMatch.payload.notas === "Conteúdo pessoal sensível omitido" && safeMatch.payload.medical_diagnosis === undefined, "The MCP HTTP boundary exposed clinical match text.");
+  check(safeMatch.payload.visual_url === undefined, "The MCP HTTP boundary exposed a private image URL.");
+  check(safeMatch.payload.player.estado_disponibilidade === "indisponivel", "The MCP HTTP boundary removed useful operational availability.");
+  check(safeMatch.payload.session.attendance[0].status === "present", "The MCP HTTP boundary removed explicit training attendance.");
+  check(safeMatch.payload.analysis.summary === "Criámos oportunidades em ataque rápido.", "The MCP HTTP boundary removed ordinary tactical analysis.");
+  check(safeMatch.sensitive_text_omitted === true, "The MCP HTTP boundary did not indicate that content was filtered.");
+
   const refused = await call("tools/call", {
     name: "evaluate_cross_session_pattern",
     arguments: {
@@ -258,7 +312,7 @@ try {
   check(refused.result.isError === true, "A call without a provider key should return an MCP error result.");
   check(/typesafe_api_not_configured/.test(refused.result.content?.[0]?.text || ""), "The missing Jev provider was not identified.");
   check(networkPaths.every((path) => path.endsWith("/rest/v1/rpc/mcp_connector_lookup") || path.endsWith("/rest/v1/rpc/head_coach_put_record") || path.endsWith("/rest/v1/workspace_records")), "The synthetic test attempted a non-fixture database or external provider request.");
-  console.log("MCP HTTP synthetic contract: initialize, archived athlete read, paginated lexical search, weekly proposal prepare/idempotency/approve and confirmation refusal, RAG sensitive-query refusal, tool refusal without provider key — passed; external network calls: 0.");
+  console.log("MCP HTTP synthetic contract: initialize, archived athlete read, privacy-filtered full match, paginated lexical search, weekly proposal prepare/idempotency/approve and confirmation refusal, RAG sensitive-query refusal, tool refusal without provider key — passed; external network calls: 0.");
 } finally {
   if (server) {
     server.shutdown();

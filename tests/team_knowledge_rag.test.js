@@ -330,6 +330,13 @@ test('provider adapter validates dimensions and uses multilingual embedding endp
  assert.equal(vectors.length,2);assert.equal(vectors[0].length,1536);assert.equal(provider.requests[0].model,'text-embedding-3-small');assert.equal(provider.requests[0].dimensions,1536);
  assert.equal(provider.requests[0].input[0],'apoio após passe');assert.match(rag.teamKnowledgeTestAPI.vectorLiteral(vectors[0]),/^\[1,0,0/);
  await assert.rejects(rag.teamKnowledgeTestAPI.embed(['texto'],{apiKey:'test',fetchImpl:async()=>({ok:true,status:200,json:async()=>({data:[{index:0,embedding:[1,2]}]})})}),/shape_invalid/);
+ for(const data of [
+  [{index:0,embedding:Array(1536).fill(1)},{index:0,embedding:Array(1536).fill(2)}],
+  [{index:0,embedding:Array(1536).fill(1)},{index:2,embedding:Array(1536).fill(2)}],
+  [{index:0.5,embedding:Array(1536).fill(1)},{index:1,embedding:Array(1536).fill(2)}]
+ ]) await assert.rejects(rag.teamKnowledgeTestAPI.embed(['primeiro','segundo'],{apiKey:'test',fetchImpl:async()=>({ok:true,status:200,json:async()=>({data})})}),/shape_invalid/);
+ const outOfOrder=await rag.teamKnowledgeTestAPI.embed(['primeiro','segundo'],{apiKey:'test',fetchImpl:async()=>({ok:true,status:200,json:async()=>({data:[{index:1,embedding:Array(1536).fill(2)},{index:0,embedding:Array(1536).fill(1)}]})})});
+ assert.equal(outOfOrder[0][0],1);assert.equal(outOfOrder[1][0],2,'valid out-of-order responses are restored to input order');
 });
 
 test('embedding provider requests have a deadline and abort instead of hanging the hybrid context',async()=>{

@@ -93,6 +93,21 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     ]);
     assert.ifError(seededMatches.error);
 
+    const sanitizerMatchRef = uuid();
+    const sanitizerMatchInsert = await admin.from("workspace_records").insert({
+      id: sanitizerMatchRef, team_id: teams[0], kind: "match", actor_type: "human",
+      payload: {
+        data: "2026-09-26", estado: "agendado", adversario: "Adversário sintético",
+        notas: "O atleta foi diagnosticado com asma.", medical_diagnosis: "asma",
+        photo_url: "https://private.invalid/player-photo",
+        fotoUrl: "https://storage.invalid/private/player?token=synthetic-secret",
+        player: { estado_disponibilidade: "lesionado" },
+        attendance: [{ player_ref: uuid(), status: "present" }],
+        analysis: { summary: "Criámos oportunidades em ataque rápido." },
+      },
+    });
+    assert.ifError(sanitizerMatchInsert.error);
+
     const exerciseRef = uuid();
     const completedTrainingRef = uuid();
     const unstartedTrainingRef = uuid();
@@ -120,6 +135,44 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     ]);
     assert.ifError(seededPlanning.error);
 
+    const archivedPlayerRef = uuid();
+    const currentPlayerRef = uuid();
+    const currentPlayerRow = {
+      id: currentPlayerRef, team_id: teams[0], kind: "player", actor_type: "human",
+      payload: { nome: "Atleta Local", development_goals: { schema: "vision-player-goals@1", revision: 2, items: [
+        { id: uuid(), title: "Apoio após passe", started_at: "2026-09-01", status: "active",
+          notes: "Oferecer linha de passe.", evidence_refs: [], exercise_refs: [], history: [
+            { id: uuid(), title: "Objetivo após lesão no joelho", started_at: "2026-08-01", status: "active",
+              notes: "Registo histórico.", evidence_refs: [], exercise_refs: [] },
+          ] },
+        { id: uuid(), title: "Objetivo de apoio", started_at: "2026-09-02", status: "active",
+          notes: "Observação clínica sobre lesão.", evidence_refs: [], exercise_refs: [], history: [] },
+      ] } },
+    };
+    const archiveRow = {
+      id: uuid(), team_id: teams[0], kind: "document", actor_type: "human",
+      payload: { type: "player_archive", external_key: `player-archive:default:${archivedPlayerRef}`,
+        body: JSON.stringify({ schema: "vision-player-archive@1", archived_at: "2026-09-25T09:00:00.000Z",
+          player: { ref: archivedPlayerRef, name: "Atleta Arquivado", age_group: "Sub-8" },
+          development_goals: { schema: "vision-player-goals@1", revision: 0, items: [] } }) },
+    };
+    const coachMemory = (teamId, ref, date, content) => ({
+      id: uuid(), team_id: teamId, kind: "memory", actor_type: "human",
+      payload: { sync_id: uuid(), kind: "observation", status: "active", occurred_at: date,
+        title: `Observação ${date}`, content, source: { type: "coach" },
+        subject_refs: [{ type: "player", id: ref }] },
+    });
+    const seededArchiveHistory = await admin.from("workspace_records").insert([
+      currentPlayerRow,
+      archiveRow,
+      coachMemory(teams[0], archivedPlayerRef, "2026-09-25", "Ofereceu apoio depois do passe."),
+      coachMemory(teams[0], archivedPlayerRef, "2026-09-24", "Criou linha de passe no corredor."),
+      coachMemory(teams[0], archivedPlayerRef, "2026-09-23", "Observação clínica sobre lesão."),
+      coachMemory(teams[1], archivedPlayerRef, "2026-09-26", "SEGREDO de outra equipa."),
+      coachMemory(teams[0], uuid(), "2026-09-27", "Observação de outro atleta."),
+    ]);
+    assert.ifError(seededArchiveHistory.error);
+
     const token = `vcmcp_${crypto.randomBytes(32).toString("base64url")}`;
     const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
     const connector = await admin.rpc("mcp_connector_create", {
@@ -146,7 +199,7 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     });
     assert.equal(initialize.status, 200, await initialize.clone().text());
     const initialized = await initialize.json();
-    assert.equal(initialized.result.serverInfo.version, "1.14.8");
+    assert.equal(initialized.result.serverInfo.version, "1.14.9");
     assert.match(initialized.result.instructions, /get_training_planning_context/);
     assert.match(initialized.result.instructions, /get_recent_match_context/);
     assert.match(initialized.result.instructions, /roster and availability, use list_players/i);
@@ -161,6 +214,7 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     const listed = await mcpRequest(token, "tools/list");
     assert.equal(listed.status, 200);
     const tools = (await listed.json()).result.tools;
+    assert.ok(tools.some((tool) => tool.name === "get_archived_player_development"));
     assert.ok(tools.some((tool) => tool.name === "search_team_knowledge"));
     assert.ok(tools.some((tool) => tool.name === "get_training_planning_context"));
     assert.ok(tools.some((tool) => tool.name === "reindex_team_knowledge"));
@@ -169,6 +223,52 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     assert.ok(tools.some((tool) => tool.name === "dismiss_weekly_plan_proposal"));
     assert.equal(tools.find((tool) => tool.name === "search_team_knowledge").inputSchema.properties.match_refs.maxItems, 10);
     assert.equal(tools.find((tool) => tool.name === "search_team_knowledge").inputSchema.properties.per_match_limit.maximum, 4);
+
+    const sanitizedMatchResponse = await mcpRequest(token, "tools/call", {
+      name: "get_match", arguments: { id: sanitizerMatchRef },
+    });
+    assert.equal(sanitizedMatchResponse.status, 200);
+    const sanitizedMatchResult = await sanitizedMatchResponse.json();
+    const sanitizedMatch = JSON.parse(sanitizedMatchResult.result.content[0].text);
+    assert.equal(sanitizedMatch.id, sanitizerMatchRef);
+    assert.equal(sanitizedMatch.payload.notas, "Conteúdo pessoal sensível omitido");
+    assert.equal(sanitizedMatch.payload.medical_diagnosis, undefined);
+    assert.equal(sanitizedMatch.payload.photo_url, undefined);
+    assert.equal(sanitizedMatch.payload.fotoUrl, undefined);
+    assert.equal(sanitizedMatch.payload.player.estado_disponibilidade, "lesionado");
+    assert.equal(sanitizedMatch.payload.attendance[0].status, "present");
+    assert.equal(sanitizedMatch.payload.analysis.summary, "Criámos oportunidades em ataque rápido.");
+    assert.equal(sanitizedMatch.sensitive_text_omitted, true);
+    assert.doesNotMatch(JSON.stringify(sanitizedMatch), /diagnosticado|asma|private\.invalid|storage\.invalid|synthetic-secret/);
+
+    const archivedPlayerResponse = await mcpRequest(token, "tools/call", {
+      name: "get_archived_player_development", arguments: { player_ref: archivedPlayerRef, observations_limit: 1 },
+    });
+    assert.equal(archivedPlayerResponse.status, 200);
+    const archivedPlayer = JSON.parse((await archivedPlayerResponse.json()).result.content[0].text);
+    assert.equal(archivedPlayer.historical_only, true);
+    assert.deepEqual(archivedPlayer.observations.items.map((item) => item.content), ["Ofereceu apoio depois do passe."]);
+    assert.equal(archivedPlayer.observations.has_more, true);
+    assert.equal(archivedPlayer.observations.next_offset, 1);
+    const archivedPlayerPage2Response = await mcpRequest(token, "tools/call", {
+      name: "get_archived_player_development", arguments: { player_ref: archivedPlayerRef, observations_limit: 1, observations_offset: 1 },
+    });
+    assert.equal(archivedPlayerPage2Response.status, 200);
+    const archivedPlayerPage2 = JSON.parse((await archivedPlayerPage2Response.json()).result.content[0].text);
+    assert.deepEqual(archivedPlayerPage2.observations.items.map((item) => item.content), ["Criou linha de passe no corredor."]);
+    assert.doesNotMatch(JSON.stringify([archivedPlayer, archivedPlayerPage2]), /clínica|lesão|SEGREDO|outro atleta/i);
+
+    const developmentGoalsResponse = await mcpRequest(token, "tools/call", {
+      name: "get_player_development_goals", arguments: { id: currentPlayerRef },
+    });
+    assert.equal(developmentGoalsResponse.status, 200);
+    const developmentGoals = JSON.parse((await developmentGoalsResponse.json()).result.content[0].text);
+    assert.equal(developmentGoals.goals[0].notes, "Oferecer linha de passe.");
+    assert.equal(developmentGoals.goals[0].history[0].title, "Conteúdo pessoal omitido");
+    assert.equal(developmentGoals.goals[0].sensitive_text_omitted, true);
+    assert.equal(developmentGoals.goals[1].notes, "");
+    assert.equal(developmentGoals.goals[1].sensitive_text_omitted, true);
+    assert.doesNotMatch(JSON.stringify(developmentGoals), /clínica|lesão|joelho/i);
 
     const recentMatches = await mcpRequest(token, "tools/call", {
       name: "list_matches", arguments: { state: "concluido", date_order: "desc", limit: 5, team_id: teams[1] },

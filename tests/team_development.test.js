@@ -1,15 +1,18 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const D=require('../js/team_development.js');
 const U='11111111-1111-4111-8111-111111111111',M='22222222-2222-4222-8222-222222222222';
-test('weekly plan anchors Monday, keeps stable session links, and requires the current revision',()=>{
- const first=D.saveWeek(null,{week_start:'2026-09-23',objective:'Apoio depois do passe',training1:U,match:M,links:[{from:U,to:M,note:'Aplicar no jogo'}],evaluation:{summary:'Ainda não avaliado'}},{expected_revision:0,now:'2026-09-20T12:00:00Z'});
+test('weekly plan anchors Monday, preserves final-evaluation evidence through edits and requires the current revision',()=>{
+ const first=D.saveWeek(null,{week_start:'2026-09-23',objective:'Apoio depois do passe',training1:U,match:M,links:[{from:U,to:M,note:'Aplicar no jogo'}],evaluation:{summary:'Apoio apareceu no treino.',evidence:[{type:'training',id:U},{type:'memory',id:M}]}},{expected_revision:0,now:'2026-09-20T12:00:00Z'});
  assert.equal(first.week_start,'2026-09-21');assert.equal(first.training1,U);assert.equal(first.match,M);assert.equal(first.links[0].note,'Aplicar no jogo');
+ const edited=D.saveWeek({body:JSON.stringify(first)},{week_start:'2026-09-21',objective:'Apoio depois do passe',evaluation:{summary:'Confirmado no jogo.'}},{expected_revision:1,now:'2026-09-27T12:00:00Z'});
+ assert.equal(edited.evaluation.summary,'Confirmado no jogo.');assert.deepEqual(edited.evaluation.evidence,first.evaluation.evidence);assert.equal(edited.history.at(-1).evaluation.summary,'Apoio apareceu no treino.');
  assert.throws(()=>D.saveWeek({body:JSON.stringify(first)},{week_start:'2026-09-21',objective:'Outro'},{expected_revision:0}),/mudou noutro dispositivo/);
 });
 test('weekly plans refuse malformed references instead of silently converting them to empty links',()=>{
  const old={body:JSON.stringify({schema:D.schemas.week,revision:0,week_start:'2026-09-21',training1:'legacy-local-id'})};
  assert.throws(()=>D.saveWeek(null,{week_start:'2026-09-23',training1:'legacy-local-id'},{expected_revision:0}),/referência de treino 1 não é um UUID válido/i);
  assert.throws(()=>D.saveWeek(null,{week_start:'2026-09-23',links:[{from:U,to:'bad-ref'}]},{expected_revision:0}),/referência de destino da relação não é um UUID válido/i);
+ assert.throws(()=>D.saveWeek(null,{week_start:'2026-09-23',evaluation:{summary:'Observado',evidence:[{type:'training',id:'bad-ref'}]}},{expected_revision:0}),/referência de sessão, observação ou exercício é inválida/i);
  assert.throws(()=>D.saveWeek({body:old.body},{week_start:'2026-09-23',training1:'legacy-local-id'},{expected_revision:0}),/referência de treino 1 não é um UUID válido/i);
  assert.equal(JSON.parse(old.body).training1,'legacy-local-id');
 });

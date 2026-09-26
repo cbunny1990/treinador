@@ -43,3 +43,4 @@ Os atletas da nossa equipa usam UUID estável; adversários podem ser identifica
 
 ## Verificação
 `npm run check`, `npm test` e `npx playwright test tests/e2e/match_events.spec.js`. A app passa para v69; imagens aprovadas e workflows anteriores permanecem intactos.
+Pela operação MCP `update_match_event`, campos omitidos preservam o valor registado; enviar `null` limpa explicitamente jogador, adversário, zona, motivo, lado ou nota. O minuto é alterado apenas quando enviado, e o tipo do lance continua imutável.

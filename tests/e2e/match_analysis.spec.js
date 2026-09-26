@@ -14,8 +14,39 @@ test('analysis labels unknown facts, saves offline and only updates memory on ex
  await form.locator('[name="field_next_priority"]').fill('Apoio após passe');await form.getByRole('button',{name:'Guardar análise e atualizar memória',exact:true}).click();
  await expect.poll(async()=>page.evaluate(id=>DB.obter('jogos',id).then(r=>r.post_game.analysis?.memory_ref),id)).toBeTruthy();
  row=await page.evaluate(id=>DB.obter('jogos',id),id);const memories=await page.evaluate(()=>DB.porIndice('memory_items','team_id',DEFAULT_TEAM_ID));expect(memories.filter(m=>m.metadata?.managed_by==='match_analysis_v1')).toHaveLength(1);
+ const repeat=await page.evaluate(async id=>{const match=await DB.obter('jogos',id),original=IDBObjectStore.prototype.getAll;IDBObjectStore.prototype.getAll=function(){if(['jogos','memory_items','sync_tombstones'].includes(this.name))throw new Error('Varrimento completo de '+this.name);return original.apply(this,arguments);};try{return await MatchAnalysisStore.commit(id,{fields:match.post_game.analysis.fields,goals_conceded:match.post_game.analysis.goals_conceded},{expected_revision:match.post_game.analysis.revision,save_memory:true});}finally{IDBObjectStore.prototype.getAll=original;}},id);
+ expect(repeat.memory_created).toBe(false);expect(repeat.memory_updated).toBe(true);expect(await page.evaluate(()=>DB.porIndice('memory_items','team_id',DEFAULT_TEAM_ID).then(rows=>rows.filter(m=>m.metadata?.managed_by==='match_analysis_v1').length))).toBe(1);
  await form.locator('[name="field_summary"]').fill('Resumo com texto local por guardar');await page.evaluate(()=>window.dispatchEvent(new CustomEvent('visioncoach:sync-complete',{detail:{conflicts:[]}})));await expect(form.locator('[name="field_summary"]')).toHaveValue('Resumo com texto local por guardar');
  await context.setOffline(false);
+});
+test('IndexedDB v15 upgrade adds the memory UUID index without losing a saved memory',async({page})=>{
+ await page.addInitScript(()=>{const open=IDBFactory.prototype.open,cursor=IDBObjectStore.prototype.openCursor;IDBFactory.prototype.open=function(name,version){return open.call(this,name,name==='treinador'&&!localStorage.getItem('vision-coach-test-db16')?15:version);};IDBObjectStore.prototype.openCursor=function(){if(this.transaction.mode==='versionchange'&&localStorage.getItem('vision-coach-test-db16'))throw new Error('A migração v15 fez um varrimento completo de '+this.name);return cursor.apply(this,arguments);};});
+ await page.goto('/');await page.waitForFunction(()=>typeof DB!=='undefined'&&typeof abrirDB==='function');
+ const before=await page.evaluate(async()=>{const id=await DB.criar('memory_items',{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),external_key:'test-v15-memory',kind:'observation',title:'Memória anterior à migração',content:'texto sintético',status:'active'}),db=await abrirDB();return{version:db.version,hasSyncIndex:db.transaction('memory_items').objectStore('memory_items').indexNames.contains('sync_id'),id};});
+ expect(before.version).toBe(15);expect(before.hasSyncIndex).toBe(false);await page.evaluate(()=>localStorage.setItem('vision-coach-test-db16','1'));await page.reload();await page.waitForFunction(()=>typeof DB!=='undefined'&&typeof abrirDB==='function');
+ const after=await page.evaluate(async id=>{const db=await abrirDB();return{version:db.version,hasSyncIndex:db.transaction('memory_items').objectStore('memory_items').indexNames.contains('sync_id'),row:await DB.obter('memory_items',id)};},before.id);
+ expect(after.version).toBe(16);expect(after.hasSyncIndex).toBe(true);expect(after.row.title).toBe('Memória anterior à migração');expect(after.row.content).toBe('texto sintético');
+});
+test('analysis-only save locks the match; deleted memories abort the combined save',async({page})=>{
+ await page.goto('/#/calendario');await page.waitForFunction(()=>typeof MatchAnalysisStore!=='undefined');
+ const result=await page.evaluate(async()=>{
+  RemoteWorkspace.scheduleSync=()=>{};
+  const matchRef=crypto.randomUUID(),matchId=await DB.criar('jogos',{team_id:DEFAULT_TEAM_ID,sync_id:matchRef,data:'2026-09-26',adversario:'Memória apagada'});
+  const original=IDBDatabase.prototype.transaction,writeStores=[];
+  IDBDatabase.prototype.transaction=function(names,mode){if(mode==='readwrite'&&Array.isArray(names)&&names.includes('jogos'))writeStores.push(names.slice());return original.apply(this,arguments);};
+  try{await MatchAnalysisStore.commit(matchId,{fields:{summary:'Resumo guardado sem memória'}},{expected_revision:0,save_memory:false});}finally{IDBDatabase.prototype.transaction=original;}
+  const memoryId=await MatchAnalysisStore.stableId('vision-match-analysis:'+matchRef);
+  await DB.criar('sync_tombstones',{store:'memory_items',sync_id:memoryId});
+  let deletedError='';try{await MatchAnalysisStore.commit(matchId,{fields:{summary:'Não recriar memória'}},{expected_revision:1,save_memory:true});}catch(error){deletedError=error.message;}
+  const afterDeleted=await DB.obter('jogos',matchId);
+  const legacyRef=crypto.randomUUID(),legacyMatchId=await DB.criar('jogos',{team_id:DEFAULT_TEAM_ID,sync_id:legacyRef,data:'2026-09-27',adversario:'Memória legada'}),legacySyncId=crypto.randomUUID();
+  const legacyMemoryId=await DB.criar('memory_items',{team_id:DEFAULT_TEAM_ID,sync_id:legacySyncId,external_key:'match-analysis-'+legacyRef,kind:'observation',title:'Memória legada',content:'Conteúdo preservado',status:'active',metadata:{managed_by:'match_analysis_v1'}});
+  await DB.criar('sync_tombstones',{store:'memory_items',sync_id:legacySyncId});
+  let legacyError='';try{await MatchAnalysisStore.commit(legacyMatchId,{fields:{summary:'Não substituir memória legada apagada'}},{expected_revision:0,save_memory:true});}catch(error){legacyError=error.message;}
+  const afterLegacy=await DB.obter('jogos',legacyMatchId),legacyMemory=await DB.obter('memory_items',legacyMemoryId);
+  return{writeStores,deletedError,deletedRevision:afterDeleted.post_game.analysis.revision,deletedSummary:afterDeleted.post_game.analysis.fields.summary,legacyError,legacyRevision:afterLegacy.post_game?.analysis?.revision??0,legacyMemoryContent:legacyMemory.content};
+ });
+ expect(result.writeStores).toEqual([['jogos']]);expect(result.deletedError).toMatch(/memória.*apagada/i);expect(result.deletedRevision).toBe(1);expect(result.deletedSummary).toBe('Resumo guardado sem memória');expect(result.legacyError).toMatch(/memória.*apagada/i);expect(result.legacyRevision).toBe(0);expect(result.legacyMemoryContent).toBe('Conteúdo preservado');
 });
 test('analysis labels the saved score as manually entered',async({page})=>{
  await page.goto('/#/calendario');await page.waitForFunction(()=>typeof VisionMatchAnalysis!=='undefined'&&typeof go==='function');
@@ -52,6 +83,36 @@ test('post-match proposal with changed source revisions cannot be approved',asyn
  await page.goto('/#/calendario');await page.waitForFunction(()=>typeof VisionMatchAnalysis!=='undefined'&&typeof go==='function');
  const id=await page.evaluate(()=>DB.criar('jogos',{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:'2026-09-26',adversario:'Proposta desatualizada',estado:'concluido',match_events:{schema:'vision-match-events@1',revision:2,possession:{kind:'unknown',value:null},events:[{id:crypto.randomUUID(),type:'recovery',at_ms:60000}]},post_game:{analysis:{schema:'vision-match-analysis@1',revision:3,status:'done',fields:{summary:'Registo do treinador'},agent_proposal:{status:'proposed',prepared_by:'Head Coach',source_analysis_revision:2,source_events_revision:1,summary:'Proposta antiga',hypotheses:[],next_priority:'Prioridade antiga',evidence_ids:[]}}}}));
  await page.evaluate(id=>{go('#/equipa/jogo/'+id);return viewMatch(id);},id);const proposal=page.locator('[data-match-agent-proposal]');await expect(proposal).toContainText('A origem mudou ou não pode ser verificada');await expect(proposal.getByRole('button',{name:'Aceitar proposta'})).toHaveCount(0);await expect(proposal.getByRole('button',{name:'Copiar prioridade para o campo editável'})).toHaveCount(0);await expect(proposal.getByRole('button',{name:'Rejeitar proposta desatualizada'})).toBeVisible();expect((await page.evaluate(id=>DB.obter('jogos',id),id)).post_game.analysis.agent_proposal.status).toBe('proposed');page.once('dialog',dialog=>dialog.accept());await proposal.getByRole('button',{name:'Rejeitar proposta desatualizada'}).click();await expect.poll(async()=>page.evaluate(id=>DB.obter('jogos',id).then(row=>row.post_game.analysis.agent_proposal.status),id)).toBe('dismissed');
+});
+test('match analysis opens an editable training draft and creates it only after coach saves',async({page})=>{
+ await page.goto('/#/calendario');await page.waitForFunction(()=>typeof TrainingUI!=='undefined'&&typeof go==='function');
+ const fixture=await page.evaluate(async()=>{
+  RemoteWorkspace.scheduleSync=()=>{};
+  const matchSyncId=crypto.randomUUID();
+  const matchId=await DB.criar('jogos',{team_id:DEFAULT_TEAM_ID,sync_id:matchSyncId,data:'2026-09-26',adversario:'Treino a partir do jogo',estado:'concluido',post_game:{status:'done',analysis:{schema:'vision-match-analysis@1',revision:1,status:'done',fields:{summary:'Apoio tardio sob pressão',next_priority:'Melhorar passe e apoio',decisions:'Manter o princípio e aumentar oposição.'}}}});
+  const exercise=TrainingPlanner.normalizeExercise({team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),workspace_v2:true,nome:'Exercício de apoio E2E',escalao:'Sub-8',objetivo:'Passe e apoio',series:1,duracao_serie_min:8});
+  await DB.criar('exercicios',exercise);
+  return{matchId,matchSyncId,exerciseRef:exercise.sync_id};
+ });
+ await page.evaluate(id=>{go('#/equipa/jogo/'+id);return viewMatch(id);},fixture.matchId);
+ await page.getByRole('link',{name:'Preparar treino desta análise'}).click();
+ const form=page.locator('form[data-form="training-plan"]');await expect(form).toBeVisible();
+ await expect(form.locator('[name="objetivo"]')).toHaveValue('Melhorar passe e apoio');
+ await expect(form.locator('[name="notas"]')).toContainText('Manter o princípio e aumentar oposição.');
+ await expect(form.locator('[name="source_match_ref"]')).toHaveValue(fixture.matchSyncId);
+ expect(await page.evaluate(()=>DB.porIndice('treinos','team_id',DEFAULT_TEAM_ID).then(rows=>rows.length))).toBe(0);
+ await form.locator('[name="exercise_refs"]').check();
+ await form.locator('[name="objetivo"]').fill('Passe, apoio e oposição progressiva');
+ await form.getByRole('button',{name:'Guardar treino'}).click();
+ await expect(page.getByText(/Ligado ao jogo de/)).toBeVisible();
+ const saved=await page.evaluate(async({matchSyncId,exerciseRef})=>{
+  const rows=await DB.porIndice('treinos','team_id',DEFAULT_TEAM_ID);
+  return{count:rows.length,training:rows[0]&&TrainingPlanner.normalizeTraining(rows[0]),matchSyncId,exerciseRef};
+ },fixture);
+ expect(saved.count).toBe(1);
+ expect(saved.training).toMatchObject({objetivo:'Passe, apoio e oposição progressiva',source_match_ref:fixture.matchSyncId,status:'ready'});
+ expect(saved.training.blocos).toHaveLength(1);
+ expect(saved.training.blocos[0].exercise_ref).toBe(fixture.exerciseRef);
 });
 test('video evidence stores a timestamp and edits or deletes only the selected moment',async({page,context})=>{
  await page.goto('/#/calendario');await expect(page.getByRole('heading',{name:'Calendário',exact:true})).toBeVisible();await page.waitForFunction(()=>typeof VisionMatchEvidence!=='undefined'&&typeof go==='function');

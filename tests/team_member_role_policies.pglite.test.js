@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const ROOT = path.join(__dirname, "..");
-const MIGRATION = path.join(ROOT, "supabase", "migrations", "20260926120000_enforce_team_member_roles.sql");
+const MIGRATION = path.join(ROOT, "supabase", "migrations", "20260926150407_20260926120000_enforce_team_member_roles.sql");
 const TEAM = "10000000-0000-4000-8000-000000000001";
 const OWNER = "20000000-0000-4000-8000-000000000001";
 const COACH = "20000000-0000-4000-8000-000000000002";

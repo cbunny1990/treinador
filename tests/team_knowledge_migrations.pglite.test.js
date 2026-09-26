@@ -7,11 +7,11 @@ const path = require("node:path");
 
 const ROOT = path.join(__dirname, "..");
 const MIGRATIONS = [
-  "20260924100000_team_knowledge_rag.sql",
-  "20260924100001_team_knowledge_multi_match_filter.sql",
-  "20260924101056_invalidate_team_knowledge_on_age_group_change.sql",
-  "20260924110000_team_knowledge_per_match_limit.sql",
-  "20260924120000_refresh_team_knowledge_on_player_identity_change.sql",
+  "20260926150354_20260924100000_team_knowledge_rag.sql",
+  "20260926150356_20260924100001_team_knowledge_multi_match_filter.sql",
+  "20260926150401_20260924101056_invalidate_team_knowledge_on_age_group_change.sql",
+  "20260926150403_20260924110000_team_knowledge_per_match_limit.sql",
+  "20260926150405_20260924120000_refresh_team_knowledge_on_player_identity_change.sql",
 ];
 const TEAM_A = "10000000-0000-4000-8000-000000000001";
 const TEAM_B = "10000000-0000-4000-8000-000000000002";

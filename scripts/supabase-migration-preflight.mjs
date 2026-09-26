@@ -38,9 +38,9 @@ export function migrationDeploymentPlan(rows) {
 
 export function migrationDeploymentMessage(plan) {
   const lines = ["Auditoria apenas de leitura; não aplicou migrations nem alterou dados."];
-  if (plan.unapplied.length) lines.push("Por aplicar: " + plan.unapplied.join(", ") + ".");
-  if (plan.unknownApplied.length) lines.push("Remotas sem ficheiro local: " + plan.unknownApplied.join(", ") + ".");
-  if (plan.appliedOutOfOrder.length) lines.push("Bloqueio: há migrations anteriores em falta antes da versão remota " + plan.latestApplied + ": " + plan.appliedOutOfOrder.join(", ") + ". Revê a sequência e os efeitos antes de qualquer deploy.");
+  if (plan.unapplied.length) lines.push("Versões locais sem registo remoto (isto não prova se o SQL já foi executado): " + plan.unapplied.join(", ") + ".");
+  if (plan.unknownApplied.length) lines.push("Versões no histórico remoto sem ficheiro local: " + plan.unknownApplied.join(", ") + ".");
+  if (plan.appliedOutOfOrder.length) lines.push("Bloqueio: há versões locais sem registo antes da versão remota " + plan.latestApplied + ": " + plan.appliedOutOfOrder.join(", ") + ". O SQL pode já ter sido aplicado fora da sequência. Confirma nomes e efeitos, e reconcilia explicitamente o histórico antes de qualquer db push.");
   if (plan.ready) lines.push("A ordem remota não revela versões desconhecidas nem migrations anteriores em falta.");
   return lines.join("\n") + "\n";
 }

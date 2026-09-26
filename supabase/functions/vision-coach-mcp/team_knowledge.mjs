@@ -327,8 +327,10 @@ async function embed(inputs,{apiKey=globalThis.Deno?.env?.get?.('OPENAI_API_KEY'
     catch{throw new Error('team_knowledge_embedding_provider_unavailable');}
     finally{clearTimeout(timer);}
     if(!response.ok)throw new Error(`team_knowledge_embedding_provider_error_${response.status}`);
-    const body=await response.json(),data=arr(body?.data).sort((a,b)=>a.index-b.index);
-    if(data.length!==batch.length||data.some(x=>!Array.isArray(x.embedding)||x.embedding.length!==DIMENSIONS||x.embedding.some(v=>!Number.isFinite(v))))throw new Error('team_knowledge_embedding_shape_invalid');
+    const body=await response.json(),data=arr(body?.data);
+    const indexes=data.map(item=>item?.index);
+    if(data.length!==batch.length||indexes.some(index=>!Number.isInteger(index)||index<0||index>=batch.length)||new Set(indexes).size!==batch.length||data.some(x=>!Array.isArray(x.embedding)||x.embedding.length!==DIMENSIONS||x.embedding.some(v=>!Number.isFinite(v))))throw new Error('team_knowledge_embedding_shape_invalid');
+    data.sort((a,b)=>a.index-b.index);
     vectors.push(...data.map(x=>x.embedding));
   }
   return vectors;

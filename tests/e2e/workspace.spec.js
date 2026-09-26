@@ -99,13 +99,15 @@ test("migra dados antigos para o workspace e continua offline", async ({ page, c
       dateIndexes: ["jogos", "treinos"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_data")),
       operationsIndexes: db.transaction("jogos").objectStore("jogos").indexNames.contains("team_proposal_status")
         && ["team_completed_review", "team_proposal_status"].every((index) => db.transaction("treinos").objectStore("treinos").indexNames.contains(index)),
+      memoryUuidIndex: db.transaction("memory_items").objectStore("memory_items").indexNames.contains("sync_id"),
       timelineIndexes: ["activity_items", "jogos", "treinos"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_timeline"))
         && db.transaction("workspace_documents").objectStore("workspace_documents").indexNames.contains("team_timeline_status")
         && ["memory_items", "workspace_documents"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_status_timeline")),
     };
   });
 
-  expect(migrated.version).toBe(15);
+  expect(migrated.version).toBe(16);
+  expect(migrated.memoryUuidIndex).toBe(true);
   expect(migrated.trainingNeedsReview).toBe("not_pending");
   expect(migrated.teamId).toBe("default");
   expect(migrated.dateIndexes).toBeTruthy();
@@ -1551,6 +1553,8 @@ test("pré-visualização em lote deixa os conflitos sobrepostos para revisão e
   await expect(page.getByText("Só workspace remoto alterou: Nota tática. Será mantida essa versão.")).toBeVisible();
   const manualChoiceBox = await page.locator('[data-batch-merge-choice][data-sync-id="m4"]').boundingBox();
   expect(manualChoiceBox.height).toBeGreaterThanOrEqual(44);
+  const batchPresetBox = await page.locator('[data-action="set-batch-conflict-side"][data-choice="remote"]').boundingBox();
+  expect(batchPresetBox.height).toBeGreaterThanOrEqual(44);
   await page.getByText("Comparar valores").click();
   await expect(page.getByText('"Rival local"')).toBeVisible();
   await expect(page.getByText('"Rival remoto"')).toBeVisible();
@@ -1559,6 +1563,9 @@ test("pré-visualização em lote deixa os conflitos sobrepostos para revisão e
   page.on("dialog", async dialog => { if (dialog.type() === "alert") missingChoiceMessage = dialog.message(); await dialog.accept(); });
   await page.getByRole("button", { name: "Aplicar e sincronizar 4 decisões" }).click();
   expect(missingChoiceMessage).toContain("Escolhe Neste dispositivo ou Workspace remoto para cada campo diferente");
+  expect(await page.evaluate(() => window.__batchWrites)).toBe(0);
+  await page.locator('[data-action="set-batch-conflict-side"][data-choice="remote"]').click();
+  await expect(page.locator('[data-batch-merge-choice][data-sync-id="m4"]')).toHaveValue("remote");
   expect(await page.evaluate(() => window.__batchWrites)).toBe(0);
   await page.locator('[data-batch-merge-choice][data-sync-id="m4"]').selectOption("local");
   expect(await page.evaluate(() => window.__batchWrites)).toBe(0);
@@ -1712,6 +1719,26 @@ test("render do Workspace não repõe o scroll capturado se a barra mudar antes 
     return window.scrollY;
   });
   expect(finalScroll).toBe(920);
+});
+
+test("Workspace não salta para o topo se o treinador rolar enquanto a vista inicial carrega", async ({ page }) => {
+  await page.goto("/#/calendario");
+  await page.waitForFunction(() => typeof routerRunning === "boolean" && !routerRunning);
+  await page.evaluate(() => {
+    document.getElementById("app").style.minHeight = "2200px";
+    window.__releaseWorkspaceStatus = null;
+    RemoteWorkspace.status = () => new Promise(resolve => { window.__releaseWorkspaceStatus = resolve; });
+    go("#/");
+  });
+  await expect.poll(() => page.evaluate(() => typeof window.__releaseWorkspaceStatus)).toBe("function");
+  await page.evaluate(() => {
+    window.dispatchEvent(new WheelEvent("wheel", { deltaY: 640 }));
+    window.scrollTo(0, 640);
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(640);
+  await page.evaluate(() => window.__releaseWorkspaceStatus({ signedIn: false, conflicts: [] }));
+  await expect(page.getByText("Human–AI Shared Workspace")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(640);
 });
 
 test("conflito antigo permite escolher valores por campo e bloqueia escolhas incompletas", async ({ page }) => {

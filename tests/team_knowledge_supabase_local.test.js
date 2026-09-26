@@ -116,7 +116,7 @@ test("RAG real no Supabase mantém indexação, consultas e referências isolada
           ok: true,
           status: 200,
           async json() {
-            return { data: body.input.map(() => ({ embedding: [1, ...Array(1535).fill(0)] })) };
+            return { data: body.input.map((_, index) => ({ index, embedding: [1, ...Array(1535).fill(0)] })) };
           },
         };
       },

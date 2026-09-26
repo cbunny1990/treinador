@@ -61,8 +61,15 @@
     const role=Object.keys(slots).find(k=>slots[k]===ev.out_ref);
     if(!role||Object.values(slots).includes(ev.in_ref)||!players.has(ev.in_ref))throw new Error('Substituição incompatível com a sequência.');
     slots[role]=ev.in_ref;players.get(ev.in_ref).entries++;
+   }else if(ev.type==='exit'){
+    const role=Object.keys(slots).find(k=>slots[k]===ev.out_ref);
+    if(!role)throw new Error('Saída incompatível com a sequência.');
+    slots[role]='';
+   }else if(ev.type==='enter'){
+    if(!Object.hasOwn(ROLES,ev.role)||slots[ev.role]||Object.values(slots).includes(ev.in_ref)||!players.has(ev.in_ref))throw new Error('Entrada incompatível com a sequência.');
+    slots[ev.role]=ev.in_ref;players.get(ev.in_ref).entries++;
    }else if(ev.type==='swap'){
-    if(!Object.hasOwn(ROLES,ev.role_a)||!Object.hasOwn(ROLES,ev.role_b))throw new Error('Troca de posições inválida.');
+    if(!Object.hasOwn(ROLES,ev.role_a)||!Object.hasOwn(ROLES,ev.role_b)||!slots[ev.role_a]||!slots[ev.role_b])throw new Error('Troca de posições inválida.');
     [slots[ev.role_a],slots[ev.role_b]]=[slots[ev.role_b],slots[ev.role_a]];
    }else throw new Error('Movimento de jogo desconhecido.');
   }
@@ -76,6 +83,8 @@
   for(const ev of events){
    if(ev.at_ms>cursor)for(const [role,ref] of Object.entries(slots))if(ref===playerRef)seen.add(role);
    if(ev.type==='substitute'){const role=Object.keys(slots).find(k=>slots[k]===ev.out_ref);if(role)slots[role]=ev.in_ref;}
+   else if(ev.type==='exit'){const role=Object.keys(slots).find(k=>slots[k]===ev.out_ref);if(role)slots[role]='';}
+   else if(ev.type==='enter'&&Object.hasOwn(ROLES,ev.role))slots[ev.role]=ev.in_ref;
    else if(ev.type==='swap'&&Object.hasOwn(ROLES,ev.role_a)&&Object.hasOwn(ROLES,ev.role_b))[slots[ev.role_a],slots[ev.role_b]]=[slots[ev.role_b],slots[ev.role_a]];
    cursor=ev.at_ms;
   }
@@ -120,7 +129,7 @@
    if(![command.out_ref,command.in_ref].every(r=>eligible.includes(r)))throw new Error('Escolhe dois atletas convocados para esta rotação.');
    if(s.events.some(ev=>ev.rotation_id===command.id&&!ev.voided_at))throw new Error('Uma rotação realizada não pode ser alterada como plano.');
    const index=s.rotations.findIndex(r=>r.id===command.id);if(index<0&&s.rotations.length>=100)throw new Error('Limite de rotações atingido.');
-   const next={id:command.id,out_ref:command.out_ref,in_ref:command.in_ref,at_min:command.at_min,note:text(command.note,1000),updated_at:iso,actor};if(index<0)s.rotations.push(next);else s.rotations[index]=next;
+   const next={id:command.id,out_ref:command.out_ref,in_ref:command.in_ref,at_min:command.at_min,note:text(command.note===undefined&&index>=0?s.rotations[index].note:command.note,1000),updated_at:iso,actor};if(index<0)s.rotations.push(next);else s.rotations[index]=next;
   }else if(type==='delete_rotation'){
    confirmed();const r=s.rotations.find(r=>r.id===command.id);if(!r||s.events.some(ev=>ev.rotation_id===r.id&&!ev.voided_at))throw new Error('Rotação inexistente ou já realizada.');r.removed_at=iso;
   }else if(type==='start'){
@@ -140,7 +149,7 @@
    confirmed();if(s.status!=='paused'||!controller)throw new Error('Só podes assumir o controlo com o jogo em pausa.');s.controller_id=controller;
   }else if(type==='finish'){
    confirmed();owner();live();settle();s.status='completed';s.finished_at=iso;
-  }else if(type==='substitute'||type==='swap'){
+  }else if(['substitute','exit','enter','swap'].includes(type)){
    confirmed();owner();live();if(s.events.length>=500)throw new Error('Limite de movimentos atingido.');
    if(!text(command.id,100)||s.events.some(ev=>ev.id===command.id))throw new Error('Identificador de movimento repetido ou em falta.');
    const current=replay(row,at),event={id:command.id,type,at_ms:current.total_ms,created_at:iso,actor,note:text(command.note,1000)};
@@ -150,8 +159,17 @@
     if(!available(players.find(p=>p.sync_id===command.in_ref)))throw new Error('O atleta que entra deixou de estar disponível no plantel.');
     Object.assign(event,{out_ref:command.out_ref,in_ref:command.in_ref});
     if(command.rotation_id){const r=s.rotations.find(r=>r.id===command.rotation_id&&!r.removed_at);if(!r||r.out_ref!==command.out_ref||r.in_ref!==command.in_ref||s.events.some(ev=>!ev.voided_at&&ev.rotation_id===r.id))throw new Error('A rotação mudou ou já foi realizada.');event.rotation_id=r.id;}
+   }else if(type==='exit'){
+    playingRef(command.out_ref);
+    if(!Object.values(current.slots).includes(command.out_ref))throw new Error('Escolhe um atleta em campo para sair.');
+    event.out_ref=command.out_ref;
+   }else if(type==='enter'){
+    playingRef(command.in_ref);
+    if(!Object.hasOwn(ROLES,command.role)||current.slots[command.role]||Object.values(current.slots).includes(command.in_ref))throw new Error('Escolhe uma posição livre e um suplente para entrar.');
+    if(!available(players.find(p=>p.sync_id===command.in_ref)))throw new Error('O atleta que entra deixou de estar disponível no plantel.');
+    Object.assign(event,{in_ref:command.in_ref,role:command.role});
    }else{
-    if(command.role_a===command.role_b||![command.role_a,command.role_b].every(k=>Object.hasOwn(ROLES,k)))throw new Error('Escolhe duas posições diferentes.');
+    if(command.role_a===command.role_b||![command.role_a,command.role_b].every(k=>Object.hasOwn(ROLES,k)&&current.slots[k]))throw new Error('Escolhe duas posições ocupadas diferentes.');
     Object.assign(event,{role_a:command.role_a,role_b:command.role_b});
    }
    s.events.push(event);
@@ -160,16 +178,22 @@
   }else if(type==='correct_movement'){
    confirmed();if(!['paused','completed'].includes(s.status))throw new Error('Pausa ou termina o jogo antes de corrigir um movimento.');
    const ev=s.events.find(x=>x.id===command.event_id&&!x.voided_at);if(!ev)throw new Error('Movimento inexistente ou já anulado.');
-   const previous={type:ev.type,at_ms:ev.at_ms,...(ev.type==='substitute'?{out_ref:ev.out_ref,in_ref:ev.in_ref}:{role_a:ev.role_a,role_b:ev.role_b}),note:ev.note||''};
+   const previous={type:ev.type,at_ms:ev.at_ms,...(ev.type==='substitute'?{out_ref:ev.out_ref,in_ref:ev.in_ref}:ev.type==='exit'?{out_ref:ev.out_ref}:ev.type==='enter'?{in_ref:ev.in_ref,role:ev.role}:{role_a:ev.role_a,role_b:ev.role_b}),note:ev.note||''};
    if(!Number.isInteger(command.at_ms)||command.at_ms<0||command.at_ms>s.elapsed_ms)throw new Error('O minuto corrigido tem de estar dentro do tempo de utilização registado.');
    if(ev.type==='substitute'){
     if(command.out_ref===command.in_ref||![command.out_ref,command.in_ref].every(ref=>s.roster.some(p=>p.ref===ref)))throw new Error('Escolhe dois atletas do registo histórico do jogo.');
     ev.out_ref=command.out_ref;ev.in_ref=command.in_ref;
+   }else if(ev.type==='exit'){
+    if(!s.roster.some(p=>p.ref===command.out_ref))throw new Error('Escolhe um atleta do registo histórico do jogo.');
+    ev.out_ref=command.out_ref;
+   }else if(ev.type==='enter'){
+    if(!s.roster.some(p=>p.ref===command.in_ref)||!Object.hasOwn(ROLES,command.role))throw new Error('Escolhe um atleta e uma posição do registo histórico do jogo.');
+    ev.in_ref=command.in_ref;ev.role=command.role;
    }else{
     if(command.role_a===command.role_b||![command.role_a,command.role_b].every(role=>Object.hasOwn(ROLES,role)))throw new Error('Escolhe duas posições diferentes para a troca.');
     ev.role_a=command.role_a;ev.role_b=command.role_b;
    }
-   ev.at_ms=command.at_ms;ev.note=text(command.note,1000);ev.corrections=[...(ev.corrections||[]),{...previous,corrected_at:iso,corrected_by:actor}];
+   ev.at_ms=command.at_ms;if(command.note!==undefined)ev.note=text(command.note,1000);ev.corrections=[...(ev.corrections||[]),{...previous,corrected_at:iso,corrected_by:actor}];
   }else if(type==='delete_movement'){
    confirmed();if(!['paused','completed'].includes(s.status))throw new Error('Pausa ou termina o jogo antes de apagar um movimento.');
    const ev=s.events.find(x=>x.id===command.event_id&&!x.voided_at);if(!ev)throw new Error('Movimento inexistente ou já anulado.');ev.voided_at=iso;ev.voided_by=actor;

@@ -110,3 +110,41 @@ test("pesquisa rejeita parâmetros inválidos", async () => {
   await assert.rejects(searchWorkspace(admin, "team-a", { query: "x", offset: -1 }), /invalid_search_offset/);
   await assert.rejects(searchWorkspace(admin, "team-a", { query: "x", kinds: ["unknown"] }), /invalid_search_kind/);
 });
+
+test("search_workspace mantém dados desportivos e redação de texto/campos privados", async () => {
+  const rows = recordsOf(1, () => ({
+    payload: {
+      text: "Boa circulação e criação de oportunidades",
+      note: "O atleta está a fazer quimioterapia",
+      availability_status: "indisponível",
+      player: { name: "Atleta de teste", birth_date: "2012-02-03", email: "private@example.test" },
+      media: { signed_url: "https://private.example.test/photo", storage_path: "team/player/photo.jpg" },
+    },
+  }));
+  const result = await searchWorkspace(mockAdmin(rows), "team-a", { query: "circulação" });
+  assert.equal(result.results.length, 1);
+  const [row] = result.results;
+  assert.equal(row.id, "id-00000");
+  assert.equal(row.payload.text, "Boa circulação e criação de oportunidades");
+  assert.equal(row.payload.note, "Conteúdo pessoal sensível omitido");
+  assert.equal(row.payload.availability_status, "indisponível");
+  assert.equal(row.payload.player.birth_date, undefined);
+  assert.equal(row.payload.player.email, undefined);
+  assert.equal(row.payload.player.name, "Atleta de teste");
+  assert.deepEqual(row.payload.media, { sensitive_text_omitted: true });
+  assert.equal(row.sensitive_text_omitted, true);
+  assert.doesNotMatch(JSON.stringify(row), /quimioterapia|private@example|private\.example|photo\.jpg/);
+});
+
+test("search_workspace não consulta nem ecoa uma pesquisa clínica reconhecida", async () => {
+  let queryCount = 0;
+  const admin = {
+    from() { queryCount++; throw new Error("não devia consultar a base de dados"); },
+  };
+  const result = await searchWorkspace(admin, "team-a", { query: "quimioterapia do atleta" });
+  assert.equal(queryCount, 0);
+  assert.deepEqual(result.results, []);
+  assert.equal(result.retrieval_status, "sensitive_query_not_searched");
+  assert.equal(result.scanned_records, 0);
+  assert.doesNotMatch(JSON.stringify(result), /quimioterapia|atleta/);
+});

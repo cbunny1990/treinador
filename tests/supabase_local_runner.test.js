@@ -62,7 +62,24 @@ test("Supabase remote deployment audit blocks when a later migration is applied 
   assert.equal(plan.appliedOutOfOrder.length, 8);
   assert.deepEqual(plan.unapplied, rows.slice(0, 8).map(row => row.local));
   assert.match(migrationDeploymentMessage(plan), /não aplicou migrations nem alterou dados/);
-  assert.match(migrationDeploymentMessage(plan), /Revê a sequência/);
+  assert.match(migrationDeploymentMessage(plan), /reconcilia explicitamente o histórico/);
+});
+
+test("remote migration version mismatch warns that missing history does not mean SQL is unapplied", () => {
+  const rows = [
+    { local: "20260924100000", remote: "" },
+    { local: "20260924100001", remote: "" },
+    { local: "", remote: "20260926150348" },
+    { local: "", remote: "20260926150350" },
+  ];
+  const plan = migrationDeploymentPlan(rows);
+  assert.equal(plan.ready, false);
+  const message = migrationDeploymentMessage(plan);
+  assert.match(message, /Versões locais sem registo remoto/);
+  assert.match(message, /não prova se o SQL já foi executado/);
+  assert.match(message, /histórico remoto sem ficheiro local/);
+  assert.match(message, /SQL pode já ter sido aplicado fora da sequência/);
+  assert.doesNotMatch(message, /Por aplicar:/);
 });
 
 test("linked migration audit is read-only and refuses to guess the target project", () => {

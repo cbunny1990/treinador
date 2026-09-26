@@ -21,6 +21,7 @@ jobs:
       - run: npm test
       - run: npm run test:mcp-contract-http
       - run: npm run test:e2e
+      - run: npm run test:e2e:subpath
       - run: node ./node_modules/@playwright/test/cli.js install --with-deps webkit
       - run: npm run test:e2e:webkit-photo
       - run: npm run test:e2e:webkit-scroll

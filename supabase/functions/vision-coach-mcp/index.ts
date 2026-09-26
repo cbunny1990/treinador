@@ -12,6 +12,7 @@ import { updateMatchPreGame } from "./match_pre_game.mjs";
 import { listMatches } from "./match_queries.mjs";
 import { getWorkspaceSummary } from "./workspace_summary.mjs";
 import { searchWorkspace } from "./workspace_search.mjs";
+import { sanitizeMcpOutput } from "./output_safety.mjs";
 import { PLAYER_GOAL_TOOLS, executePlayerGoalTool } from "./player_goals.mjs";
 import { TEAM_DEVELOPMENT_TOOLS, executeTeamDevelopmentTool } from "./team_development.mjs";
 import { SEASON_TOOLS, executeSeasonTool } from "./seasons.mjs";
@@ -20,7 +21,7 @@ import { TEAM_KNOWLEDGE_TOOLS, executeTeamKnowledgeTool } from "./team_knowledge
 import { SERVER_INSTRUCTIONS } from "./server_instructions.mjs";
 
 const SERVER_NAME = "vision-coach";
-const SERVER_VERSION = "1.14.8";
+const SERVER_VERSION = "1.14.9";
 const MODERN_PROTOCOL = "2026-07-28";
 const LEGACY_PROTOCOLS = new Set(["2025-11-25", "2025-06-18", "2025-03-26"]);
 const MAX_BODY_BYTES = 256 * 1024;
@@ -114,7 +115,7 @@ const TOOLS = [
   },
   {
     name: "search_workspace",
-    description: "Pesquisa texto nos registos ativos do workspace. A resposta contém results, search_complete, has_more_results e next_offset. Examina até 10 000 registos por pedido; se search_complete=false, repete com next_offset para percorrer mais histórico. Se has_more_results=null, a pesquisa foi limitada antes de confirmar se há outras correspondências.",
+    description: "Pesquisa texto nos registos ativos do workspace. A resposta contém results, search_complete, has_more_results e next_offset; campos privados e texto pessoal sensível reconhecido são omitidos/assinalados. Perguntas com termos pessoais ou clínicos reconhecidos não são pesquisadas nem ecoadas e devolvem sensitive_query_not_searched. A ferramenta examina até 10 000 registos por pedido; se search_complete=false, repete com next_offset para percorrer mais histórico. Se has_more_results=null, a pesquisa foi limitada antes de confirmar se há outras correspondências.",
     inputSchema: {
       type: "object",
       properties: {
@@ -861,7 +862,8 @@ Deno.serve(async (req: Request) => {
       return response(200, rpcResult(message.id, textResult({ error: "unknown_tool", tool: toolName }, true)), commonHeaders);
     }
     try {
-      const data = await executeTool(admin, connector, toolName, toolArgs, message.id);
+      const result = await executeTool(admin, connector, toolName, toolArgs, message.id);
+      const data = IMAGE_TOOLS.some((tool) => tool.name === toolName) ? result : sanitizeMcpOutput(result);
       return response(200, rpcResult(message.id, textResult(data)), commonHeaders);
     } catch (error) {
       const detail = error instanceof Error ? error.message : "tool_error";

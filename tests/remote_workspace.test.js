@@ -2480,6 +2480,35 @@ test("media carregada num dispositivo sincroniza em privado e aparece no outro c
   });
 });
 
+test("upload de media valida a referência antes de enviar bytes ao Storage", async () => {
+  const original = {
+    storage: globalThis.localStorage,
+    init: RemoteWorkspace.init,
+    getSession: RemoteWorkspace.getSession,
+    subjectRef: RemoteWorkspace._subjectRemoteRef,
+  };
+  const values = new Map([["treinador.remote.supabase.v1", JSON.stringify({ remoteTeamId: "team-a" })]]);
+  let uploads = 0;
+  globalThis.localStorage = {
+    getItem(key) { return values.get(key) || null; },
+    setItem(key, value) { values.set(key, value); },
+  };
+  RemoteWorkspace.init = async () => ({ storage: { from() { return { async upload() { uploads++; return { error: null }; } }; } } });
+  RemoteWorkspace.getSession = async () => ({ user: { id: "coach" } });
+  RemoteWorkspace._subjectRemoteRef = async () => { throw new Error("Registo associado não encontrado."); };
+  try {
+    await assert.rejects(RemoteWorkspace.uploadFileMedia({ size: 3, name: "foto.jpg", type: "image/jpeg" }, {
+      subject_type: "player", subject_id: "missing-player", title: "Foto",
+    }), /Registo associado não encontrado/);
+    assert.equal(uploads, 0, "não deixa bytes órfãos se a referência ao registo não for válida");
+  } finally {
+    globalThis.localStorage = original.storage;
+    RemoteWorkspace.init = original.init;
+    RemoteWorkspace.getSession = original.getSession;
+    RemoteWorkspace._subjectRemoteRef = original.subjectRef;
+  }
+});
+
 test("pull de media não apaga nota local feita enquanto recebe URL assinada", async () => {
   await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
     useDevice(0);
@@ -2860,9 +2889,11 @@ test("sync lê em paralelo os snapshots independentes antes de reconciliar regis
   const names = ["getSession", "ensureSelectedTeam", "_syncTombstones", "syncTeam", "_readSyncTable", "_syncRecords", "_syncActivity", "_syncMedia", "_clearSyncRetry"];
   const originalMethods = Object.fromEntries(names.map((name) => [name, RemoteWorkspace[name]]));
   const originalStorage = globalThis.localStorage;
+  const originalDB = globalThis.DB;
   const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
   const values = new Map([["treinador.remote.supabase.v1", JSON.stringify({ remoteTeamId: "team-a" })]]);
   const calls = [];
+  const localListCounts = new Map();
   let activeReads = 0;
   let maxActiveReads = 0;
   let tombstonesDone = false;
@@ -2872,6 +2903,7 @@ test("sync lê em paralelo os snapshots independentes antes de reconciliar regis
     getItem(key) { return values.get(key) || null; },
     setItem(key, value) { values.set(key, value); },
   };
+  globalThis.DB = { async listar(store) { localListCounts.set(store, (localListCounts.get(store) || 0) + 1); return []; }, async obter() { return null; } };
   Object.defineProperty(globalThis, "navigator", { value: { onLine: true }, configurable: true });
   RemoteWorkspace.getSession = async () => ({ user: { id: "coach" } });
   RemoteWorkspace.ensureSelectedTeam = async () => "team-a";
@@ -2904,11 +2936,112 @@ test("sync lê em paralelo os snapshots independentes antes de reconciliar regis
     assert.equal(readsStartedBeforeTeamDone, 3, "os três snapshots iniciam enquanto a equipa ainda é lida");
     assert.deepEqual(calls.slice(1, 5).sort(), ["read:activity_log", "read:media_assets", "read:workspace_records", "team"]);
     assert.deepEqual(calls.slice(5), ["records", "activity", "media"]);
+    assert.ok([...localListCounts.values()].length > 2);
+    assert.ok([...localListCounts.values()].every((count) => count === 1), "cada store local só é varrido uma vez para o snapshot, sem nova passagem de getAll para cursores");
     assert.deepEqual({ pushed: result.pushed, pulled: result.pulled, deleted: result.deleted }, { pushed: 6, pulled: 4, deleted: 1 });
   } finally {
     for (const name of names) RemoteWorkspace[name] = originalMethods[name];
     globalThis.localStorage = originalStorage;
+    globalThis.DB = originalDB;
     if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator); else delete globalThis.navigator;
+  }
+});
+
+test("sync reutiliza o snapshot local e pede apenas registos remotos alterados desde o cursor", async () => {
+  const original = {
+    storage: globalThis.localStorage,
+    DB: globalThis.DB,
+    teamId: globalThis.DEFAULT_TEAM_ID,
+    init: RemoteWorkspace.init,
+  };
+  const teamId = "team-a", localCreatedAt = "2026-09-01T10:00:00.000Z";
+  const watermark = "2026-09-26T10:00:00.000Z";
+  const cachedId = "11111111-1111-4111-8111-111111111111";
+  const changedId = "22222222-2222-4222-8222-222222222222";
+  const values = new Map([[
+    "treinador.remote.supabase.v1",
+    JSON.stringify({ remoteTeamId: teamId, syncCursors: { [teamId]: {
+      recordsWatermark: watermark, activityWatermark: watermark, mediaWatermark: watermark,
+      fullRefreshAt: "2026-09-26T09:00:00.000Z", localTeamCreatedAt: localCreatedAt,
+    } } }),
+  ]]);
+  const queries = [];
+  globalThis.localStorage = { getItem(key) { return values.get(key) || null; }, setItem(key, value) { values.set(key, value); } };
+  globalThis.DEFAULT_TEAM_ID = "default";
+  globalThis.DB = {
+    async obter(store) { return store === "teams" ? { created_at: localCreatedAt } : null; },
+    async listar(store) { return store === "jogadores" ? [{
+      team_id: "default", sync_id: cachedId, sync_dirty: false, remote_team_id: teamId,
+      remote_updated_at: "2026-09-25T08:00:00.000Z", _sync_base: { nome: "Atleta em cache" },
+    }] : []; },
+  };
+  RemoteWorkspace.init = async () => ({ from(table) {
+    const query = { table, filters: {}, rows: table === "workspace_records" ? [{
+      id: changedId, team_id: teamId, kind: "player", payload: { nome: "Atleta atualizado" },
+      updated_at: "2026-09-26T10:01:00.000Z", deleted_at: null,
+    }] : [] };
+    queries.push(query);
+    const chain = {
+      select() { return chain; },
+      eq(key, value) { query.filters[key] = value; return chain; },
+      gte(key, value) { query.filters[">=" + key] = value; return chain; },
+      gt(key, value) { query.filters[">" + key] = value; if (key === "id") query.rows = query.rows.filter((row) => String(row.id) > String(value)); return chain; },
+      order() { return chain; },
+      limit() { return chain; },
+      then(resolve, reject) { return Promise.resolve({ data: query.rows, error: null }).then(resolve, reject); },
+    };
+    return chain;
+  } });
+  try {
+    const snapshot = await RemoteWorkspace._readSyncSnapshots(teamId);
+    const recordsQuery = queries.find((query) => query.table === "workspace_records");
+    assert.equal(recordsQuery.filters[">=updated_at"], "2026-09-26T09:55:00.000Z");
+    const rangedQueries = queries.filter((query) => Object.keys(query.filters).some((key) => key.startsWith(">=")));
+    assert.ok(rangedQueries.length > 0);
+    assert.deepEqual(new Set(rangedQueries.map((query) => query.table)), new Set(["workspace_records", "activity_log", "media_assets"]));
+    assert.equal(queries.find((query) => query.table === "activity_log").filters[">=created_at"], "2026-09-26T09:55:00.000Z");
+    assert.equal(queries.find((query) => query.table === "media_assets").filters[">=updated_at"], "2026-09-26T09:55:00.000Z");
+    assert.deepEqual(new Set(snapshot.records.map((row) => row.id)), new Set([cachedId, changedId]));
+    assert.equal(snapshot.records.find((row) => row.id === cachedId)._sync_cache, true);
+    assert.equal(snapshot.records.find((row) => row.id === changedId)._sync_cache, undefined);
+    assert.equal(snapshot.recordsSince, "2026-09-26T09:55:00.000Z");
+  } finally {
+    globalThis.localStorage = original.storage;
+    globalThis.DB = original.DB;
+    globalThis.DEFAULT_TEAM_ID = original.teamId;
+    RemoteWorkspace.init = original.init;
+  }
+});
+
+test("sync volta à leitura integral quando o cache local não consegue provar o snapshot remoto", async () => {
+  const original = { storage: globalThis.localStorage, DB: globalThis.DB, teamId: globalThis.DEFAULT_TEAM_ID, init: RemoteWorkspace.init };
+  const teamId = "team-a", localCreatedAt = "2026-09-01T10:00:00.000Z", queried = [];
+  const values = new Map([["treinador.remote.supabase.v1", JSON.stringify({ remoteTeamId: teamId, syncCursors: { [teamId]: {
+    recordsWatermark: "2026-09-26T10:00:00.000Z", activityWatermark: "2026-09-26T10:00:00.000Z",
+    mediaWatermark: "2026-09-26T10:00:00.000Z", fullRefreshAt: new Date().toISOString(), localTeamCreatedAt: localCreatedAt,
+  } } })]]);
+  globalThis.localStorage = { getItem(key) { return values.get(key) || null; }, setItem(key, value) { values.set(key, value); } };
+  globalThis.DEFAULT_TEAM_ID = "default";
+  globalThis.DB = {
+    async obter(store) { return store === "teams" ? { created_at: localCreatedAt } : null; },
+    async listar(store) { return store === "jogadores" ? [{ team_id: "default", sync_id: "11111111-1111-4111-8111-111111111111", remote_team_id: teamId, remote_updated_at: "2026-09-25T08:00:00.000Z" }] : []; },
+  };
+  RemoteWorkspace.init = async () => ({ from(table) {
+    queried.push(table);
+    const chain = { select() { return chain; }, eq() { return chain; }, gt() { return chain; }, order() { return chain; }, limit() { return chain; },
+      then(resolve, reject) { return Promise.resolve({ data: [], error: null }).then(resolve, reject); } };
+    return chain;
+  } });
+  try {
+    const snapshot = await RemoteWorkspace._readSyncSnapshots(teamId);
+    assert.equal(snapshot.recordsSince, null);
+    assert.equal(snapshot.fullRefreshAt != null, true);
+    assert.deepEqual(queried.sort(), ["activity_log", "media_assets", "workspace_records"]);
+  } finally {
+    globalThis.localStorage = original.storage;
+    globalThis.DB = original.DB;
+    globalThis.DEFAULT_TEAM_ID = original.teamId;
+    RemoteWorkspace.init = original.init;
   }
 });
 

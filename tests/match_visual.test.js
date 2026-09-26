@@ -28,6 +28,32 @@ test('minutes replay correctly across entry, re-entry, role swap, pauses and end
  r=act(r,'substitute',1200000,{id:'sub2',out_ref:refs[5],in_ref:refs[1],confirmed:true});r=act(r,'finish',1500000,{confirmed:true});
  const v=M.replay(r,2000000),get=i=>v.players.find(p=>p.ref===refs[i]);assert.equal(v.total_ms,1200000);assert.equal(get(1).elapsed_ms,600000);assert.equal(get(5).elapsed_ms,600000);assert.equal(get(6).elapsed_ms,0);assert.equal(get(0).keeper_ms,600000);assert.equal(get(2).keeper_ms,600000);assert.equal(get(1).entries,2);assert.equal(v.players.reduce((n,p)=>n+p.elapsed_ms,0),v.total_ms*5);assert.equal(v.status,'completed');
 });
+test('separate exit and entry preserve the empty interval, re-entry and keeper minutes',()=>{
+ let r=start();r=act(r,'exit',60000,{id:'exit-def',out_ref:refs[1],confirmed:true,note:'Saiu por decisão do treinador'});
+ assert.equal(M.replay(r,120000).slots.def,'');
+ assert.throws(()=>act(r,'swap',120000,{id:'bad-swap',role_a:'def',role_b:'gr',confirmed:true}),/ocupadas/);
+ assert.throws(()=>act(r,'enter',120000,{id:'bad-enter',in_ref:refs[5],role:'front',confirmed:true}),/posição livre/);
+ r=act(r,'enter',180000,{id:'enter-def',in_ref:refs[5],role:'def',confirmed:true});
+ r=act(r,'exit',240000,{id:'exit-keeper',out_ref:refs[0],confirmed:true});
+ r=act(r,'enter',300000,{id:'reenter-keeper',in_ref:refs[0],role:'gr',confirmed:true});
+ r=act(r,'finish',360000,{confirmed:true});
+ const v=M.replay(r),get=i=>v.players.find(p=>p.ref===refs[i]);
+ assert.equal(v.total_ms,360000);assert.equal(get(1).elapsed_ms,60000);assert.equal(get(5).elapsed_ms,180000);assert.equal(get(0).elapsed_ms,300000);assert.equal(get(0).keeper_ms,300000);assert.equal(get(0).entries,2);
+ assert.equal(v.players.reduce((sum,p)=>sum+p.elapsed_ms,0),5*360000-180000);
+ assert.deepEqual(M.positionsPlayed(r,refs[5]),['def']);assert.deepEqual(M.positionsPlayed(r,refs[0]),['gr']);
+ assert.deepEqual(r.visual_match.initial_slots,M.initialSlots(plan()));
+});
+test('separate movement corrections and deletion replay atomically',()=>{
+ let r=start();r=act(r,'exit',60000,{id:'exit',out_ref:refs[1],confirmed:true});r=act(r,'enter',120000,{id:'enter',in_ref:refs[5],role:'def',confirmed:true});r=act(r,'pause',180000);
+ assert.throws(()=>act(r,'delete_movement',180001,{event_id:'exit',confirmed:true}),/incompatível/);
+ assert.equal(r.visual_match.events[0].voided_at,undefined);
+ const edited=act(r,'correct_movement',180001,{event_id:'exit',at_ms:30000,out_ref:refs[1],confirmed:true});
+ assert.equal(M.replay(edited).players.find(p=>p.ref===refs[1]).elapsed_ms,30000);
+ assert.equal(edited.visual_match.events[0].corrections[0].at_ms,60000);
+ assert.throws(()=>act(edited,'correct_movement',180002,{event_id:'enter',at_ms:20000,in_ref:refs[5],role:'def',confirmed:true}),/incompatível/);
+ const noEntry=act(edited,'delete_movement',180002,{event_id:'enter',confirmed:true});assert.equal(M.replay(noEntry).slots.def,'');
+ const restored=act(noEntry,'delete_movement',180003,{event_id:'exit',confirmed:true});assert.equal(M.replay(restored).slots.def,refs[1]);
+});
 test('second-half start is explicit, persisted and keeps total elapsed time and player minutes',()=>{
  let r=start();r=act(r,'pause',25*60000);assert.equal(M.replay(r).period,1);assert.throws(()=>act(r,'second_half',30*60000),/confirmação/);const firstHalf=act(r,'resume',30*60000);assert.equal(M.replay(firstHalf,31*60000).period,1);r=act(firstHalf,'pause',31*60000);r=act(r,'second_half',60*60000,{confirmed:true});assert.equal(r.visual_match.second_half_started_at_ms,26*60000);assert.equal(M.state(JSON.parse(JSON.stringify(r))).period,2);assert.equal(M.replay(r,61*60000).total_ms,27*60000);assert.equal(M.replay(r,61*60000).players.find(p=>p.ref===refs[0]).elapsed_ms,27*60000);assert.throws(()=>act(r,'second_half',62*60000,{confirmed:true}),/uma vez/);r=act(r,'pause',61*60000);r=act(r,'resume',90*60000);assert.equal(M.replay(r,91*60000).period,2);assert.equal(M.replay(r,91*60000).total_ms,28*60000);
 });

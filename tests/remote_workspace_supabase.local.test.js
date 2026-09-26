@@ -62,6 +62,71 @@ function deviceDatabase(initialId = 1) {
   };
 }
 
+test("PostgREST incremental snapshots return updated records only and retain local cache entries", {
+  skip: !enabled && "requer URL e chaves da stack Supabase local; nunca usar credenciais de produção",
+  timeout: 60_000,
+}, async () => {
+  assert.ok(isLocal(url), "Este teste aceita apenas Supabase em localhost.");
+  const admin = createClient(url, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const original = { db: globalThis.DB, team: globalThis.DEFAULT_TEAM_ID, storage: globalThis.localStorage, init: RemoteWorkspace.init };
+  let userId = null, teamId = null;
+  const oldId = crypto.randomUUID(), newId = crypto.randomUUID();
+  const now = Date.now(), watermark = new Date(now - 2 * 60_000).toISOString();
+  const localCreatedAt = "2026-09-01T10:00:00.000Z";
+  const values = new Map();
+  globalThis.DEFAULT_TEAM_ID = "default";
+  globalThis.localStorage = {
+    getItem(key) { return values.get(key) || null; },
+    setItem(key, value) { values.set(key, value); },
+  };
+  try {
+    const createdUser = await admin.auth.admin.createUser({
+      email: `incremental-${crypto.randomUUID()}@vision-coach.local`,
+      password: crypto.randomBytes(24).toString("base64url"), email_confirm: true,
+    });
+    assert.ifError(createdUser.error);
+    userId = createdUser.data.user.id;
+    const createdTeam = await admin.from("teams").insert({ owner_id: userId, name: "Synthetic delta sync" }).select("id").single();
+    assert.ifError(createdTeam.error);
+    teamId = createdTeam.data.id;
+    const insertRows = await admin.from("workspace_records").insert([
+      { id: oldId, team_id: teamId, kind: "player", payload: { nome: "Old synthetic row" },
+        updated_at: new Date(now - 10 * 60_000).toISOString() },
+      { id: newId, team_id: teamId, kind: "player", payload: { nome: "Changed synthetic row" },
+        updated_at: new Date(now - 60_000).toISOString() },
+    ]);
+    assert.ifError(insertRows.error);
+
+    values.set("treinador.remote.supabase.v1", JSON.stringify({ remoteTeamId: teamId, syncCursors: { [teamId]: {
+      recordsWatermark: watermark, activityWatermark: watermark, mediaWatermark: watermark,
+      fullRefreshAt: new Date(now - 60_000).toISOString(), localTeamCreatedAt: localCreatedAt,
+    } } }));
+    globalThis.DB = {
+      async obter(store) { return store === "teams" ? { created_at: localCreatedAt } : null; },
+      async listar() { return []; },
+    };
+    RemoteWorkspace.init = async () => admin;
+    const snapshot = await RemoteWorkspace._readSyncSnapshots(teamId);
+    assert.ok(snapshot.recordsSince, "a valid cursor should choose incremental retrieval");
+    assert.equal(snapshot.records.some((row) => row.id === newId), true);
+    assert.equal(snapshot.records.some((row) => row.id === oldId), false,
+      "PostgREST gte must exclude remote rows older than the overlap window");
+  } finally {
+    RemoteWorkspace.init = original.init;
+    globalThis.DB = original.db;
+    globalThis.DEFAULT_TEAM_ID = original.team;
+    globalThis.localStorage = original.storage;
+    if (teamId) {
+      const removedTeam = await admin.from("teams").delete().eq("id", teamId);
+      assert.ifError(removedTeam.error);
+    }
+    if (userId) {
+      const removedUser = await admin.auth.admin.deleteUser(userId);
+      assert.ifError(removedUser.error);
+    }
+  }
+});
+
 test("RLS + sincronização real com duas sessões locais: round trip, conflito, tombstone, foto privada e equipa errada", {
   skip: !enabled && "requer URL e chaves da stack Supabase local; nunca usar credenciais de produção",
   timeout: 120_000,

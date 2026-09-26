@@ -16,7 +16,7 @@ const mcp = fs.readFileSync(path.join(root, "supabase", "functions", "vision-coa
 const gateway = fs.readFileSync(path.join(root, "supabase", "functions", "head-coach-gateway", "index.ts"), "utf8");
 const gatewayHandler = fs.readFileSync(path.join(root, "supabase", "functions", "head-coach-gateway", "handler.mjs"), "utf8");
 const gatewayPolicy = fs.readFileSync(path.join(root, "supabase", "functions", "head-coach-gateway", "policy.mjs"), "utf8");
-const gatewayWriteMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20260923145609_constrain_head_coach_generic_writes.sql"), "utf8");
+const gatewayWriteMigration = fs.readFileSync(path.join(root, "supabase", "migrations", "20260926150352_20260923145609_constrain_head_coach_generic_writes.sql"), "utf8");
 const config = fs.readFileSync(path.join(root, "supabase", "config.toml"), "utf8");
 const browser = fs.readFileSync(path.join(root, "js", "mcp_connectors.js"), "utf8");
 
@@ -64,7 +64,7 @@ test("MCP expõe ferramentas Vision Coach essenciais", () => {
   assert.match(mcp, /REPORT_TOOLS, executeReportTool/);
   assert.match(mcp, /\.\.\.REPORT_TOOLS/);
   assert.match(mcp, /REPORT_TOOLS\.some\(\(tool\) => tool\.name === name\).*executeReportTool/);
-  assert.match(mcp, /SERVER_VERSION = "1\.14\.8"/);
+  assert.match(mcp, /SERVER_VERSION = "1\.14\.9"/);
   assert.match(mcp, /2026-07-28/);
   assert.match(mcp, /2025-11-25/);
 });
@@ -108,7 +108,7 @@ test("search_workspace pagina na origem e anuncia cobertura e cursor", () => {
   assert.match(helper, /has_more_results: hasMoreResults/);
   assert.match(helper, /next_offset: nextOffset/);
   assert.match(mcp, /offset: \{ type: "integer", minimum: 0, maximum: 1000000, default: 0 \}/);
-  assert.match(mcp, /SERVER_VERSION = "1\.14\.8"/);
+  assert.match(mcp, /SERVER_VERSION = "1\.14\.9"/);
 });
 
 test("RAG aceita um conjunto limitado de UUIDs para evidência de vários jogos", () => {

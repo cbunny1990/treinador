@@ -4,8 +4,8 @@ const { defineConfig } = require("@playwright/test");
 
 module.exports = defineConfig({
   testDir: "./tests/e2e",
-  testMatch: "match_visual.spec.js",
-  grep: /5v5 board, timed substitutions, undo, reload, offline and finish 390|mobile tactical board has touch-sized targets and no horizontal overflow/,
+  testMatch: ["match_visual.spec.js", "match_analysis.spec.js"],
+  grep: /5v5 board, timed substitutions, undo, reload, offline and finish 390|mobile records separate exit and entry, keeps vacant minutes and shows them in reports|mobile tactical board has touch-sized targets and no horizontal overflow|analysis labels unknown facts, saves offline and only updates memory on explicit choice|IndexedDB v15 upgrade adds the memory UUID index without losing a saved memory|analysis-only save locks the match; deleted memories abort the combined save/,
   timeout: 30000,
   workers: 1,
   use: {
