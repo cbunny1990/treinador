@@ -91,6 +91,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
   let teamId;
   let exerciseImagePath;
   let viewerObjectPath;
+  let viewerRejectedUploadPath;
   try {
     const owner = await makeUser("owner");
     const coach = await makeUser("coach");
@@ -145,16 +146,53 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
       media_type: "photo", title: "viewer upload probe", storage_path: `${teamId}/players/viewer-blocked.jpg`,
     });
     assert.ok(viewerMedia.error, "viewer cannot create media metadata");
+    const mediaProbeId = crypto.randomUUID();
+    const seededMedia = await admin.from("media_assets").insert({
+      id: mediaProbeId, team_id: teamId, subject_type: "player", subject_ref: crypto.randomUUID(),
+      media_type: "file", title: "viewer read-only media", external_url: "https://example.invalid/viewer-probe",
+    });
+    assert.ifError(seededMedia.error);
+    const viewerMediaRead = await viewer.client.from("media_assets").select("id,title").eq("id", mediaProbeId).single();
+    assert.ifError(viewerMediaRead.error);
+    const viewerMediaUpdate = await viewer.client.from("media_assets").update({ title: "must remain unchanged" }).eq("id", mediaProbeId).select("id");
+    assert.ifError(viewerMediaUpdate.error);
+    assert.deepEqual(viewerMediaUpdate.data, [], "viewer cannot update media metadata");
+    const viewerMediaDelete = await viewer.client.from("media_assets").delete().eq("id", mediaProbeId).select("id");
+    assert.ifError(viewerMediaDelete.error);
+    assert.deepEqual(viewerMediaDelete.data, [], "viewer cannot delete media metadata");
+    const unchangedMedia = await admin.from("media_assets").select("title").eq("id", mediaProbeId).single();
+    assert.ifError(unchangedMedia.error);
+    assert.equal(unchangedMedia.data.title, "viewer read-only media");
+    const removedMediaProbe = await admin.from("media_assets").delete().eq("id", mediaProbeId);
+    assert.ifError(removedMediaProbe.error);
     const viewerActivity = await viewer.client.from("activity_log").insert({
       id: crypto.randomUUID(), team_id: teamId, actor_type: "human", actor_label: "viewer",
       action: "viewer_write_probe", summary: "must be rejected",
     });
     assert.ok(viewerActivity.error, "viewer cannot write activity");
     viewerObjectPath = `${teamId}/viewer/${crypto.randomUUID()}.bin`;
-    const viewerUpload = await viewer.client.storage.from("team-media").upload(viewerObjectPath, new Uint8Array([1, 2, 3]), {
+    const probeBytes = new Uint8Array([1, 2, 3]);
+    const seededObject = await admin.storage.from("team-media").upload(viewerObjectPath, probeBytes, {
+      contentType: "application/octet-stream", upsert: false,
+    });
+    assert.ifError(seededObject.error);
+    const viewerObjectRead = await viewer.client.storage.from("team-media").download(viewerObjectPath);
+    assert.ifError(viewerObjectRead.error);
+    assert.deepEqual(new Uint8Array(await viewerObjectRead.data.arrayBuffer()), probeBytes);
+    viewerRejectedUploadPath = `${teamId}/viewer/${crypto.randomUUID()}.bin`;
+    const viewerUpload = await viewer.client.storage.from("team-media").upload(viewerRejectedUploadPath, probeBytes, {
       contentType: "application/octet-stream", upsert: false,
     });
     assert.ok(viewerUpload.error, "viewer cannot write the private team-media bucket");
+    const viewerObjectUpdate = await viewer.client.storage.from("team-media").update(viewerObjectPath, new Uint8Array([4, 5, 6]), {
+      contentType: "application/octet-stream", upsert: false,
+    });
+    assert.ok(viewerObjectUpdate.error, "viewer cannot update private team media");
+    const viewerObjectDelete = await viewer.client.storage.from("team-media").remove([viewerObjectPath]);
+    assert.ok(viewerObjectDelete.error || !viewerObjectDelete.data?.length, "viewer cannot delete private team media");
+    const objectAfterDeniedDelete = await admin.storage.from("team-media").download(viewerObjectPath);
+    assert.ifError(objectAfterDeniedDelete.error, "viewer cannot delete private team media");
+    assert.deepEqual(new Uint8Array(await objectAfterDeniedDelete.data.arrayBuffer()), probeBytes);
     const removedRoleProbes = await admin.from("workspace_records").delete().in("id", [roleProbeId, coachWriteId]);
     assert.ifError(removedRoleProbes.error);
 
@@ -723,7 +761,8 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     globalThis.mediaSubjectKey = original.subjectKey;
     if (teamId) {
       if (viewerObjectPath) {
-        const removedViewerProbe = await admin.storage.from("team-media").remove([viewerObjectPath]);
+        const paths = [viewerObjectPath, viewerRejectedUploadPath].filter(Boolean);
+        const removedViewerProbe = await admin.storage.from("team-media").remove(paths);
         assert.ifError(removedViewerProbe.error);
       }
       if (exerciseImagePath) {
