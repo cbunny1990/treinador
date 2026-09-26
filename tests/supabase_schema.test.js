@@ -135,7 +135,7 @@ test("RAG guarda chunks em schema privado e RPC exige scope server-side", () => 
 });
 
 test("RAG tem overload limitado para pesquisar vários jogos numa só consulta", () => {
-  const migration = fs.readFileSync(path.join(migrationDir, "20260924100001_team_knowledge_multi_match_filter.sql"), "utf8");
+  const migration = fs.readFileSync(path.join(migrationDir, "20260926150356_20260924100001_team_knowledge_multi_match_filter.sql"), "utf8");
   assert.match(migration, /p_match_refs uuid\[\]/i);
   assert.match(migration, /cardinality\(p_match_refs\) > 10/i);
   assert.match(migration, /cardinality\(p_match_refs\) < 1/i);
@@ -147,7 +147,7 @@ test("RAG tem overload limitado para pesquisar vários jogos numa só consulta",
 });
 
 test("RAG pode equilibrar excertos entre jogos e limita esse modo a filtros explícitos", () => {
-  const migration = fs.readFileSync(path.join(migrationDir, "20260924110000_team_knowledge_per_match_limit.sql"), "utf8");
+  const migration = fs.readFileSync(path.join(migrationDir, "20260926150403_20260924110000_team_knowledge_per_match_limit.sql"), "utf8");
   assert.match(migration, /p_per_match_limit integer/i);
   assert.match(migration, /p_match_refs is null or p_per_match_limit < 1 or p_per_match_limit > 4/i);
   assert.match(migration, /semantic_by_match as \([\s\S]*from unnest\(p_match_refs\) requested\(match_ref\)[\s\S]*cross join lateral \([\s\S]*where e\.match_ref = requested\.match_ref[\s\S]*order by e\.embedding <=> p_embedding[\s\S]*limit 48/i);

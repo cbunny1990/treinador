@@ -23,10 +23,11 @@ Uma rotação é uma intenção: nunca se executa automaticamente. Quando o minu
 A entrada tem de ser possível nesse momento: quem sai está no campo e quem entra está no banco e disponível. O sistema não inventa a execução de uma sequência de rotações.
 
 ## Durante o jogo
-**Iniciar jogo e contar minutos** exige confirmação e exatamente um GR + quatro jogadores de campo. Congela o alinhamento inicial e os nomes/dorsais dos convocados disponíveis; não copia fotografias nem dados médicos para o histórico de utilização.
+**Iniciar jogo e contar minutos** exige confirmação e exatamente um GR + quatro jogadores de campo. Congela o alinhamento inicial e os nomes/dorsais dos convocados disponíveis; guarda também os UUIDs, nomes, dorsais, estados operacionais e instante dos atletas indisponíveis no snapshot histórico do jogo. Não copia fotografias, diagnósticos ou outros dados médicos para esse snapshot.
 Os titulares começam no minuto zero. Suplentes que ainda não entraram ficam em 00:00.
 **Pausar / intervalo** suspende a contagem. Em pausa durante a 1.ª parte, escolhe explicitamente **Retomar 1.ª parte** ou **Iniciar 2.ª parte**; a segunda ação pede confirmação, persiste o limite entre partes e retoma o relógio sem apagar o tempo ou os minutos já registados. Na 2.ª parte, a ação disponível é **Retomar 2.ª parte**. O início da segunda parte só pode ser marcado uma vez. O tempo é reconstruído por instantes guardados ao fechar/reabrir a app, não pelo número de callbacks do temporizador. O intervalo não entra no tempo total. A alteração do modo de jogo avança a cache da PWA para v99.
 **Registar substituição** escolhe quem sai e quem entra e confirma o instante atual. São permitidas reentradas; a contagem mantém todos os intervalos de utilização.
+**Registar saída agora** retira explicitamente um atleta sem substituição imediata e deixa a sua posição livre. **Registar entrada agora** escolhe um suplente disponível e uma posição livre; nunca é executado por ter havido uma saída. Cada ação pede confirmação, guarda o minuto real e pode ser corrigida ou anulada em pausa. Enquanto a posição está vazia, os minutos dessa função não são atribuídos a ninguém.
 **Trocar posições agora** regista uma troca entre funções, incluindo GR quando selecionado. O tempo total não muda; o tempo como guarda-redes passa a ser contabilizado para o atleta correto.
 **Terminar utilização** termina apenas o cronómetro e os minutos registados. Não preenche o resultado nem a análise, nem altera por si o estado administrativo do jogo.
 Não inicia registo em jogos marcados como concluídos ou cancelados, para não inventar utilização retroativa.
@@ -35,7 +36,7 @@ Não inicia registo em jogos marcados como concluídos ou cancelados, para não 
 A tabela mostra tempo total em campo e tempo como GR para cada atleta do registo inicial. São derivados da sequência de movimentos e do cronómetro, não são estatísticas de vídeo nem estimativas históricas.
 O resumo operacional apresenta a diferença entre o maior e o menor tempo registado e identifica, por ordem alfabética, quem jogou menos de metade do tempo decorrido. O limiar fica explícito e atualiza-se com o cronómetro. Serve para apoiar a decisão do treinador; não é uma classificação dos atletas.
 A ficha de cada atleta mostra os jogos com utilização registada; registos ainda em curso são assinalados como parciais. Não são criados rankings.
-Na pausa ou depois de terminar, cada movimento da cronologia pode ser editado ou anulado. A edição guarda os valores anteriores para auditoria; anular mantém o evento marcado como anulado. Em ambos os casos, a cronologia é reproduzida e os minutos são recalculados. **Anular último movimento** continua disponível como atalho durante a pausa.
+Na pausa ou depois de terminar, cada movimento da cronologia pode ser editado ou anulado. A edição guarda os valores anteriores para auditoria, sem truncar o histórico; anular mantém o evento marcado como anulado. Em ambos os casos, a cronologia é reproduzida e os minutos são recalculados. **Anular último movimento** continua disponível como atalho durante a pausa.
 Se uma alteração tornar um movimento posterior impossível (por exemplo, fazer sair alguém que ainda não entrou), a gravação é recusada sem alterar o original. Corrige os movimentos dependentes em sequência ou mantém o histórico. Uma substituição inversa que acontece agora continua a ser um novo movimento, não uma correção.
 **Apagar registo de utilização** exige pausa ou conclusão e confirmação. Apaga tempos/movimentos/snapshot de utilização, mas mantém o jogo, resultado, análise, alinhamento e rotações previstas.
 Atletas retirados do plantel depois do início mantêm o seu histórico. Podem sair do campo; não podem voltar a entrar enquanto não estiverem disponíveis no plantel.
@@ -55,17 +56,17 @@ Nove operações no servidor existente:
 - `save_match_visual_lineup`: guardar/limpar alinhamento inicial antes de iniciar; pode escolher `system` (`1-2-1`, `2-2` ou `3-1`). Se omitido, preserva o sistema existente; em jogos legados sem sistema usa 1-2-1.
 - `set_match_visual_position`: posição no desenho ou reposição, sem modificar a utilização.
 - `edit_match_tactics`: adicionar cone/seta exige confirmação explícita do Head Coach; apagar uma marcação ou limpar o quadro exige também confirmação e não altera alinhamento, cronómetro ou minutos.
-- `save_match_rotation`: criar/editar plano pelo `rotation_id`.
+- `save_match_rotation`: criar/editar plano pelo `rotation_id`; nota omitida numa edição permanece, nota vazia explícita limpa-a.
 - `delete_match_rotation`: apagar plano não realizado com confirmação.
 - `control_match_usage`: iniciar/pausar/retomar/iniciar explicitamente a 2.ª parte/terminar/assumir controlo/apagar utilização, apenas quando o treinador o pedir.
-- `record_match_movement`: substituição, troca de funções ou anulação do último movimento, com confirmação explícita.
-- `correct_match_movement`: editar ou anular qualquer movimento por ID, em pausa ou após conclusão; reprova sequências incompatíveis.
+- `record_match_movement`: substituição, saída independente, entrada numa posição livre, troca de funções ou anulação do último movimento, com confirmação explícita.
+- `correct_match_movement`: editar ou anular qualquer movimento por ID, em pausa ou após conclusão; reprova sequências incompatíveis e preserva a nota do movimento quando omitida (nota vazia explícita limpa-a).
 Ler primeiro. Escritas exigem `expected_updated_at`, `expected_revision`, scopes `read` e `write`, UUIDs remotos e pertença à equipa. Usam a RPC existente `head_coach_put_record`, com controlo de versão e auditoria.
 Uma chamada repetida com revisão antiga é recusada em vez de voltar a executar a substituição. Reutilizar um ID de movimento não duplica entradas.
 Um pedido de desenvolvimento da app não autoriza iniciar um jogo real, marcar uma substituição ou atribuir minutos a atletas.
 
 ## Limites desta entrega
-A base é 5v5 com cinco jogadores em campo; inferioridade numérica, expulsões e entradas adicionais fora da convocatória congelada não estão incluídas.
+A formação inicial exige cinco jogadores. Saídas independentes permitem registar períodos com uma ou mais posições livres; a entrada posterior exige ação explícita. Expulsões como categoria disciplinar e entradas de atletas fora da convocatória congelada não estão incluídas.
 Não deteta lances pelo vídeo, não calcula estatísticas por si nem anima movimentos. Cones e setas são marcações manuais do treinador; não representam eventos ocorridos nem executam alterações no jogo. As estatísticas, evidências e relatórios vivem nas secções próprias da ficha do mesmo jogo.
 Mudanças manuais do relógio do dispositivo podem afetar a contagem; sequências inconsistentes são recusadas, não corrigidas com números inventados.
 Os testes de ecrã móvel são emulação de navegador, não observação no telemóvel físico do treinador.

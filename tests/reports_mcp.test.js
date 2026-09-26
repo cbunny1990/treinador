@@ -14,6 +14,7 @@ function fixture(){
     {id:'loss-1',type:'loss',at_ms:12000,player_ref:refs[1],zone:'def_c',reason:'pass',note:'Passe intercetado'},
     {id:'goal-1',type:'goal_for',at_ms:44000}
    ]},
+   availability_snapshot:{schema:'vision-match-availability@1',captured_at:'2026-09-20T10:30:00.000Z',players:[{ref:refs[5],name:'Atleta indisponível',number:6,status:'lesionado'}]},
    visual_match:{schema:'vision-match-visual@1',revision:3,status:'paused',period:1,elapsed_ms:60000,started_at:'2026-09-20T10:30:00.000Z',active_since:null,
     initial_slots:{gr:refs[0],def:refs[1],left:refs[2],right:refs[3],front:refs[4]},
     roster:refs.map((ref,i)=>({ref,name:'Atleta '+i,number:i+1})),events:[{id:'sub-1',type:'substitute',at_ms:30000,out_ref:refs[1],in_ref:refs[5]}]
@@ -35,16 +36,18 @@ test('match report MCP is read-only and exposes registered evidence with provena
  const out=await api.executeReportTool(f.admin,c,'get_match_report',{id:MATCH,report_type:'post_match'});
  assert.equal(out.schema,'vision-match-report@1');assert.equal(out.updated_at,'v7');
  assert.deepEqual(out.match.result,{for:2,against:1,provenance:'introduced_manual'});
+ assert.deepEqual(out.match.availability_snapshot,{captured_at:'2026-09-20T10:30:00.000Z',players:[{ref:refs[5],name:'Atleta indisponível',number:6,status:'lesionado'}]});assert.equal(out.missing_data.availability_snapshot,false);
  assert.equal(out.registered_events.length,2);assert.equal(out.statistics.losses.by_reason.pass,1);
  assert.equal(out.statistics.possession.kind,'estimated');assert.equal(out.statistics.possession.value,55);
  assert.equal(out.usage.provenance,'recorded_clock_and_movements');assert.equal(out.usage.players.find(x=>x.ref===refs[1]).total_ms,30000);assert.equal(out.usage.players.find(x=>x.ref===refs[5]).entries,1);
  assert.equal(out.analysis.fields.observations,'Apoio irregular');assert.equal(out.analysis.fields.hypotheses,'Confirmar em mais jogos');
  assert.equal(out.video_evidence[0].seconds,4);assert.equal(out.missing_data.events,false);assert.equal(f.calls.length,0);
 });
+test('match report MCP lists independent exits and entries in the recorded chronology',async()=>{const f=fixture();f.match.payload.visual_match.events.push({id:'exit-1',type:'exit',at_ms:40000,out_ref:refs[0]},{id:'entry-1',type:'enter',at_ms:50000,in_ref:refs[0],role:'gr'});const out=await api.executeReportTool(f.admin,c,'get_match_report',{id:MATCH,report_type:'post_match'});assert.deepEqual(out.usage.movements.map(x=>[x.type,x.at_ms]),[['substitute',30000],['exit',40000],['enter',50000]]);assert.equal(out.usage.movements[1].out_ref,refs[0]);assert.equal(out.usage.movements[2].role,'gr');assert.equal(out.usage.players.find(x=>x.ref===refs[0]).total_ms,50000);assert.equal(f.calls.length,0);});
 test('match-sheet report excludes post-match analysis but keeps missing data explicit',async()=>{
- const f=fixture();f.match.payload.match_events.events=[];f.match.payload.golos_favor=null;f.match.payload.golos_contra=null;f.match.payload.visual_match={schema:'vision-match-visual@1',revision:0,status:'not_started',period:1,elapsed_ms:0,roster:[],events:[]};
+ const f=fixture();delete f.match.payload.availability_snapshot;f.match.payload.match_events.events=[];f.match.payload.golos_favor=null;f.match.payload.golos_contra=null;f.match.payload.visual_match={schema:'vision-match-visual@1',revision:0,status:'not_started',period:1,elapsed_ms:0,roster:[],events:[]};
  const out=await api.executeReportTool(f.admin,c,'get_match_report',{external_key:'cup-final',report_type:'match_sheet'});
- assert.equal(Object.hasOwn(out,'analysis'),false);assert.equal(out.missing_data.result,true);assert.equal(out.missing_data.events,false);assert.equal(out.missing_data.registered_events_empty,true);assert.equal(out.missing_data.usage,true);
+ assert.equal(Object.hasOwn(out,'analysis'),false);assert.equal(out.match.availability_snapshot,null);assert.equal(out.missing_data.availability_snapshot,true);assert.equal(out.missing_data.result,true);assert.equal(out.missing_data.events,false);assert.equal(out.missing_data.registered_events_empty,true);assert.equal(out.missing_data.usage,true);
 });
 test('report MCP enforces scope, team isolation and one exact match identity',async()=>{
  const f=fixture();
@@ -88,7 +91,7 @@ test('athlete and team reports expose explicit unknown minutes, exact team scope
   {id:otherId,team_id:'team-b',kind:'player',updated_at:'p2',deleted_at:null,payload:{external_key:'fora',nome:'Fora',plantel_ativo:true}},
   {id:'66666666-6666-4666-8666-666666666666',team_id:'team-a',kind:'match',updated_at:'m1',deleted_at:null,payload:{data:'2026-09-10',adversario:'Rivais',callup:{player_ids:[playerId]},visual_match:{schema:'vision-match-visual@1',revision:0,status:'not_started',period:1,elapsed_ms:0,roster:[],events:[]}}},
   {id:'77777777-7777-4777-8777-777777777777',team_id:'team-a',kind:'training',updated_at:'t1',deleted_at:null,payload:{data:'2026-08-10',objetivo:'Passe',session:{attendance:[{player_ref:playerId,status:'unknown'}]}}},
-  {id:'88888888-8888-4888-8888-888888888888',team_id:'team-a',kind:'document',updated_at:'s1',deleted_at:null,payload:{external_key:'season-index:team-a',type:'season_index',body:JSON.stringify({schema:'vision-seasons@1',revision:1,active_id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',items:[{id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',name:'2026/27',start_date:'2026-08-01',end_date:'2027-07-31',roster:[{ref:playerId,name:'Ana',number:7}]}]})}},
+  {id:'88888888-8888-4888-8888-888888888888',team_id:'team-a',kind:'document',updated_at:'s1',deleted_at:null,payload:{external_key:'season-index:default',type:'season_index',body:JSON.stringify({schema:'vision-seasons@1',revision:1,active_id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',items:[{id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',name:'2026/27',start_date:'2026-08-01',end_date:'2027-07-31',roster:[{ref:playerId,name:'Ana',number:7}]}]})}},
  ];let writes=0;
  const admin={from(table){assert.equal(table,'workspace_records');const filters=[];const query={select(){return this},eq(k,v){filters.push([k,v]);return this},is(k,v){filters.push([k,v]);return this},in(k,v){filters.push([k,v]);return this},then(resolve){const data=rows.filter(r=>filters.every(([k,v])=>{if(k==='payload->>external_key')return r.payload.external_key===v;if(k==='payload->>type')return v.includes(r.payload.type);return Array.isArray(v)?v.includes(r[k]):r[k]===v;})).map(r=>structuredClone(r));return Promise.resolve({data,error:null}).then(resolve)}};return query;},async rpc(){writes++;throw Error('read-only')}};
  const tool=api.REPORT_TOOLS.find(x=>x.name==='get_player_report');assert.equal(tool.annotations.readOnlyHint,true);

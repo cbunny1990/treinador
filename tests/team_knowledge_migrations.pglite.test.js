@@ -7,11 +7,11 @@ const path = require("node:path");
 
 const ROOT = path.join(__dirname, "..");
 const MIGRATIONS = [
-  "20260924100000_team_knowledge_rag.sql",
-  "20260924100001_team_knowledge_multi_match_filter.sql",
-  "20260924101056_invalidate_team_knowledge_on_age_group_change.sql",
-  "20260924110000_team_knowledge_per_match_limit.sql",
-  "20260924120000_refresh_team_knowledge_on_player_identity_change.sql",
+  "20260926150354_20260924100000_team_knowledge_rag.sql",
+  "20260926150356_20260924100001_team_knowledge_multi_match_filter.sql",
+  "20260926150401_20260924101056_invalidate_team_knowledge_on_age_group_change.sql",
+  "20260926150403_20260924110000_team_knowledge_per_match_limit.sql",
+  "20260926150405_20260924120000_refresh_team_knowledge_on_player_identity_change.sql",
 ];
 const TEAM_A = "10000000-0000-4000-8000-000000000001";
 const TEAM_B = "10000000-0000-4000-8000-000000000002";
@@ -40,7 +40,7 @@ function testVector(angle) {
   return `[${[Math.cos(angle), Math.sin(angle), ...Array(1534).fill(0)].join(",")}]`;
 }
 
-async function fixture() {
+async function fixture({ internalRlsAppliedFirst = false } = {}) {
   const [{ PGlite }, { vector }] = await Promise.all([
     import("@electric-sql/pglite"),
     import("@electric-sql/pglite-pgvector"),
@@ -73,13 +73,23 @@ async function fixture() {
       ('${SOURCE_B}','${TEAM_B}','match','{"match_id":"${MATCH_B}","report":"construction losses"}','${UPDATED}');
     select set_config('request.jwt.claim.role','service_role',false);
   `);
+  if (internalRlsAppliedFirst) {
+    await db.exec(`
+      create table private.agent_request_log(id uuid primary key);
+      create table private.mcp_connector_tokens(id uuid primary key);
+    `);
+    await db.exec(fs.readFileSync(
+      path.join(ROOT, "supabase", "migrations", "20260924144849_enable_private_internal_table_rls.sql"),
+      "utf8",
+    ));
+  }
   for (const file of MIGRATIONS) {
     await db.exec(fs.readFileSync(path.join(ROOT, "supabase", "migrations", file), "utf8"));
   }
   return db;
 }
 
-async function indexSource(db, teamId, sourceId, matchRef, row, chunks = 1) {
+async function indexSource(db, teamId, sourceId, matchRef, row, chunks = 1, contentPrefix = "construction losses detail") {
   assert.ok(row, `expected queued source ${sourceId} to be claimed`);
   const contentChunks = Array.from({ length: chunks }, (_, index) => ({
     source_kind: "match",
@@ -92,7 +102,7 @@ async function indexSource(db, teamId, sourceId, matchRef, row, chunks = 1) {
     category: "observation",
     evidence_type: "coach_observation",
     title: `Match report ${index}`,
-    content: `construction losses detail ${index}`,
+    content: `${contentPrefix} ${index}`,
     content_hash: `hash-${sourceId}-${index}`,
     embedding_model: "test-model",
     embedding: EMBEDDING,
@@ -132,6 +142,45 @@ async function searchKnowledge(db, filters = {}) {
   ]);
   return result.rows;
 }
+
+test("RLS interno já aplicado não bloqueia as migrations RAG pendentes do remoto", async (t) => {
+  const db = await fixture({ internalRlsAppliedFirst: true });
+  t.after(() => db.close());
+
+  const tables = await db.query(`
+    select n.nspname as schema_name, c.relname, c.relrowsecurity,
+      has_table_privilege('anon', c.oid, 'select') as anon_can_select,
+      has_table_privilege('authenticated', c.oid, 'select') as auth_can_select
+    from pg_class c join pg_namespace n on n.oid=c.relnamespace
+    where n.nspname='private' and c.relname in (
+      'agent_request_log','mcp_connector_tokens','team_knowledge_chunks','team_knowledge_jobs'
+    )
+    order by c.relname
+  `);
+  assert.equal(tables.rows.length, 4);
+  assert.ok(tables.rows.every((row) => row.relrowsecurity), "all internal tables keep RLS enabled");
+  assert.ok(tables.rows.every((row) => !row.anon_can_select && !row.auth_can_select),
+    "ordinary API roles gain no direct table reads");
+
+  const policies = await db.query(`
+    select count(*)::int as n from pg_policy p
+    where p.polrelid in (
+      'private.agent_request_log'::regclass,
+      'private.mcp_connector_tokens'::regclass,
+      'private.team_knowledge_chunks'::regclass,
+      'private.team_knowledge_jobs'::regclass
+    )
+  `);
+  assert.equal(policies.rows[0].n, 0, "service-role-only internal tables remain policy-free");
+
+  const ragFunctions = await db.query(`
+    select count(*)::int as n from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+    where n.nspname='public' and p.proname in (
+      'claim_team_knowledge_jobs','search_team_knowledge_chunks'
+    )
+  `);
+  assert.ok(ragFunctions.rows[0].n >= 2, "pending migrations install RAG RPCs after internal RLS");
+});
 
 test("RAG migrations executam em Postgres WASM e preservam limites de equipa e origem", async (t) => {
   const db = await fixture();
@@ -204,6 +253,49 @@ test("RAG migrations executam em Postgres WASM e preservam limites de equipa e o
   await db.query("delete from public.workspace_records where id=$1", [SOURCE_A2]);
   const hardDeleted = await db.query("select count(*)::int as n from private.team_knowledge_chunks where source_id=$1", [SOURCE_A2]);
   assert.equal(hardDeleted.rows[0].n, 0, "physical deletion removes derived chunks");
+});
+
+test("edição de fonte invalida chunks antigos, recusa workers obsoletos e reindexa sem duplicados", async (t) => {
+  const db = await fixture();
+  t.after(() => db.close());
+
+  const initialClaims = await db.query("select * from public.claim_team_knowledge_jobs($1::uuid, 64)", [TEAM_A]);
+  const initialBySource = new Map(initialClaims.rows.map((row) => [row.source_id, row]));
+  await indexSource(db, TEAM_A, SOURCE_A1, MATCH_A1, initialBySource.get(SOURCE_A1), 1, "apoio antigo na construção");
+  await indexSource(db, TEAM_A, SOURCE_A2, MATCH_A2, initialBySource.get(SOURCE_A2), 1, "outro registo de apoio");
+  assert.equal((await searchKnowledge(db, { matchRef: MATCH_A1, query: "apoio antigo" })).length, 1);
+
+  const firstEditAt = "2026-09-24T10:00:00.000Z";
+  await db.query(`update public.workspace_records set payload=jsonb_set(payload,'{report}','"apoio atualizado uma vez"'),updated_at=$2 where id=$1`, [SOURCE_A1, firstEditAt]);
+  const staleClaims = await db.query("select * from public.claim_team_knowledge_jobs($1::uuid, 64)", [TEAM_A]);
+  const staleWorker = staleClaims.rows.find((row) => row.source_id === SOURCE_A1);
+  assert.ok(staleWorker);
+  assert.equal(new Date(staleWorker.source_updated_at).toISOString(), firstEditAt);
+
+  const secondEditAt = "2026-09-24T10:01:00.000Z";
+  await db.query(`update public.workspace_records set payload=jsonb_set(payload,'{report}','"apoio atualizado final"'),updated_at=$2 where id=$1`, [SOURCE_A1, secondEditAt]);
+
+  assert.deepEqual(await searchKnowledge(db, { matchRef: MATCH_A1, query: "apoio antigo" }), [], "old chunks must not leak while the changed source is waiting to reindex");
+  const queued = await db.query("select source_updated_at from private.team_knowledge_jobs where team_id=$1 and source_id=$2", [TEAM_A, SOURCE_A1]);
+  assert.equal(queued.rows.length, 1, "multiple edits coalesce into one pending source job");
+  assert.equal(new Date(queued.rows[0].source_updated_at).toISOString(), secondEditAt, "the pending job points at the newest source revision");
+  await assert.rejects(indexSource(db, TEAM_A, SOURCE_A1, MATCH_A1, staleWorker, 1, "apoio obsoleto"), /knowledge_source_changed_or_deleted/,
+    "a worker finishing an older embedding request cannot replace the newer source revision");
+
+  const changedClaims = await db.query("select * from public.claim_team_knowledge_jobs($1::uuid, 64)", [TEAM_A]);
+  const changedSource = changedClaims.rows.find((row) => row.source_id === SOURCE_A1);
+  assert.ok(changedSource);
+  assert.equal(new Date(changedSource.source_updated_at).toISOString(), secondEditAt);
+  await indexSource(db, TEAM_A, SOURCE_A1, MATCH_A1, changedSource, 1, "apoio atualizado final");
+
+  const oldQueryAfterReindex = await searchKnowledge(db, { matchRef: MATCH_A1, query: "apoio antigo" });
+  assert.equal(oldQueryAfterReindex.length, 1, "the fixed test vector can still return the current chunk semantically");
+  assert.equal(new Date(oldQueryAfterReindex[0].source_updated_at).toISOString(), secondEditAt);
+  assert.match(oldQueryAfterReindex[0].content, /apoio atualizado final/);
+  assert.doesNotMatch(oldQueryAfterReindex[0].content, /apoio antigo/);
+  assert.equal((await searchKnowledge(db, { matchRef: MATCH_A1, query: "apoio atualizado final" })).length, 1);
+  const chunkCount = await db.query("select count(*)::int as n from private.team_knowledge_chunks where team_id=$1 and source_id=$2", [TEAM_A, SOURCE_A1]);
+  assert.equal(chunkCount.rows[0].n, 1, "replacement leaves one current chunk instead of duplicating previous revisions");
 });
 
 test("pesquisa híbrida recupera paráfrase semântica e correspondência lexical, excluindo conteúdo irrelevante", async (t) => {

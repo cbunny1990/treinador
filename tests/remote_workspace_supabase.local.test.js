@@ -3,11 +3,15 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
 const { createClient } = require("@supabase/supabase-js");
 const { RemoteWorkspace } = require("../js/remote_workspace.js");
 const MatchVisual = require("../js/match_visual.js");
 const MatchAnalysis = require("../js/match_analysis.js");
 const MatchEvidence = require("../js/match_evidence.js");
+const PlayerGoals = require("../js/player_goals.js");
+const TeamDevelopment = require("../js/team_development.js");
 
 const url = process.env.VISION_COACH_SUPABASE_LOCAL_URL || "";
 const anonKey = process.env.VISION_COACH_SUPABASE_LOCAL_ANON_KEY || "";
@@ -58,6 +62,71 @@ function deviceDatabase(initialId = 1) {
   };
 }
 
+test("PostgREST incremental snapshots return updated records only and retain local cache entries", {
+  skip: !enabled && "requer URL e chaves da stack Supabase local; nunca usar credenciais de produção",
+  timeout: 60_000,
+}, async () => {
+  assert.ok(isLocal(url), "Este teste aceita apenas Supabase em localhost.");
+  const admin = createClient(url, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const original = { db: globalThis.DB, team: globalThis.DEFAULT_TEAM_ID, storage: globalThis.localStorage, init: RemoteWorkspace.init };
+  let userId = null, teamId = null;
+  const oldId = crypto.randomUUID(), newId = crypto.randomUUID();
+  const now = Date.now(), watermark = new Date(now - 2 * 60_000).toISOString();
+  const localCreatedAt = "2026-09-01T10:00:00.000Z";
+  const values = new Map();
+  globalThis.DEFAULT_TEAM_ID = "default";
+  globalThis.localStorage = {
+    getItem(key) { return values.get(key) || null; },
+    setItem(key, value) { values.set(key, value); },
+  };
+  try {
+    const createdUser = await admin.auth.admin.createUser({
+      email: `incremental-${crypto.randomUUID()}@vision-coach.local`,
+      password: crypto.randomBytes(24).toString("base64url"), email_confirm: true,
+    });
+    assert.ifError(createdUser.error);
+    userId = createdUser.data.user.id;
+    const createdTeam = await admin.from("teams").insert({ owner_id: userId, name: "Synthetic delta sync" }).select("id").single();
+    assert.ifError(createdTeam.error);
+    teamId = createdTeam.data.id;
+    const insertRows = await admin.from("workspace_records").insert([
+      { id: oldId, team_id: teamId, kind: "player", payload: { nome: "Old synthetic row" },
+        updated_at: new Date(now - 10 * 60_000).toISOString() },
+      { id: newId, team_id: teamId, kind: "player", payload: { nome: "Changed synthetic row" },
+        updated_at: new Date(now - 60_000).toISOString() },
+    ]);
+    assert.ifError(insertRows.error);
+
+    values.set("treinador.remote.supabase.v1", JSON.stringify({ remoteTeamId: teamId, syncCursors: { [teamId]: {
+      recordsWatermark: watermark, activityWatermark: watermark, mediaWatermark: watermark,
+      fullRefreshAt: new Date(now - 60_000).toISOString(), localTeamCreatedAt: localCreatedAt,
+    } } }));
+    globalThis.DB = {
+      async obter(store) { return store === "teams" ? { created_at: localCreatedAt } : null; },
+      async listar() { return []; },
+    };
+    RemoteWorkspace.init = async () => admin;
+    const snapshot = await RemoteWorkspace._readSyncSnapshots(teamId);
+    assert.ok(snapshot.recordsSince, "a valid cursor should choose incremental retrieval");
+    assert.equal(snapshot.records.some((row) => row.id === newId), true);
+    assert.equal(snapshot.records.some((row) => row.id === oldId), false,
+      "PostgREST gte must exclude remote rows older than the overlap window");
+  } finally {
+    RemoteWorkspace.init = original.init;
+    globalThis.DB = original.db;
+    globalThis.DEFAULT_TEAM_ID = original.team;
+    globalThis.localStorage = original.storage;
+    if (teamId) {
+      const removedTeam = await admin.from("teams").delete().eq("id", teamId);
+      assert.ifError(removedTeam.error);
+    }
+    if (userId) {
+      const removedUser = await admin.auth.admin.deleteUser(userId);
+      assert.ifError(removedUser.error);
+    }
+  }
+});
+
 test("RLS + sincronização real com duas sessões locais: round trip, conflito, tombstone, foto privada e equipa errada", {
   skip: !enabled && "requer URL e chaves da stack Supabase local; nunca usar credenciais de produção",
   timeout: 120_000,
@@ -85,6 +154,9 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     return { user: signedIn.data.user, client };
   };
   let teamId;
+  let exerciseImagePath;
+  let viewerObjectPath;
+  let viewerRejectedUploadPath;
   try {
     const owner = await makeUser("owner");
     const coach = await makeUser("coach");
@@ -97,6 +169,97 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     teamId = createdTeam.data.id;
     const joined = await admin.from("team_members").insert({ team_id: teamId, user_id: coach.user.id, role: "coach" });
     assert.ifError(joined.error);
+    const viewer = await makeUser("viewer");
+    const viewerMembership = await admin.from("team_members").insert({ team_id: teamId, user_id: viewer.user.id, role: "viewer" });
+    assert.ifError(viewerMembership.error);
+    const defaultRoleUser = await makeUser("default-role");
+    const defaultRoleMembership = await admin.from("team_members").insert({ team_id: teamId, user_id: defaultRoleUser.user.id });
+    assert.ifError(defaultRoleMembership.error);
+    const defaultRole = await admin.from("team_members").select("role").eq("team_id", teamId).eq("user_id", defaultRoleUser.user.id).single();
+    assert.ifError(defaultRole.error);
+    assert.equal(defaultRole.data.role, "coach", "an omitted membership role must use a valid writable role");
+
+    const roleProbeId = crypto.randomUUID();
+    const roleProbe = await admin.from("workspace_records").insert({
+      id: roleProbeId, team_id: teamId, kind: "document", payload: { text: "viewer read-only probe" },
+    });
+    assert.ifError(roleProbe.error);
+    const viewerRead = await viewer.client.from("workspace_records").select("id,payload").eq("id", roleProbeId).single();
+    assert.ifError(viewerRead.error);
+    assert.equal(viewerRead.data.id, roleProbeId, "viewer membership must retain team reads");
+    const viewerInsert = await viewer.client.from("workspace_records").insert({
+      id: crypto.randomUUID(), team_id: teamId, kind: "document", payload: { text: "must be rejected" },
+    });
+    assert.ok(viewerInsert.error, "viewer cannot create workspace records");
+    const viewerUpdate = await viewer.client.from("workspace_records").update({ payload: { text: "must remain unchanged" } }).eq("id", roleProbeId).select("id");
+    assert.ifError(viewerUpdate.error);
+    assert.deepEqual(viewerUpdate.data, [], "viewer cannot update workspace records");
+    const viewerDelete = await viewer.client.from("workspace_records").delete().eq("id", roleProbeId).select("id");
+    assert.ifError(viewerDelete.error);
+    assert.deepEqual(viewerDelete.data, [], "viewer cannot delete workspace records");
+    const stillPresent = await admin.from("workspace_records").select("payload").eq("id", roleProbeId).single();
+    assert.ifError(stillPresent.error);
+    assert.equal(stillPresent.data.payload.text, "viewer read-only probe");
+
+    const coachWriteId = crypto.randomUUID();
+    const coachWrite = await coach.client.from("workspace_records").insert({
+      id: coachWriteId, team_id: teamId, kind: "document", payload: { text: "coach write allowed" },
+    });
+    assert.ifError(coachWrite.error, "coach membership keeps workspace writes");
+    const viewerMedia = await viewer.client.from("media_assets").insert({
+      id: crypto.randomUUID(), team_id: teamId, subject_type: "player", subject_ref: crypto.randomUUID(),
+      media_type: "photo", title: "viewer upload probe", storage_path: `${teamId}/players/viewer-blocked.jpg`,
+    });
+    assert.ok(viewerMedia.error, "viewer cannot create media metadata");
+    const mediaProbeId = crypto.randomUUID();
+    const seededMedia = await admin.from("media_assets").insert({
+      id: mediaProbeId, team_id: teamId, subject_type: "player", subject_ref: crypto.randomUUID(),
+      media_type: "file", title: "viewer read-only media", external_url: "https://example.invalid/viewer-probe",
+    });
+    assert.ifError(seededMedia.error);
+    const viewerMediaRead = await viewer.client.from("media_assets").select("id,title").eq("id", mediaProbeId).single();
+    assert.ifError(viewerMediaRead.error);
+    const viewerMediaUpdate = await viewer.client.from("media_assets").update({ title: "must remain unchanged" }).eq("id", mediaProbeId).select("id");
+    assert.ifError(viewerMediaUpdate.error);
+    assert.deepEqual(viewerMediaUpdate.data, [], "viewer cannot update media metadata");
+    const viewerMediaDelete = await viewer.client.from("media_assets").delete().eq("id", mediaProbeId).select("id");
+    assert.ifError(viewerMediaDelete.error);
+    assert.deepEqual(viewerMediaDelete.data, [], "viewer cannot delete media metadata");
+    const unchangedMedia = await admin.from("media_assets").select("title").eq("id", mediaProbeId).single();
+    assert.ifError(unchangedMedia.error);
+    assert.equal(unchangedMedia.data.title, "viewer read-only media");
+    const removedMediaProbe = await admin.from("media_assets").delete().eq("id", mediaProbeId);
+    assert.ifError(removedMediaProbe.error);
+    const viewerActivity = await viewer.client.from("activity_log").insert({
+      id: crypto.randomUUID(), team_id: teamId, actor_type: "human", actor_label: "viewer",
+      action: "viewer_write_probe", summary: "must be rejected",
+    });
+    assert.ok(viewerActivity.error, "viewer cannot write activity");
+    viewerObjectPath = `${teamId}/viewer/${crypto.randomUUID()}.bin`;
+    const probeBytes = new Uint8Array([1, 2, 3]);
+    const seededObject = await admin.storage.from("team-media").upload(viewerObjectPath, probeBytes, {
+      contentType: "application/octet-stream", upsert: false,
+    });
+    assert.ifError(seededObject.error);
+    const viewerObjectRead = await viewer.client.storage.from("team-media").download(viewerObjectPath);
+    assert.ifError(viewerObjectRead.error);
+    assert.deepEqual(new Uint8Array(await viewerObjectRead.data.arrayBuffer()), probeBytes);
+    viewerRejectedUploadPath = `${teamId}/viewer/${crypto.randomUUID()}.bin`;
+    const viewerUpload = await viewer.client.storage.from("team-media").upload(viewerRejectedUploadPath, probeBytes, {
+      contentType: "application/octet-stream", upsert: false,
+    });
+    assert.ok(viewerUpload.error, "viewer cannot write the private team-media bucket");
+    const viewerObjectUpdate = await viewer.client.storage.from("team-media").update(viewerObjectPath, new Uint8Array([4, 5, 6]), {
+      contentType: "application/octet-stream", upsert: false,
+    });
+    assert.ok(viewerObjectUpdate.error, "viewer cannot update private team media");
+    const viewerObjectDelete = await viewer.client.storage.from("team-media").remove([viewerObjectPath]);
+    assert.ok(viewerObjectDelete.error || !viewerObjectDelete.data?.length, "viewer cannot delete private team media");
+    const objectAfterDeniedDelete = await admin.storage.from("team-media").download(viewerObjectPath);
+    assert.ifError(objectAfterDeniedDelete.error, "viewer cannot delete private team media");
+    assert.deepEqual(new Uint8Array(await objectAfterDeniedDelete.data.arrayBuffer()), probeBytes);
+    const removedRoleProbes = await admin.from("workspace_records").delete().in("id", [roleProbeId, coachWriteId]);
+    assert.ifError(removedRoleProbes.error);
 
     const connectorHash = crypto.createHash("sha256").update(crypto.randomUUID()).digest("hex");
     const connectorCreated = await admin.rpc("mcp_connector_create", {
@@ -135,15 +298,20 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     }).select("id");
     assert.ok(forbiddenInsert.error, "RLS must reject a write to another team's workspace.");
 
-    const refs = { player: crypto.randomUUID(), liveMatch: crypto.randomUUID(), evidenceMatch: crypto.randomUUID(), videoMoment: crypto.randomUUID(), deletedVideoMoment: crypto.randomUUID(), deletedMatch: crypto.randomUUID(), historyMatch: crypto.randomUUID(), historyTraining: crypto.randomUUID(), exercise: crypto.randomUUID(), proposal: crypto.randomUUID(), pcDeletedProposal: crypto.randomUUID(), playerArchive: crypto.randomUUID(), photo: crypto.randomUUID(), latestPhoto: crypto.randomUUID(), lossEvent: crypto.randomUUID() };
+    const refs = { player: crypto.randomUUID(), playerGoal: crypto.randomUUID(), teamGoal: crypto.randomUUID(), liveMatch: crypto.randomUUID(), evidenceMatch: crypto.randomUUID(), videoMoment: crypto.randomUUID(), deletedVideoMoment: crypto.randomUUID(), deletedMatch: crypto.randomUUID(), historyMatch: crypto.randomUUID(), historyTraining: crypto.randomUUID(), exercise: crypto.randomUUID(), proposal: crypto.randomUUID(), pcDeletedProposal: crypto.randomUUID(), playerArchive: crypto.randomUUID(), photo: crypto.randomUUID(), latestPhoto: crypto.randomUUID(), lossEvent: crypto.randomUUID() };
     globalThis.DEFAULT_TEAM_ID = "local-coach";
     globalThis.mediaSubjectKey = (team, type, id) => `${team}|${type}|${id}`;
     globalThis.DB = devices[0];
     RemoteWorkspace.init = async () => owner.client;
-    const playerId = await devices[0].criar("jogadores", {
+    let initialPlayer = {
       team_id: "local-coach", sync_id: refs.player, remote_team_id: teamId, sync_dirty: true,
       nome: "Atleta sintético", plantel_ativo: true,
-    });
+    };
+    initialPlayer = PlayerGoals.apply(initialPlayer, { type: "save", expected_revision: 0, goal: {
+      id: refs.playerGoal, title: "Apoiar após o passe", started_at: "2026-09-01", status: "active",
+      evidence_refs: [{ type: "match", id: refs.evidenceMatch }], exercise_refs: [refs.exercise], notes: "Objetivo definido pelo treinador",
+    } }, { now: "2026-09-01T12:00:00.000Z" });
+    const playerId = await devices[0].criar("jogadores", initialPlayer);
     await devices[0].criar("jogos", {
       team_id: "local-coach", remote_team_id: teamId, sync_dirty: true,
       external_key: "local-sync-legacy-player-ref", adversario: "Jogo histórico",
@@ -202,17 +370,38 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
       description: "Momento a remover no telemóvel", relation_type: "none",
     } }, { now: "2026-09-03T12:02:00.000Z" });
     await devices[0].criar("jogos", evidenceMatch);
+    const approvedImageBytes = fs.readFileSync(path.join(__dirname, "../assets/exercises/approved-20260922/01_ativacao_conduzir_passar_dar_opcao.png"));
+    const approvedImageSha = crypto.createHash("sha256").update(approvedImageBytes).digest("hex");
+    const approvedImageInfo = {
+      width: approvedImageBytes.readUInt32BE(16), height: approvedImageBytes.readUInt32BE(20),
+      mime_type: "image/png", size_bytes: approvedImageBytes.length, sha256: approvedImageSha,
+      file_name: "01_ativacao_conduzir_passar_dar_opcao.png", source: "approved_original_upload",
+    };
+    exerciseImagePath = `${teamId}/exercise-images/${refs.exercise}/original.png`;
+    const exerciseImageUpload = await admin.storage.from("team-media").upload(exerciseImagePath, approvedImageBytes, {
+      contentType: "image/png", upsert: false,
+    });
+    assert.ifError(exerciseImageUpload.error);
     const exerciseId = await devices[0].criar("exercicios", {
       team_id: "local-coach", sync_id: refs.exercise, remote_team_id: teamId, sync_dirty: true,
       workspace_v2: true, external_key: "local-sync-passe-apoio", nome: "Passe + apoio",
+      visual_storage_bucket: "team-media", visual_storage_path: exerciseImagePath,
+      visual_image: approvedImageInfo, visual_removed: false,
     });
     await devices[0].criar("treinos", {
       team_id: "local-coach", sync_id: refs.historyTraining, remote_team_id: teamId, sync_dirty: true,
       external_key: "local-player-history-training", data: "2026-09-02", objetivo: "Passe + apoio",
       blocos: [{ exercise_ref: String(exerciseId), duration_min: 12 }],
-      session: { attendance: [{ player_ref: refs.player, name: "Atleta sintético", status: "present" }], blocks: [{ exercise_ref: String(exerciseId), planned_min: 12, elapsed_ms: 60_000 }] },
+      status: "completed",
+      session: { status: "completed", attendance: [{ player_ref: refs.player, name: "Atleta sintético", status: "present" }], blocks: [{ exercise_ref: String(exerciseId), planned_min: 12, elapsed_ms: 60_000 }] },
     });
-    const proposalBody = { objective: "Apoio após passe", agent_proposal: { status: "proposed", rationale: "Proposta para revisão do treinador", evidence: [{ type: "match", id: refs.liveMatch }, { type: "training", id: refs.historyTraining }] } };
+    const proposalBody = TeamDevelopment.saveGoal(null, {
+      title: "Apoio após passe", identified_at: "2026-09-01", stage: "planned",
+      sessions: [{ type: "match", id: refs.liveMatch }, { type: "training", id: refs.historyTraining }],
+      worked_sessions: [], exercises: [{ type: "exercise", id: refs.exercise }],
+      observations: "Identificado no último jogo", interpretation: "O portador precisa de linha de passe",
+      agent_proposal: { status: "proposed", rationale: "Proposta para revisão do treinador", evidence_refs: [] },
+    }, { expected_revision: 0, now: "2026-09-01T12:00:00.000Z" });
     await devices[0].criar("workspace_documents", {
       team_id: "local-coach", sync_id: refs.proposal, remote_team_id: teamId, sync_dirty: true,
       external_key: "local-sync-team-goal-proposal", type: "team_goal", title: "Proposta de prioridade",
@@ -236,6 +425,11 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     const pcHistoryTrainingAfterPush = (await devices[0].listar("treinos")).find((row) => row.sync_id === refs.historyTraining);
     assert.equal(pcHistoryTrainingAfterPush.blocos[0].exercise_ref, refs.exercise);
     assert.equal(pcHistoryTrainingAfterPush.session.blocks[0].exercise_ref, refs.exercise);
+    const remoteExercise = await owner.client.from("workspace_records").select("payload").eq("id", refs.exercise).single();
+    assert.ifError(remoteExercise.error);
+    assert.equal(remoteExercise.data.payload.visual_storage_path, exerciseImagePath);
+    assert.equal(remoteExercise.data.payload.visual_image.sha256, approvedImageSha);
+    assert.equal(remoteExercise.data.payload.visual_url, undefined, "Signed download URLs must never be synchronized.");
 
     const orphanActivityId = crypto.randomUUID();
     await devices[0].criar("activity_items", {
@@ -287,6 +481,25 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.deepEqual(phoneLegacyPlayerRef.callup.player_ids, [phonePlayer.sync_id]);
     assert.equal(phoneLegacyPlayerRef.lineup.goalkeeper_id, phonePlayer.sync_id);
     assert.notEqual(phoneDeleted.id, deletedId);
+    assert.equal(phoneExercise.visual_storage_path, exerciseImagePath);
+    assert.equal(phoneExercise.visual_image.sha256, approvedImageSha);
+    assert.equal(phoneExercise.visual_url, undefined, "The phone receives only the private object identity, not a signed URL.");
+    const publicExerciseImage = await fetch(`${url}/storage/v1/object/public/team-media/${exerciseImagePath}`);
+    assert.equal(publicExerciseImage.ok, false, "Approved originals stay in the private team bucket.");
+    const [pcExerciseImageUrl, phoneExerciseImageUrl] = await Promise.all([
+      owner.client.storage.from("team-media").createSignedUrl(exerciseImagePath, 60),
+      coach.client.storage.from("team-media").createSignedUrl(exerciseImagePath, 60),
+    ]);
+    assert.ifError(pcExerciseImageUrl.error);
+    assert.ifError(phoneExerciseImageUrl.error);
+    const [pcExerciseImage, phoneExerciseImage] = await Promise.all([
+      fetch(pcExerciseImageUrl.data.signedUrl), fetch(phoneExerciseImageUrl.data.signedUrl),
+    ]);
+    assert.equal(pcExerciseImage.status, 200);
+    assert.equal(phoneExerciseImage.status, 200);
+    const [pcExerciseBytes, phoneExerciseBytes] = await Promise.all([pcExerciseImage.arrayBuffer(), phoneExerciseImage.arrayBuffer()]);
+    assert.equal(crypto.createHash("sha256").update(Buffer.from(pcExerciseBytes)).digest("hex"), approvedImageSha);
+    assert.equal(crypto.createHash("sha256").update(Buffer.from(phoneExerciseBytes)).digest("hex"), approvedImageSha);
     assert.equal(phoneHistoryTraining.blocos[0].exercise_ref, phoneExercise.sync_id);
     assert.equal(phoneHistoryTraining.session.blocks[0].exercise_ref, phoneExercise.sync_id);
     assert.equal(JSON.parse(phoneProposal.body).agent_proposal.status, "proposed");
@@ -295,6 +508,14 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.equal(phonePlayerArchive.status, "archived");
     assert.equal(JSON.parse(phonePlayerArchive.body).development_goals.items[0].history[0].status, "active");
     assert.equal(JSON.parse(phonePlayerArchive.body).development_goals.items[0].evidence_refs[0].id, refs.evidenceMatch);
+    assert.equal(PlayerGoals.state(phonePlayer).items.length, 1, "O objetivo longitudinal do atleta deve sincronizar sem criar um segundo registo.");
+    assert.equal(PlayerGoals.state(phonePlayer).items[0].id, refs.playerGoal);
+    assert.equal(PlayerGoals.state(phonePlayer).items[0].exercise_refs[0], refs.exercise);
+    const initialTeamGoal = TeamDevelopment.teamGoal(phoneProposal);
+    assert.equal(initialTeamGoal.schema, TeamDevelopment.schemas.goal);
+    assert.equal(initialTeamGoal.stage, "planned");
+    assert.equal(initialTeamGoal.evidence.length, 0);
+    assert.equal(initialTeamGoal.agent_proposal.status, "proposed");
     assert.equal(phoneLive.match_events.events[0].id, refs.lossEvent);
     assert.equal(phoneLive.match_events.events[0].note, "Passe interceptado no PC");
     assert.equal(phoneLive.visual_match.period, 2);
@@ -321,10 +542,21 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
       fields: { ...MatchAnalysis.fromMatch(editedEvidenceMatch).fields, summary: "Análise revista no telemóvel" },
     }, { expected_revision: 1, actor: "Treinador", now: "2026-09-03T12:05:00.000Z" });
     await devices[1].atualizar("jogos", { ...editedEvidenceMatch, sync_dirty: true });
-    await devices[1].atualizar("workspace_documents", { ...phoneProposal, body: JSON.stringify({ ...JSON.parse(phoneProposal.body), coach_review: "Rever apoio no próximo treino" }), sync_dirty: true });
+    const revisedTeamGoal = TeamDevelopment.saveGoal(phoneProposal, {
+      ...initialTeamGoal, stage: "observed", worked_sessions: [{ type: "training", id: refs.historyTraining }],
+      evidence: [{ type: "match", id: refs.liveMatch }],
+      observations: "O apoio apareceu em parte do exercício; requer nova observação.",
+      evaluation: "Evidência observada, ainda insuficiente para concluir melhoria.",
+      coach_decision: "Continuar a observar no próximo jogo.",
+    }, { expected_revision: initialTeamGoal.revision, now: "2026-09-03T12:03:00.000Z" });
+    await devices[1].atualizar("workspace_documents", { ...phoneProposal, body: JSON.stringify(revisedTeamGoal), sync_dirty: true });
+    const revisedPlayer = PlayerGoals.apply(phonePlayer, { type: "save", expected_revision: PlayerGoals.state(phonePlayer).revision, goal: {
+      ...PlayerGoals.state(phonePlayer).items[0], notes: "Praticado na sessão; progresso ainda não avaliado.", status: "continue",
+    } }, { now: "2026-09-03T12:03:00.000Z" });
+    await devices[1].atualizar("jogadores", { ...revisedPlayer, sync_dirty: true });
     await devices[1].atualizar("treinos", { ...phoneHistoryTraining, session: { ...phoneHistoryTraining.session, attendance: [{ ...phoneHistoryTraining.session.attendance[0], status: "late" }] }, sync_dirty: true });
     const phonePush = await RemoteWorkspace._syncRecords(teamId, coach.user.id);
-    assert.equal(phonePush.pushed, 4);
+    assert.equal(phonePush.pushed, 5);
     globalThis.DB = devices[0];
     RemoteWorkspace.init = async () => owner.client;
     const stalePc = await devices[0].obter("jogos", liveId);
@@ -332,9 +564,20 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     const conflict = await RemoteWorkspace._syncRecords(teamId, owner.user.id);
     assert.equal(conflict.pushed, 0);
     assert.equal(conflict.conflicts.some((item) => item.sync_id === refs.liveMatch && item.reason === "version_mismatch"), true);
-    assert.equal(conflict.pulled, 3, "As edições da proposta, presença, análise e evidências feitas no telemóvel devem regressar ao PC apesar do conflito noutro registo.");
+    assert.equal(conflict.pulled, 4, "As edições dos objetivos, presença, análise e evidências feitas no telemóvel devem regressar ao PC apesar do conflito noutro registo.");
     const pcProposal = (await devices[0].listar("workspace_documents")).find((row) => row.sync_id === refs.proposal);
-    assert.equal(JSON.parse(pcProposal.body).coach_review, "Rever apoio no próximo treino");
+    const pcTeamGoal = TeamDevelopment.teamGoal(pcProposal);
+    assert.equal(pcTeamGoal.stage, "observed");
+    assert.equal(pcTeamGoal.observations, "O apoio apareceu em parte do exercício; requer nova observação.");
+    assert.equal(pcTeamGoal.worked_sessions[0].id, refs.historyTraining);
+    assert.equal(pcTeamGoal.evidence[0].id, refs.liveMatch);
+    assert.equal(pcTeamGoal.history.length, 2, "O histórico conserva o estado inicial e a etapa planeada antes da observação.");
+    const pcPlayer = (await devices[0].listar("jogadores")).find((row) => row.sync_id === refs.player);
+    assert.equal(PlayerGoals.state(pcPlayer).items.length, 1, "Editar um objetivo individual não deve duplicar o atleta nem o objetivo.");
+    assert.equal(PlayerGoals.state(pcPlayer).items[0].id, refs.playerGoal);
+    assert.equal(PlayerGoals.state(pcPlayer).items[0].status, "continue", "A sincronização não infere melhoria a partir de uma sessão trabalhada.");
+    assert.equal(PlayerGoals.state(pcPlayer).items[0].notes, "Praticado na sessão; progresso ainda não avaliado.");
+    assert.equal(PlayerGoals.state(pcPlayer).items[0].history.length, 1);
     const pcHistoryTraining = (await devices[0].listar("treinos")).find((row) => row.sync_id === refs.historyTraining);
     assert.equal(pcHistoryTraining.session.attendance[0].status, "late");
     const pcEvidenceMatch = (await devices[0].listar("jogos")).find((row) => row.sync_id === refs.evidenceMatch);
@@ -398,7 +641,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
 
     globalThis.DB = devices[0];
     const latestPhotoPull = await RemoteWorkspace._syncMedia(teamId, owner.user.id);
-    assert.equal(latestPhotoPull.pulled, 2, "O PC refresca a URL assinada da foto anterior e recebe a nova foto.");
+    assert.equal(latestPhotoPull.pulled, 1, "o PC reutiliza a URL válida da foto anterior e importa apenas a nova foto");
     const pcLatestPhotoPlayer = await devices[0].obter("jogadores", playerId);
     assert.equal(pcLatestPhotoPlayer.profile_media_ref, refs.latestPhoto);
     assert.equal(pcLatestPhotoPlayer.foto, null, "O perfil não duplica os bytes da imagem; a origem é media_items.");
@@ -492,12 +735,105 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     assert.equal(pcProfileCleared.foto, null);
     assert.equal(pcProfileCleared.profile_media_ref, undefined);
     assert.equal((await devices[0].listar("media_items")).length, 0);
+
+    const idAt = (group, index) => `${group}-0000-4000-8000-${String(index + 1).padStart(12, "0")}`;
+    const overflowRows = Array.from({ length: 1007 }, (_, index) => ({
+      id: idAt("80000000", index), team_id: teamId, kind: "document",
+      payload: { type: "note", title: `Histórico ${index + 1}`, body: "Registo sintético de paginação", external_key: `sync-page-${index + 1}` },
+      actor_type: "human", actor_label: "Teste de integração", created_by: owner.user.id,
+    }));
+    for (let start = 0; start < overflowRows.length; start += 200) {
+      const inserted = await admin.from("workspace_records").insert(overflowRows.slice(start, start + 200));
+      assert.ifError(inserted.error);
+    }
+    globalThis.DB = devices[1];
+    RemoteWorkspace.init = async () => coach.client;
+    const paginatedSync = await RemoteWorkspace._syncRecords(teamId, coach.user.id);
+    assert.equal(paginatedSync.pulled, overflowRows.length, "A leitura em páginas deve ultrapassar o max_rows da Data API sem perder documentos.");
+    const phoneOverflowRows = (await devices[1].listar("workspace_documents")).filter((row) => row.external_key?.startsWith("sync-page-"));
+    assert.equal(phoneOverflowRows.length, overflowRows.length);
+    assert.equal(new Set(phoneOverflowRows.map((row) => row.sync_id)).size, overflowRows.length, "Páginas não podem gerar duplicados locais.");
+
+    const overflowMedia = overflowRows.map((row, index) => ({
+      id: idAt("83000000", index), team_id: teamId, subject_type: "team", subject_ref: teamId,
+      media_type: "file", title: `Ficheiro ${index + 1}`, note: "Teste sintético de paginação",
+      external_url: `https://example.test/sync-page/${index + 1}`, created_by: owner.user.id,
+    }));
+    for (let start = 0; start < overflowMedia.length; start += 200) {
+      const inserted = await admin.from("media_assets").insert(overflowMedia.slice(start, start + 200));
+      assert.ifError(inserted.error);
+    }
+    const paginatedMedia = await RemoteWorkspace._syncMedia(teamId, coach.user.id);
+    assert.equal(paginatedMedia.pulled, overflowMedia.length, "A leitura de media deve ultrapassar o max_rows da Data API sem perder registos.");
+    const phoneOverflowMedia = (await devices[1].listar("media_items")).filter((row) => row.title.startsWith("Ficheiro "));
+    assert.equal(phoneOverflowMedia.length, overflowMedia.length);
+    assert.equal(new Set(phoneOverflowMedia.map((row) => row.sync_id)).size, overflowMedia.length);
+
+    const overflowActivity = overflowRows.map((row, index) => ({
+      id: idAt("81000000", index), team_id: teamId, actor_type: "human", actor_label: "Teste de integração",
+      action: "updated", summary: `Atividade sintética ${index + 1}`, created_by: owner.user.id,
+    }));
+    for (let start = 0; start < overflowActivity.length; start += 200) {
+      const inserted = await admin.from("activity_log").insert(overflowActivity.slice(start, start + 200));
+      assert.ifError(inserted.error);
+    }
+    const paginatedActivity = await RemoteWorkspace._syncActivity(teamId, coach.user.id);
+    assert.equal(paginatedActivity.pulled, overflowActivity.length, "A leitura da atividade deve ultrapassar o max_rows da Data API sem perder registos.");
+    const phoneOverflowActivity = (await devices[1].listar("activity_items"))
+      .filter((row) => row.summary.startsWith("Atividade sintética "));
+    assert.equal(phoneOverflowActivity.length, overflowActivity.length);
+    assert.equal(new Set(phoneOverflowActivity.map((row) => row.sync_id)).size, overflowActivity.length);
+
+    const consolidationOriginal = {
+      db: globalThis.DB, team: globalThis.DEFAULT_TEAM_ID, init: RemoteWorkspace.init,
+      getSession: RemoteWorkspace.getSession, ensureSelectedTeam: RemoteWorkspace.ensureSelectedTeam,
+      syncNow: RemoteWorkspace.syncNow, navigator: Object.getOwnPropertyDescriptor(globalThis, "navigator"),
+      localStorage: globalThis.localStorage,
+    };
+    const localPlayer = { id: 1, team_id: "local-coach", sync_id: overflowRows.at(-1).id,
+      remote_team_id: teamId, remote_updated_at: "present", sync_dirty: false };
+    const localMedia = { id: 2, team_id: "local-coach", sync_id: overflowMedia.at(-1).id,
+      remote_team_id: teamId, remote_updated_at: "present", sync_dirty: false };
+    globalThis.DB = {
+      async listar(store) { return store === "jogadores" ? [{ ...localPlayer }] : store === "media_items" ? [{ ...localMedia }] : []; },
+      async atualizar() { throw new Error("Consolidation must not mark paged remote records as missing."); },
+    };
+    globalThis.DEFAULT_TEAM_ID = "local-coach";
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: { onLine: true } });
+    globalThis.localStorage = { setItem() {} };
+    RemoteWorkspace.init = async () => owner.client;
+    RemoteWorkspace.getSession = async () => ({ user: owner.user });
+    RemoteWorkspace.ensureSelectedTeam = async () => teamId;
+    RemoteWorkspace.syncNow = async () => ({ pushed: 0, pulled: 0, deleted: 0, conflicts: [] });
+    try {
+      const consolidated = await RemoteWorkspace.consolidateNow();
+      assert.equal(consolidated.repaired, 0, "Consolidation must see late-page IDs in both remote tables.");
+    } finally {
+      globalThis.DB = consolidationOriginal.db;
+      globalThis.DEFAULT_TEAM_ID = consolidationOriginal.team;
+      if (consolidationOriginal.navigator) Object.defineProperty(globalThis, "navigator", consolidationOriginal.navigator);
+      else delete globalThis.navigator;
+      globalThis.localStorage = consolidationOriginal.localStorage;
+      RemoteWorkspace.init = consolidationOriginal.init;
+      RemoteWorkspace.getSession = consolidationOriginal.getSession;
+      RemoteWorkspace.ensureSelectedTeam = consolidationOriginal.ensureSelectedTeam;
+      RemoteWorkspace.syncNow = consolidationOriginal.syncNow;
+    }
   } finally {
     RemoteWorkspace.init = original.init;
     globalThis.DB = original.db;
     globalThis.DEFAULT_TEAM_ID = original.team;
     globalThis.mediaSubjectKey = original.subjectKey;
     if (teamId) {
+      if (viewerObjectPath) {
+        const paths = [viewerObjectPath, viewerRejectedUploadPath].filter(Boolean);
+        const removedViewerProbe = await admin.storage.from("team-media").remove(paths);
+        assert.ifError(removedViewerProbe.error);
+      }
+      if (exerciseImagePath) {
+        const removedExerciseImage = await admin.storage.from("team-media").remove([exerciseImagePath]);
+        assert.ifError(removedExerciseImage.error);
+      }
       const { data: mediaRows, error: mediaError } = await admin.from("media_assets").select("storage_path").eq("team_id", teamId);
       assert.ifError(mediaError);
       const paths = [...new Set((mediaRows || []).map((row) => row.storage_path).filter(Boolean))];

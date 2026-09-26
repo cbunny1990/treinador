@@ -159,6 +159,19 @@ function tpNormalizeTraining(input) {
   return row;
 }
 
+function tpTrainingStatus(training) {
+  const sessionStatus = String(training?.session?.status || "");
+  const sessionLabels = {
+    not_started: "Por iniciar",
+    running: "Em curso",
+    paused: "Em pausa",
+    completed: "Terminado",
+  };
+  if (Object.hasOwn(sessionLabels, sessionStatus)) return sessionLabels[sessionStatus];
+  const planStatus = String(training?.status || "draft");
+  return planStatus === "ready" ? "Pronto" : "Rascunho";
+}
+
 const TrainingPlanner = {
   slug: tpSlug,
   exerciseRef: tpExerciseRef,
@@ -171,6 +184,7 @@ const TrainingPlanner = {
   normalizeBlock: tpNormalizeBlock,
   trainingDuration: tpTrainingDuration,
   normalizeTraining: tpNormalizeTraining,
+  trainingStatus: tpTrainingStatus,
 };
 
 if (typeof globalThis !== "undefined") globalThis.TrainingPlanner = TrainingPlanner;

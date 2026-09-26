@@ -113,8 +113,12 @@ const HeadCoachMemory = {
     let items = await DB.porIndice("memory_items", "team_id", teamId);
     if (!filters.includeArchived) items = items.filter((m) => m.status === "active");
     if (filters.kind) items = items.filter((m) => m.kind === filters.kind);
-    if (filters.subjectType && filters.subjectId != null) items = items.filter((m) =>
-      (m.subject_refs || []).some((r) => r.type === filters.subjectType && String(r.id) === String(filters.subjectId)));
+    if (filters.subjectType && filters.subjectId != null) {
+      const subjectIds = new Set((Array.isArray(filters.subjectId) ? filters.subjectId : [filters.subjectId])
+        .filter((id) => id != null && String(id) !== "").map(String));
+      items = items.filter((m) => (m.subject_refs || []).some((r) =>
+        r.type === filters.subjectType && subjectIds.has(String(r.id))));
+    }
     return items.sort((a, b) => String(b.occurred_at || b.created_at).localeCompare(String(a.occurred_at || a.created_at)) || (b.id || 0) - (a.id || 0));
   },
   async get(id) { return DB.obter("memory_items", id); },
