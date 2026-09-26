@@ -2337,6 +2337,9 @@ const RemoteWorkspace = {
     if (!candidates.length) return { status: "no_match", local: remoteConflictPreview(remotePayload(local)) };
     if (candidates.length !== 1) return { status: "ambiguous", candidate_count: candidates.length };
     const candidate = candidates[0];
+    const alreadyLinked = (await DB.listar(storeName)).some((item) => String(item.id) !== String(local.id)
+      && item.sync_id === candidate.id);
+    if (alreadyLinked) return { status: "already_linked", local: remoteConflictPreview(remotePayload(local)) };
     return {
       status: "unique_match", store: storeName, local_id: local.id,
       invalid_sync_id: local.sync_id, local_updated_at: local.sync_local_updated_at || null,

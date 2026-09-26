@@ -2246,6 +2246,32 @@ test("identidade inválida só se religa após comparação única por chave ext
   }
 });
 
+test("recuperação de identidade recusa UUID remoto já ligado a outra ficha local", async () => {
+  const remoteId = "55555555-5555-4555-8555-555555555555", team = "22222222-2222-4222-8222-222222222222";
+  const originals = { DB: globalThis.DB, localStorage: globalThis.localStorage, init: RemoteWorkspace.init, syncNow: RemoteWorkspace.syncNow };
+  const local = { id: 17, team_id: "default", sync_id: "default", remote_updated_at: "v1", sync_local_updated_at: "local-v2", sync_dirty: true, external_key: "match-17", adversario: "Rivais" };
+  const existing = { id: 18, team_id: "default", sync_id: remoteId, remote_team_id: team, sync_dirty: false, external_key: "match-17", adversario: "Rivais" };
+  const remote = { id: remoteId, team_id: team, kind: "match", payload: { external_key: "match-17", adversario: "Rivais" }, updated_at: "v1", deleted_at: null };
+  let syncCalls = 0;
+  globalThis.localStorage = { getItem(key) { return key === "treinador.remote.supabase.v1" ? JSON.stringify({ remoteTeamId: team, conflicts: [{ store: "jogos", local_id: 17, sync_id: "default", reason: "invalid_local_sync_id", expected_updated_at: "v1" }] }) : null; }, setItem() {} };
+  globalThis.DB = { async listar() { return [{ ...local }, { ...existing }]; }, async modificar() { throw new Error("duplicate identity must not be written"); } };
+  RemoteWorkspace.init = async () => ({ from(table) {
+    assert.equal(table, "workspace_records");
+    const filters = [];
+    return { select() { return this; }, eq(key, value) { filters.push([key, value]); return this; }, is() { return this; }, limit() { return this; }, then(resolve) { return Promise.resolve({ data: filters.some(([key, value]) => key === "payload->>external_key" && value !== "match-17") ? [] : [remote], error: null }).then(resolve); } };
+  } });
+  RemoteWorkspace.syncNow = async () => { syncCalls++; return { conflicts: [] }; };
+  try {
+    const preview = await RemoteWorkspace.previewInvalidIdentityRecovery("jogos", 17);
+    assert.equal(preview.status, "already_linked");
+    await assert.rejects(RemoteWorkspace.confirmInvalidIdentityRecovery("jogos", "17", remoteId, "local-v2", "v1"), /correspondência ou uma das versões mudou/);
+    assert.equal(syncCalls, 0);
+  } finally {
+    globalThis.DB = originals.DB; globalThis.localStorage = originals.localStorage;
+    RemoteWorkspace.init = originals.init; RemoteWorkspace.syncNow = originals.syncNow;
+  }
+});
+
 test("pré-visualização e resolução agrupada sincronizam só combinações independentes e uma vez", async () => {
   const originalStorage = globalThis.localStorage, originalSyncNow = RemoteWorkspace.syncNow;
   try { await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
