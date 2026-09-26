@@ -31,10 +31,11 @@
   row.post_game={...(row.post_game||{}),analysis};return row;
  }
  function memoryContent(analysis,events=[]){
+  const eventTools=root.VisionMatchEvents||(typeof require==='function'?require('./match_events.js'):null);
   const s=state(analysis),parts=[];for(const [key,label] of Object.entries(FIELDS))if(txt(s.fields[key]))parts.push(label+': '+txt(s.fields[key]));
   const eventById=new Map((events||[]).filter(e=>e.type==='goal_against').map(e=>[String(e.id),e]));
-  for(const [id,cause] of Object.entries(s.goals_conceded))if(txt(cause)&&eventById.has(String(id))){const e=eventById.get(String(id));parts.push('Causa provável de golo sofrido · '+Math.floor(e.at_ms/60000)+':'+String(Math.floor(e.at_ms/1000)%60).padStart(2,'0')+': '+txt(cause));}
-  if(events.length)parts.push('Evidências registadas no jogo: '+events.map(e=>{const label=root.VisionMatchEvents?.types?.[e.type]||e.type;return Math.floor(e.at_ms/60000)+':'+String(Math.floor(e.at_ms/1000)%60).padStart(2,'0')+' '+label;}).join('; '));
+  for(const [id,cause] of Object.entries(s.goals_conceded))if(txt(cause)&&eventById.has(String(id))){const e=eventById.get(String(id));parts.push('Causa provável de golo sofrido · '+eventTools.minuteLabel(e.at_ms)+': '+txt(cause));}
+  if(events.length)parts.push('Evidências registadas no jogo: '+events.map(e=>{const label=eventTools?.types?.[e.type]||e.type;return eventTools.minuteLabel(e.at_ms)+' '+label;}).join('; '));
   return parts.join('\n');
  }
  function fingerprint(analysis){const s=state(analysis);return JSON.stringify({fields:s.fields,goals_conceded:s.goals_conceded});}

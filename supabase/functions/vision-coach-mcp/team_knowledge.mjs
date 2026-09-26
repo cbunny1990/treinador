@@ -129,7 +129,7 @@ function sourceFields(row){
     const actualGoals=new Set(events.filter(e=>e.type==='goal_against').map(e=>String(e.id)));
     for(const [id,note] of Object.entries(conceded))if(actualGoals.has(String(id)))add(`post_game.analysis.goals_conceded.${id}`,'Hipótese sobre golo sofrido',note,'hypothesis',{category:'goal_against',source_date:date,match_ref:row.id,event_ref:String(id)});
     for(const [i,event] of events.entries()){
-      const minute=event.minute??(Number.isFinite(Number(event.at_ms))?Math.floor(Number(event.at_ms)/60000):null);
+      const minute=event.minute??(event.at_ms!=null&&Number.isFinite(Number(event.at_ms))?Math.floor(Number(event.at_ms)/60000):null);
       const type=EVENT_LABELS[event.type]||'Acontecimento do jogo',parts=[type,minute!=null?`minuto ${minute}`:'',ZONE_LABELS[event.zone]||'',REASON_LABELS[event.reason]||'',text(event.note,1000)].filter(Boolean);
       if(parts.join(' ').length>=18)add(`match_events.events[${i}]`,type,parts.join(' · '),'registered_fact',{category:text(event.type,80)||'match_event',source_date:date,match_ref:row.id,player_ref:safeRef(event.player_ref),event_ref:String(event.id||i)});
     }

@@ -6,6 +6,8 @@ Calendário → jogo → Depois. A página mostra o resultado quando ambos os va
 
 O treinador pode registar resumo, pontos positivos, problemas, perdas, recuperações, criação ofensiva, comportamento defensivo, transições, bolas paradas, utilização, aspetos a manter/corrigir, observações, interpretação, hipóteses, decisões e prioridades seguintes. Causas de golos sofridos são hipóteses ligadas a um evento concreto. Os campos antigos permanecem preservados.
 
+O treinador pode concluir administrativamente um jogo sem ter usado o cronómetro. A ficha abre os relatórios individuais para cada UUID da convocatória e indica quantos continuam por preencher. Cada atleta exige texto escrito pelo treinador ou a ação explícita «Não observado»; fechar o jogo não cria observações, minutos ou resultado. Os relatórios podem ser editados e limpos com confirmação, mantendo versões anteriores no histórico. Ficam em `jogos.post_game.player_reports` e aparecem na ficha longitudinal do atleta e nos relatórios PDF do jogo e do atleta. O resultado, os lances recordados e a análise podem ser preenchidos mais tarde, incluindo offline.
+
 ## Memória e próximo treino
 
 O Workspace inclui propostas atuais de jogo na fila “Propostas por rever”, com data, adversário e ligação direta à secção “Depois”. Propostas duplicadas com o mesmo UUID do jogo aparecem uma vez. Se a revisão da análise ou dos lances mudar, ou um lance citado deixar de existir, a proposta fica numa lista separada de propostas desatualizadas e não conta como aprovável.

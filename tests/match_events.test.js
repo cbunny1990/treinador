@@ -12,6 +12,23 @@ test('events require started usage; planned match cannot collect counts',()=>{
  const r=plan(),stats=E.stats(r);assert.throws(()=>rec(r,'shot_on',60000),/depois de iniciar o cronómetro/);assert.equal(stats.events_available,false);assert.equal(stats.event_count,null);assert.equal(stats.counts,null);
 });
 
+test('completed match accepts recalled events without starting a clock or inventing minutes',()=>{
+ const completed={...plan(),estado:'concluido'};
+ let saved=evt(completed,'record',1200000,{id:'recalled',event_type:'goal_for',at_ms:null,note:'Golo observado'});
+ assert.equal(E.state(saved).events[0].at_ms,null);
+ assert.equal(E.state(saved).events[0].recorded_post_match,true);
+ assert.equal(E.minuteLabel(E.state(saved).events[0].at_ms),'Minuto não indicado');
+ assert.equal(M.state(saved).started_at,null);
+ assert.equal(E.stats(saved).provenance.minutes,'desconhecida');
+ saved=evt(saved,'edit',1200000,{id:'recalled',at_ms:12*60000});
+ assert.equal(E.state(saved).events[0].at_ms,12*60000);
+ saved=evt(saved,'edit',1200000,{id:'recalled',at_ms:null});
+ assert.equal(E.state(saved).events[0].at_ms,null);
+ saved=evt(saved,'delete',1200000,{id:'recalled',confirmed:true});
+ assert.equal(E.state(saved).events.length,0);
+ assert.throws(()=>evt({...completed,estado:'cancelado'},'record',1200000,{id:'blocked',event_type:'goal_for'}),/depois de iniciar o cronómetro/);
+});
+
 test('manually entered match result keeps provenance separate from counted event goals',()=>{
  const missing=E.stats(plan());assert.deepEqual(missing.recorded_result,{for:null,against:null,provenance:'desconhecida'});assert.equal(missing.events_available,false);assert.equal(missing.goals,null);
  const entered=E.stats({...plan(),golos_favor:2,golos_contra:1});assert.deepEqual(entered.recorded_result,{for:2,against:1,provenance:'introduzida_manual'});assert.equal(entered.provenance.result,'introduzida_manual');

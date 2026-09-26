@@ -1,5 +1,5 @@
 // Service worker - app shell offline.
-const CACHE = "vision-coach-v199";
+const CACHE = "vision-coach-v200";
 const APPROVED_IMAGE_CACHE = "vision-coach-approved-exercises-v1";
 const APPROVED_IMAGES = [
   "./assets/exercises/approved-20260922/01_ativacao_conduzir_passar_dar_opcao.png",
@@ -25,6 +25,7 @@ const ASSETS = [
   "./js/team_development.js",
   "./js/seasons.js",
   "./js/player_goals.js",
+  "./js/match_player_reports.js",
   "./js/player_archive.js",
   "./js/report_export.js",
   "./js/match_visual.js",

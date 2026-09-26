@@ -23,7 +23,7 @@ test('events blocked before start, quick record, counted stats and result notice
  await expect(page.locator('[data-match-events]')).toBeVisible();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
  await expect(page.locator('[data-match-events]')).not.toContainText('Resultado registado na ficha');
- await expect(page.getByText('Inicia primeiro a utilização e volta aqui',{exact:false})).toBeVisible();
+ await expect(page.getByText('Depois de o dares como terminado, podes registar lances',{exact:false})).toBeVisible();
  await page.evaluate(async id=>{await DB.modificar('jogos',id,row=>({...row,golos_favor:0,golos_contra:0}));await MatchVisualUI.view(id);},f.id);
  await start(page);const quick=page.locator('.match-event-quick');expect(await quick.evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(2);expect(await quick.locator('button').first().evaluate(el=>el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(48);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.evaluate(()=>window._matchTime+=420000);
  await page.getByRole('button',{name:'Perda de bola',exact:true}).click();

@@ -70,6 +70,7 @@
   <script src="js/match_analysis_store.js"></script>
   <script src="js/match_evidence.js"></script>
   <script src="js/player_goals.js"></script>
+  <script src="js/match_player_reports.js"></script>
   <script src="js/player_archive.js"></script>
   <script src="js/team_development.js"></script>
   <script src="js/seasons.js"></script>
@@ -96,7 +97,7 @@
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
         let hadController = !!navigator.serviceWorker.controller;
-  const serviceWorkerVersion = 199;
+  const serviceWorkerVersion = 200;
         const registration = await navigator.serviceWorker.register("sw.js?v="+serviceWorkerVersion).catch(() => null);
         if(!registration) return;
         registration.update().catch(() => {});
