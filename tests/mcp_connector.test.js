@@ -64,7 +64,7 @@ test("MCP expõe ferramentas Vision Coach essenciais", () => {
   assert.match(mcp, /REPORT_TOOLS, executeReportTool/);
   assert.match(mcp, /\.\.\.REPORT_TOOLS/);
   assert.match(mcp, /REPORT_TOOLS\.some\(\(tool\) => tool\.name === name\).*executeReportTool/);
-  assert.match(mcp, /SERVER_VERSION = "1\.14\.5"/);
+  assert.match(mcp, /SERVER_VERSION = "1\.14\.6"/);
   assert.match(mcp, /2026-07-28/);
   assert.match(mcp, /2025-11-25/);
 });
@@ -85,6 +85,17 @@ test("MCP pode selecionar os jogos mais recentes antes de recuperar contexto RAG
   assert.match(listing, /\.range\(offset, offset \+ limit\)/);
   assert.match(listing, /has_more: hasMore/);
   assert.match(listing, /next_offset: hasMore \? offset \+ limit : null/);
+});
+
+test("workspace summary uses bounded Supabase queries and an exact exercise count", () => {
+  const helper = fs.readFileSync(path.join(root, "supabase", "functions", "vision-coach-mcp", "workspace_summary.mjs"), "utf8");
+  assert.match(mcp, /getWorkspaceSummary\(admin, connector\)/);
+  assert.match(helper, /\.gte\("payload->>data", today\)/);
+  assert.match(helper, /\.order\("payload->>data", \{ ascending: true/);
+  assert.match(helper, /\.order\("payload->>data", \{ ascending: false/);
+  assert.match(helper, /\.limit\(5\)/);
+  assert.match(helper, /count: "exact", head: true/);
+  assert.doesNotMatch(helper, /\.select\([^\n]+\)\.eq\("team_id", teamId\)\.is\("deleted_at", null\);\s*$/);
 });
 
 test("RAG aceita um conjunto limitado de UUIDs para evidência de vários jogos", () => {

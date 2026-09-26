@@ -10,6 +10,7 @@ import { MATCH_ANALYSIS_TOOLS, executeMatchAnalysisTool } from "./match_analysis
 import { MATCH_EVIDENCE_TOOLS, executeMatchEvidenceTool } from "./match_evidence.mjs";
 import { updateMatchPreGame } from "./match_pre_game.mjs";
 import { listMatches } from "./match_queries.mjs";
+import { getWorkspaceSummary } from "./workspace_summary.mjs";
 import { PLAYER_GOAL_TOOLS, executePlayerGoalTool } from "./player_goals.mjs";
 import { TEAM_DEVELOPMENT_TOOLS, executeTeamDevelopmentTool } from "./team_development.mjs";
 import { SEASON_TOOLS, executeSeasonTool } from "./seasons.mjs";
@@ -18,7 +19,7 @@ import { TEAM_KNOWLEDGE_TOOLS, executeTeamKnowledgeTool } from "./team_knowledge
 import { SERVER_INSTRUCTIONS } from "./server_instructions.mjs";
 
 const SERVER_NAME = "vision-coach";
-const SERVER_VERSION = "1.14.5";
+const SERVER_VERSION = "1.14.6";
 const MODERN_PROTOCOL = "2026-07-28";
 const LEGACY_PROTOCOLS = new Set(["2025-11-25", "2025-06-18", "2025-03-26"]);
 const MAX_BODY_BYTES = 256 * 1024;
@@ -411,28 +412,7 @@ async function executeTool(admin: any, connector: any, name: string, args: any, 
 
   if (name === "workspace_summary") {
     requireScope(connector, "read");
-    const [{ data: team, error: teamError }, { data: records, error: recordsError }] = await Promise.all([
-      admin.from("teams").select("id,name,metadata,updated_at").eq("id", teamId).maybeSingle(),
-      admin.from("workspace_records").select("id,kind,payload,actor_type,actor_label,updated_at")
-        .eq("team_id", teamId).is("deleted_at", null),
-    ]);
-    if (teamError) throw teamError;
-    if (recordsError) throw recordsError;
-    const rows = records || [];
-    const matches = rows.filter((x: any) => x.kind === "match")
-      .sort((a: any,b: any) => String(a.payload?.data || "").localeCompare(String(b.payload?.data || "")));
-    const today = new Date().toISOString().slice(0,10);
-    const upcoming = matches.filter((x: any) => String(x.payload?.data || "") >= today).slice(0,5);
-    const trainings = rows.filter((x: any) => x.kind === "training")
-      .sort((a: any,b: any) => String(b.payload?.data || "").localeCompare(String(a.payload?.data || ""))).slice(0,5);
-    const exercises = rows.filter((x: any) => x.kind === "exercise");
-    return {
-      connector: { label: connector.label, scopes: connector.scopes },
-      team,
-      upcoming_matches: upcoming,
-      exercise_count: exercises.length,
-      recent_trainings: trainings,
-    };
+    return await getWorkspaceSummary(admin, connector);
   }
 
   if (name === "search_workspace") {
