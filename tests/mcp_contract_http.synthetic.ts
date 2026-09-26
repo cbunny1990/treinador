@@ -108,6 +108,27 @@ try {
   for (const name of ["prepare_weekly_plan_proposal", "accept_weekly_plan_proposal", "dismiss_weekly_plan_proposal"]) {
     check(listed.result.tools.some((item: any) => item.name === name), `The weekly proposal operation ${name} is not exposed over MCP HTTP.`);
   }
+  connector.scopes = ["read", "write"];
+  const unconfirmedWeeklyPrepare = await call("tools/call", {
+    name: "prepare_weekly_plan_proposal",
+    arguments: {
+      week_start: "2026-09-28", objective: "Proposta sintética", rationale: "Racional sintético.",
+      evidence: [{ source_type: "training", source_ref: archivePlayerRef, field: "review.continua", quote: "Citação sintética", record_updated_at: "v1" }],
+      confirmed: false,
+    },
+  });
+  check(unconfirmedWeeklyPrepare.result.isError === true, "MCP HTTP allowed a weekly proposal without confirmation.");
+  check(unconfirmedWeeklyPrepare.result.structuredContent.error === "explicit_confirmation_required", "MCP HTTP did not identify the missing weekly proposal confirmation.");
+  const unconfirmedWeeklyAccept = await call("tools/call", {
+    name: "accept_weekly_plan_proposal",
+    arguments: {
+      id: "70000000-0000-4000-8000-000000000007", expected_updated_at: "v1", expected_revision: 0,
+      coach_decision: "Decisão sintética.", confirmed: false,
+    },
+  });
+  check(unconfirmedWeeklyAccept.result.isError === true, "MCP HTTP accepted a weekly proposal without coach confirmation.");
+  check(unconfirmedWeeklyAccept.result.structuredContent.error === "explicit_confirmation_required", "MCP HTTP did not identify the missing weekly approval confirmation.");
+  connector.scopes = ["read"];
   const tool = listed.result.tools.find((item: any) => item.name === "evaluate_cross_session_pattern");
   check(tool, "The multi-source Jev tool is not exposed over MCP HTTP.");
   check(tool.inputSchema.properties.match_sources.minItems === 2, "MCP did not expose the minimum distinct-match evidence contract.");
@@ -163,7 +184,7 @@ try {
   check(refused.result.isError === true, "A call without a provider key should return an MCP error result.");
   check(/typesafe_api_not_configured/.test(refused.result.content?.[0]?.text || ""), "The missing Jev provider was not identified.");
   check(networkPaths.every((path) => path.endsWith("/rest/v1/rpc/mcp_connector_lookup") || path.endsWith("/rest/v1/workspace_records")), "The synthetic test attempted a non-fixture database or external provider request.");
-  console.log("MCP HTTP synthetic contract: initialize, archived athlete read, paginated lexical search, tools/list, RAG sensitive-query refusal, tool refusal without provider key — passed; external network calls: 0.");
+  console.log("MCP HTTP synthetic contract: initialize, archived athlete read, paginated lexical search, tools/list, weekly proposal confirmation refusals, RAG sensitive-query refusal, tool refusal without provider key — passed; external network calls: 0.");
 } finally {
   if (server) {
     server.shutdown();

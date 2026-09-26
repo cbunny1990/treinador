@@ -100,7 +100,7 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     const seededPlanning = await admin.from("workspace_records").insert([
       {
         id: completedTrainingRef, team_id: teams[0], kind: "training", actor_type: "human",
-        payload: { data: "2026-09-22", status: "ready", session: { status: "completed", blocks: [
+        payload: { data: "2026-09-22", status: "ready", review: { status: "done", continua: "Apoio irregular" }, session: { status: "completed", blocks: [
           { key: "recorded-support", exercise_ref: exerciseRef, exercise_name: "Apoio após passe", done: true, elapsed_ms: 60000 },
           { key: "untouched-finishing", exercise_ref: uuid(), exercise_name: "Remate", done: false, elapsed_ms: 0 },
         ] } },
@@ -146,7 +146,7 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     });
     assert.equal(initialize.status, 200, await initialize.clone().text());
     const initialized = await initialize.json();
-    assert.equal(initialized.result.serverInfo.version, "1.14.3");
+    assert.equal(initialized.result.serverInfo.version, "1.14.8");
     assert.match(initialized.result.instructions, /get_training_planning_context/);
     assert.match(initialized.result.instructions, /get_recent_match_context/);
     assert.match(initialized.result.instructions, /roster and availability, use list_players/i);
@@ -164,6 +164,9 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     assert.ok(tools.some((tool) => tool.name === "search_team_knowledge"));
     assert.ok(tools.some((tool) => tool.name === "get_training_planning_context"));
     assert.ok(tools.some((tool) => tool.name === "reindex_team_knowledge"));
+    assert.ok(tools.some((tool) => tool.name === "prepare_weekly_plan_proposal"));
+    assert.ok(tools.some((tool) => tool.name === "accept_weekly_plan_proposal"));
+    assert.ok(tools.some((tool) => tool.name === "dismiss_weekly_plan_proposal"));
     assert.equal(tools.find((tool) => tool.name === "search_team_knowledge").inputSchema.properties.match_refs.maxItems, 10);
     assert.equal(tools.find((tool) => tool.name === "search_team_knowledge").inputSchema.properties.per_match_limit.maximum, 4);
 
@@ -294,6 +297,90 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     assert.equal(planningContext.recent_matches.length, 5);
     assert.equal(planningContext.evidence_status, "provider_not_configured");
     assert.equal(planningContext.missing_data.target_training, false);
+
+    const trainingForProposal = await admin.from("workspace_records").select("updated_at")
+      .eq("team_id", teams[0]).eq("kind", "training").eq("id", completedTrainingRef).single();
+    assert.ifError(trainingForProposal.error);
+    const proposalArgs = {
+      week_start: "2026-09-28", objective: "Manter apoio após passe sob oposição", training1: completedTrainingRef,
+      rationale: "A avaliação do treino regista apoio irregular.",
+      hypothesis: "Confirmar se o apoio se mantém disponível sob oposição.",
+      evidence: [{ source_type: "training", source_ref: completedTrainingRef, field: "review.continua",
+        quote: "Apoio irregular", record_updated_at: trainingForProposal.data.updated_at }],
+    };
+    const refusedWeeklyProposalResponse = await mcpRequest(imageWriteToken, "tools/call", {
+      name: "prepare_weekly_plan_proposal", arguments: { ...proposalArgs, confirmed: false },
+    });
+    const refusedWeeklyProposal = JSON.parse((await refusedWeeklyProposalResponse.json()).result.content[0].text);
+    assert.equal(refusedWeeklyProposal.error, "explicit_confirmation_required");
+    const preparedWeeklyProposalResponse = await mcpRequest(imageWriteToken, "tools/call", {
+      name: "prepare_weekly_plan_proposal", arguments: { ...proposalArgs, confirmed: true },
+    });
+    assert.equal(preparedWeeklyProposalResponse.status, 200);
+    const preparedWeeklyProposal = JSON.parse((await preparedWeeklyProposalResponse.json()).result.content[0].text);
+    assert.equal(preparedWeeklyProposal.already_prepared, false);
+    assert.equal(preparedWeeklyProposal.record.agent_proposal.status, "proposed");
+    assert.equal(preparedWeeklyProposal.record.agent_proposal.coach_decision, "");
+    const repeatedWeeklyProposalResponse = await mcpRequest(imageWriteToken, "tools/call", {
+      name: "prepare_weekly_plan_proposal", arguments: { ...proposalArgs, confirmed: true },
+    });
+    const repeatedWeeklyProposal = JSON.parse((await repeatedWeeklyProposalResponse.json()).result.content[0].text);
+    assert.equal(repeatedWeeklyProposal.already_prepared, true, "repeating an identical proposal must be idempotent");
+    const refusedWeeklyOverwriteResponse = await mcpRequest(imageWriteToken, "tools/call", {
+      name: "save_weekly_plan", arguments: {
+        id: preparedWeeklyProposal.id, week_start: proposalArgs.week_start, objective: "Overwrite silencioso",
+        expected_updated_at: preparedWeeklyProposal.updated_at, expected_revision: preparedWeeklyProposal.record.revision, confirmed: true,
+      },
+    });
+    const refusedWeeklyOverwrite = JSON.parse((await refusedWeeklyOverwriteResponse.json()).result.content[0].text);
+    assert.equal(refusedWeeklyOverwrite.error, "weekly_plan_proposal_pending_decision");
+    const sourceBeforeChange = await admin.from("workspace_records").select("payload")
+      .eq("team_id", teams[0]).eq("kind", "training").eq("id", completedTrainingRef).single();
+    assert.ifError(sourceBeforeChange.error);
+    const changedTrainingPayload = { ...sourceBeforeChange.data.payload,
+      review: { ...sourceBeforeChange.data.payload.review, continua: "Apoio melhorou" } };
+    const changedTraining = await admin.from("workspace_records").update({ payload: changedTrainingPayload })
+      .eq("team_id", teams[0]).eq("kind", "training").eq("id", completedTrainingRef).select("updated_at").single();
+    assert.ifError(changedTraining.error);
+    const staleWeeklyApprovalResponse = await mcpRequest(imageWriteToken, "tools/call", {
+      name: "accept_weekly_plan_proposal", arguments: {
+        id: preparedWeeklyProposal.id, expected_updated_at: preparedWeeklyProposal.updated_at,
+        expected_revision: preparedWeeklyProposal.record.revision, coach_decision: "Aprovo.", confirmed: true,
+      },
+    });
+    const staleWeeklyApproval = JSON.parse((await staleWeeklyApprovalResponse.json()).result.content[0].text);
+    assert.equal(staleWeeklyApproval.error, "evidence_source_changed_read_again");
+    const dismissedWeeklyResponse = await mcpRequest(imageWriteToken, "tools/call", {
+      name: "dismiss_weekly_plan_proposal", arguments: {
+        id: preparedWeeklyProposal.id, expected_updated_at: preparedWeeklyProposal.updated_at,
+        expected_revision: preparedWeeklyProposal.record.revision, confirmed: true,
+      },
+    });
+    const dismissedWeekly = JSON.parse((await dismissedWeeklyResponse.json()).result.content[0].text);
+    assert.equal(dismissedWeekly.record.agent_proposal.status, "dismissed");
+    const currentWeekArgs = {
+      ...proposalArgs, week_start: "2026-10-05",
+      evidence: [{ ...proposalArgs.evidence[0], quote: "Apoio melhorou", record_updated_at: changedTraining.data.updated_at }],
+    };
+    const currentProposalResponse = await mcpRequest(imageWriteToken, "tools/call", {
+      name: "prepare_weekly_plan_proposal", arguments: { ...currentWeekArgs, confirmed: true },
+    });
+    const currentProposal = JSON.parse((await currentProposalResponse.json()).result.content[0].text);
+    assert.equal(currentProposal.record.agent_proposal.status, "proposed");
+    const acceptedWeeklyResponse = await mcpRequest(imageWriteToken, "tools/call", {
+      name: "accept_weekly_plan_proposal", arguments: {
+        id: currentProposal.id, expected_updated_at: currentProposal.updated_at,
+        expected_revision: currentProposal.record.revision,
+        coach_decision: "Aprovo testar o apoio sob oposição nesta semana.", confirmed: true,
+      },
+    });
+    const acceptedWeekly = JSON.parse((await acceptedWeeklyResponse.json()).result.content[0].text);
+    assert.equal(acceptedWeekly.record.agent_proposal.status, "accepted");
+    assert.equal(acceptedWeekly.record.agent_proposal.coach_decision, "Aprovo testar o apoio sob oposição nesta semana.");
+    const weeklyTrainingCount = await admin.from("workspace_records").select("id", { count: "exact", head: true })
+      .eq("team_id", teams[0]).eq("kind", "training").is("deleted_at", null);
+    assert.ifError(weeklyTrainingCount.error);
+    assert.equal(weeklyTrainingCount.count, 3, "accepting or dismissing a weekly proposal must not create training sessions");
 
     const exerciseImagePath = path.join(__dirname, "../assets/exercises/approved-20260922/01_ativacao_conduzir_passar_dar_opcao.png");
     const exerciseImageBytes = new Uint8Array(fs.readFileSync(exerciseImagePath));
