@@ -9,6 +9,7 @@ import { MATCH_EVENTS_TOOLS, executeMatchEventsTool } from "./match_events.mjs";
 import { MATCH_ANALYSIS_TOOLS, executeMatchAnalysisTool } from "./match_analysis.mjs";
 import { MATCH_EVIDENCE_TOOLS, executeMatchEvidenceTool } from "./match_evidence.mjs";
 import { updateMatchPreGame } from "./match_pre_game.mjs";
+import { listMatches } from "./match_queries.mjs";
 import { PLAYER_GOAL_TOOLS, executePlayerGoalTool } from "./player_goals.mjs";
 import { TEAM_DEVELOPMENT_TOOLS, executeTeamDevelopmentTool } from "./team_development.mjs";
 import { SEASON_TOOLS, executeSeasonTool } from "./seasons.mjs";
@@ -17,7 +18,7 @@ import { TEAM_KNOWLEDGE_TOOLS, executeTeamKnowledgeTool } from "./team_knowledge
 import { SERVER_INSTRUCTIONS } from "./server_instructions.mjs";
 
 const SERVER_NAME = "vision-coach";
-const SERVER_VERSION = "1.14.4";
+const SERVER_VERSION = "1.14.5";
 const MODERN_PROTOCOL = "2026-07-28";
 const LEGACY_PROTOCOLS = new Set(["2025-11-25", "2025-06-18", "2025-03-26"]);
 const MAX_BODY_BYTES = 256 * 1024;
@@ -140,13 +141,14 @@ const TOOLS = [
   },
   {
     name: "list_matches",
-    description: "Lista jogos do workspace por data. Usa date_order=desc para obter primeiro os jogos mais recentes; por defeito mantém ordem cronológica crescente.",
+    description: "Lista uma página de jogos, ordenada pela data no workspace. Usa date_order=desc para obter os mais recentes. A resposta inclui has_more e next_offset; continua com o offset indicado se precisares de percorrer mais histórico. A query é ordenada na origem e protegida pelo âmbito da equipa.",
     inputSchema: {
       type: "object",
       properties: {
         state: { type: "string", description: "Ex.: agendado, concluido, cancelado." },
         date_order: { type: "string", enum: ["asc", "desc"], default: "asc" },
         limit: { type: "integer", minimum: 1, maximum: 50 },
+        offset: { type: "integer", minimum: 0, maximum: 1000000, default: 0 },
       },
       additionalProperties: false,
     },
@@ -483,27 +485,12 @@ async function executeTool(admin: any, connector: any, name: string, args: any, 
     const limit = clampLimit(args?.limit, 20, 50);
     const dateOrder = args?.date_order ?? "asc";
     if (!["asc", "desc"].includes(dateOrder)) throw new Error("invalid_match_date_order");
-    const { data, error } = await admin.from("workspace_records")
-      .select("id,kind,payload,actor_type,actor_label,updated_at")
-      .eq("team_id", teamId).eq("kind", "match").is("deleted_at", null);
-    if (error) throw error;
-    let rows = data || [];
-    if (args?.state) rows = rows.filter((x: any) => String(x.payload?.estado || "") === String(args.state));
-    const matchDate = (value: unknown) => {
-      const date = String(value || "").slice(0, 10);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
-      const parsed = new Date(`${date}T00:00:00.000Z`);
-      return Number.isFinite(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === date ? date : null;
-    };
-    rows.sort((a: any,b: any) => {
-      const dateA = matchDate(a.payload?.data), dateB = matchDate(b.payload?.data);
-      if (dateA === null && dateB !== null) return 1;
-      if (dateB === null && dateA !== null) return -1;
-      const byDate = String(dateA || "").localeCompare(String(dateB || ""));
-      if (byDate !== 0) return dateOrder === "desc" ? -byDate : byDate;
-      return String(a.id || "").localeCompare(String(b.id || ""));
+    return await listMatches(admin, teamId, {
+      state: args?.state == null ? null : String(args.state),
+      dateOrder,
+      limit,
+      offset: args?.offset == null ? 0 : Number(args.offset),
     });
-    return rows.slice(0, limit);
   }
 
   if (name === "get_match") {

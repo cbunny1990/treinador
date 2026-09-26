@@ -15,6 +15,7 @@ test("MCP directs hybrid RAG questions to context tools and structured facts to 
   assert.match(SERVER_INSTRUCTIONS, /attendance and actual timings, use get_training_session/i);
   assert.match(SERVER_INSTRUCTIONS, /recorded attendance and match usage, use get_player_participation_history or get_player_report/i);
   assert.match(SERVER_INSTRUCTIONS, /recorded match events, statistics, and player usage, use get_match_report/i);
+  assert.match(SERVER_INSTRUCTIONS, /list_matches is paginated[\s\S]*has_more\/next_offset must be checked/i);
   assert.match(SERVER_INSTRUCTIONS, /first locate candidate citations with search_team_knowledge or get_cross_session_evidence/i);
   assert.match(SERVER_INSTRUCTIONS, /Never invent a source UUID, revision, field or quote/i);
   assert.match(SERVER_INSTRUCTIONS, /evaluate_cross_session_pattern with at least two distinct matches and one or more training records/i);

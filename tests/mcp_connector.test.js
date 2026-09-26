@@ -64,7 +64,7 @@ test("MCP expõe ferramentas Vision Coach essenciais", () => {
   assert.match(mcp, /REPORT_TOOLS, executeReportTool/);
   assert.match(mcp, /\.\.\.REPORT_TOOLS/);
   assert.match(mcp, /REPORT_TOOLS\.some\(\(tool\) => tool\.name === name\).*executeReportTool/);
-  assert.match(mcp, /SERVER_VERSION = "1\.14\.4"/);
+  assert.match(mcp, /SERVER_VERSION = "1\.14\.5"/);
   assert.match(mcp, /2026-07-28/);
   assert.match(mcp, /2025-11-25/);
 });
@@ -76,11 +76,15 @@ test("MCP pode selecionar os jogos mais recentes antes de recuperar contexto RAG
   const handlerStart = mcp.indexOf('if (name === "list_matches")');
   const handler = mcp.slice(handlerStart, mcp.indexOf('if (name === "get_match")', handlerStart));
   assert.match(handler, /args\?\.date_order \?\? "asc"/);
-  assert.match(handler, /dateA === null && dateB !== null/);
-  assert.match(handler, /dateB === null && dateA !== null/);
-  assert.match(handler, /dateOrder === "desc" \? -byDate : byDate/);
-  assert.match(handler, /return String\(a\.id \|\| ""\)\.localeCompare/);
-  assert.match(handler, /rows\.slice\(0, limit\)/);
+  assert.match(schema, /offset:[\s\S]*maximum: 1000000/);
+  assert.match(handler, /offset: args\?\.offset == null \? 0 : Number\(args\.offset\)/);
+  assert.match(mcp, /listMatches\(admin, teamId/);
+  const listing = fs.readFileSync(path.join(root, "supabase", "functions", "vision-coach-mcp", "match_queries.mjs"), "utf8");
+  assert.match(listing, /order\("payload->>data"/);
+  assert.match(listing, /order\("id"/);
+  assert.match(listing, /\.range\(offset, offset \+ limit\)/);
+  assert.match(listing, /has_more: hasMore/);
+  assert.match(listing, /next_offset: hasMore \? offset \+ limit : null/);
 });
 
 test("RAG aceita um conjunto limitado de UUIDs para evidência de vários jogos", () => {
