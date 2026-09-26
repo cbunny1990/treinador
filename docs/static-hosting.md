@@ -11,7 +11,7 @@ Gerar um pacote local com `npm run build:static` e copiar o conteúdo de `dist/v
 
 Para escolher outra pasta nova dentro do repositório: `npm run build:static -- --out dist/cbunny-review`.
 
-O pacote local mais recente preparado para revisão é `dist/cbunny-server-review-v199/`. Foi gerado da cache PWA v199 e ainda não foi enviado para o alojamento. O E2E em subpasta passou 1/1; os seis ficheiros aprovados de exercícios correspondem byte a byte aos originais (SHA-256).
+O pacote local mais recente preparado para revisão é `dist/cbunny-server-review-v200-final/`. Foi gerado da cache PWA v200 e ainda não foi enviado para o alojamento. O E2E em subpasta passou 1/1; os seis ficheiros aprovados de exercícios correspondem byte a byte aos originais (SHA-256). O `main` publicado permanece na v170 e está 147 commits atrás desta branch; a publicação de todo o pacote incluiria esses trabalhos ainda não integrados.
 
 Preservar os nomes, maiúsculas/minúsculas, subpastas e bytes dos ficheiros. As imagens aprovadas dos exercícios são servidas dos originais em `assets/`; não as recomprimir nem substituir.
 
