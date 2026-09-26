@@ -30,6 +30,16 @@ const archiveRecord = {
     }),
   },
 };
+const weeklyTrainingRef = "80000000-0000-4000-8000-000000000008";
+const weeklyTrainingRecord = {
+  id: weeklyTrainingRef,
+  kind: "training",
+  team_id: connector.team_id,
+  updated_at: "synthetic-training-v1",
+  payload: { data: "2026-09-22", review: { status: "done", continua: "Apoio irregular" }, session: { status: "completed" } },
+};
+const weeklyDocuments = new Map<string, any>();
+let weeklyProposalRpcWrites = 0;
 const networkPaths: string[] = [];
 const workspaceQueries: URLSearchParams[] = [];
 let server: any;
@@ -53,6 +63,25 @@ globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   if (url.origin === "http://supabase.synthetic" && url.pathname === "/rest/v1/rpc/mcp_connector_lookup") {
     return Response.json(connector);
   }
+  if (url.origin === "http://supabase.synthetic" && url.pathname === "/rest/v1/rpc/head_coach_put_record") {
+    const args = JSON.parse(String(init?.body || "{}"));
+    check(args.p_team_id === connector.team_id && args.p_kind === "document", "Weekly proposal RPC was not scoped to the authorized team and document kind.");
+    const payload = args.p_payload;
+    check(payload?.type === "weekly_plan", "Weekly proposal RPC attempted to write a different document type.");
+    let row = weeklyDocuments.get(payload.external_key);
+    if (args.p_record_id) check(row?.id === args.p_record_id, "Weekly proposal update used an unknown document UUID.");
+    else check(!row, "Weekly proposal creation attempted a duplicate document.");
+    row = {
+      id: args.p_record_id || "90000000-0000-4000-8000-000000000009",
+      team_id: connector.team_id,
+      kind: "document",
+      payload,
+      updated_at: row ? "synthetic-weekly-v2" : "synthetic-weekly-v1",
+    };
+    weeklyDocuments.set(payload.external_key, row);
+    weeklyProposalRpcWrites++;
+    return Response.json(row);
+  }
   if (url.origin === "http://supabase.synthetic" && url.pathname === "/rest/v1/workspace_records") {
     workspaceQueries.push(url.searchParams);
     const query = url.searchParams;
@@ -69,6 +98,13 @@ globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     check(query.get("team_id") === `eq.${connector.team_id}`, "Archived athlete read was not scoped to the authorized team.");
     check(query.get("deleted_at") === "is.null", "Archived athlete read included deleted archive documents.");
     const kind = query.get("kind");
+    if (kind === "eq.training" && query.get("id") === `eq.${weeklyTrainingRef}`) return Response.json([weeklyTrainingRecord]);
+    if (kind === "eq.document" && query.get("payload->>type") !== "eq.player_archive") {
+      const byId = query.get("id")?.replace(/^eq\./, "");
+      const byKey = query.get("payload->>external_key")?.replace(/^eq\./, "");
+      const row = [...weeklyDocuments.values()].find((item) => item.id === byId || item.payload.external_key === byKey);
+      return Response.json(row ? [row] : []);
+    }
     check(["eq.document", "eq.match", "eq.training"].includes(kind || ""), "Archived athlete read queried an unrelated record type.");
     if (kind === "eq.document") {
       check(query.get("payload->>type") === "eq.player_archive", "Archived athlete read did not filter archive documents.");
@@ -160,6 +196,44 @@ try {
   check(archivedPlayer.result.structuredContent.participation_history.player_ref === archivePlayerRef, "The MCP archive result did not resolve participation by stable athlete UUID.");
   check(workspaceQueries.length === 3, "The MCP archive read did not query the archive and its historical game/training records.");
 
+  connector.scopes = ["read", "write"];
+  const weeklyArgs = {
+    week_start: "2026-09-28", objective: "Manter apoio após passe sob oposição", training1: weeklyTrainingRef,
+    rationale: "A avaliação do treino regista apoio irregular.", hypothesis: "Confirmar o apoio sob oposição.",
+    evidence: [{ source_type: "training", source_ref: weeklyTrainingRef, field: "review.continua",
+      quote: "Apoio irregular", record_updated_at: weeklyTrainingRecord.updated_at }],
+  };
+  const preparedWeekly = await call("tools/call", {
+    name: "prepare_weekly_plan_proposal", arguments: { ...weeklyArgs, confirmed: true },
+  });
+  check(!preparedWeekly.result.isError, `The weekly proposal failed over MCP HTTP: ${JSON.stringify(preparedWeekly.result)}`);
+  check(preparedWeekly.result.structuredContent.record.agent_proposal.status === "proposed", "MCP HTTP did not preserve the pending proposal state.");
+  check(preparedWeekly.result.structuredContent.record.agent_proposal.coach_decision === "", "MCP HTTP invented the coach's decision.");
+  const repeatedWeekly = await call("tools/call", {
+    name: "prepare_weekly_plan_proposal", arguments: { ...weeklyArgs, confirmed: true },
+  });
+  check(repeatedWeekly.result.structuredContent.already_prepared === true, "MCP HTTP did not make repeated proposal creation idempotent.");
+  const bypassWeekly = await call("tools/call", {
+    name: "save_weekly_plan", arguments: {
+      id: preparedWeekly.result.structuredContent.id, week_start: weeklyArgs.week_start, objective: "Overwrite",
+      expected_updated_at: preparedWeekly.result.structuredContent.updated_at,
+      expected_revision: preparedWeekly.result.structuredContent.record.revision, confirmed: true,
+    },
+  });
+  check(bypassWeekly.result.isError === true && bypassWeekly.result.structuredContent.error === "weekly_plan_proposal_pending_decision", "MCP HTTP allowed a direct save to bypass a pending proposal.");
+  const acceptedWeekly = await call("tools/call", {
+    name: "accept_weekly_plan_proposal", arguments: {
+      id: preparedWeekly.result.structuredContent.id, expected_updated_at: preparedWeekly.result.structuredContent.updated_at,
+      expected_revision: preparedWeekly.result.structuredContent.record.revision,
+      coach_decision: "Aprovo testar o apoio sob oposição.", confirmed: true,
+    },
+  });
+  check(!acceptedWeekly.result.isError, `The weekly proposal approval failed over MCP HTTP: ${JSON.stringify(acceptedWeekly.result)}`);
+  check(acceptedWeekly.result.structuredContent.record.agent_proposal.status === "accepted", "MCP HTTP did not persist the explicit approval.");
+  check(acceptedWeekly.result.structuredContent.record.agent_proposal.coach_decision === "Aprovo testar o apoio sob oposição.", "MCP HTTP lost the coach's decision.");
+  check(weeklyProposalRpcWrites === 2, "MCP HTTP created a duplicate or allowed an overwrite while the proposal was pending.");
+  connector.scopes = ["read"];
+
   const lexicalSearch = await call("tools/call", {
     name: "search_workspace",
     arguments: { query: "apoio após passe", kinds: ["match"], limit: 10 },
@@ -183,8 +257,8 @@ try {
   });
   check(refused.result.isError === true, "A call without a provider key should return an MCP error result.");
   check(/typesafe_api_not_configured/.test(refused.result.content?.[0]?.text || ""), "The missing Jev provider was not identified.");
-  check(networkPaths.every((path) => path.endsWith("/rest/v1/rpc/mcp_connector_lookup") || path.endsWith("/rest/v1/workspace_records")), "The synthetic test attempted a non-fixture database or external provider request.");
-  console.log("MCP HTTP synthetic contract: initialize, archived athlete read, paginated lexical search, tools/list, weekly proposal confirmation refusals, RAG sensitive-query refusal, tool refusal without provider key — passed; external network calls: 0.");
+  check(networkPaths.every((path) => path.endsWith("/rest/v1/rpc/mcp_connector_lookup") || path.endsWith("/rest/v1/rpc/head_coach_put_record") || path.endsWith("/rest/v1/workspace_records")), "The synthetic test attempted a non-fixture database or external provider request.");
+  console.log("MCP HTTP synthetic contract: initialize, archived athlete read, paginated lexical search, weekly proposal prepare/idempotency/approve and confirmation refusal, RAG sensitive-query refusal, tool refusal without provider key — passed; external network calls: 0.");
 } finally {
   if (server) {
     server.shutdown();
