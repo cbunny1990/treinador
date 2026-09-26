@@ -30,6 +30,8 @@ A navegação principal tem seis áreas:
 
 Pesquisa e histórico (`#/pesquisa`), Semana e evolução (`#/evolucao`) e Épocas (`#/epocas`) são páginas secundárias, acessíveis a partir do Workspace e dos registos relacionados; não são separadores da navegação principal.
 
+Quando existem conflitos de sincronização, o cartão **Conflitos de sincronização** do Workspace abre a fila de revisão na mesma página. Os casos com duas versões oferecem comparação por campo; identidades duplicadas de registos pesquisáveis oferecem procura por chave externa exata antes de qualquer ligação. Casos sem chave segura continuam preservados e pedem revisão manual. A revisão nunca executa automaticamente uma decisão do treinador.
+
 O painel operacional apresenta até quatro observações ativas mais recentes, com data, origem, excerto e ligação à ficha completa. Memórias arquivadas e outros tipos de memória não aparecem neste cartão; a pesquisa abre o histórico completo.
 
 Chat embutido, OpenRouter, gerador de treino IA, biblioteca antiga de exercícios e dashboard Head Coach antigo foram removidos do produto ativo.

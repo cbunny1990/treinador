@@ -2316,7 +2316,7 @@ const RemoteWorkspace = {
   async previewInvalidIdentityRecovery(storeName, localId) {
     const config = remoteLoadConfig();
     const conflict = (config.conflicts || []).find((item) => item.store === storeName
-      && String(item.local_id) === String(localId) && item.reason === "invalid_local_sync_id");
+      && String(item.local_id) === String(localId) && ["invalid_local_sync_id", "duplicate_identity"].includes(item.reason));
     if (!conflict) throw new Error("Este conflito já mudou. Sincroniza novamente antes de procurar uma correspondência.");
     if (!REMOTE_STORE_KINDS[storeName]) return { status: "unsupported_identity" };
     const local = (await DB.listar(storeName)).find((item) => String(item.id) === String(localId)
@@ -2326,6 +2326,12 @@ const RemoteWorkspace = {
     const remoteTeamId = config.remoteTeamId;
     if (!remoteTeamId || (local.remote_team_id && local.remote_team_id !== remoteTeamId)) return { status: "team_mismatch" };
     const client = await this.init();
+    if (conflict.reason === "duplicate_identity" && remoteIsUuid(local.sync_id)) {
+      const oldIdentity = await client.from("workspace_records").select("id")
+        .eq("team_id", remoteTeamId).eq("id", local.sync_id).maybeSingle();
+      if (oldIdentity.error) throw oldIdentity.error;
+      if (oldIdentity.data) return { status: "identity_already_exists" };
+    }
     const kind = REMOTE_STORE_KINDS[storeName];
     const { data, error } = await client.from("workspace_records")
       .select("id,kind,payload,updated_at,deleted_at")

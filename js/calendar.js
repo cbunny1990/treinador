@@ -88,7 +88,7 @@ function visionCalendarEvents(snapshot, options) {
   const slotKey = (event) => [event.date, event.time || ""].join("|");
   const actualTrainingSlots = new Set(trainings.map(slotKey));
   const plannedSlots = new Set();
-  const planned = visionPlannedTrainings(snapshot?.team, from, weeks)
+  const planned = cfg.includePlanned === false ? [] : visionPlannedTrainings(snapshot?.team, from, weeks)
     .filter((event) => {
       const key = slotKey(event);
       if (actualTrainingSlots.has(key) || plannedSlots.has(key)) return false;

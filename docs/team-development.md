@@ -1,5 +1,9 @@
 # Planeamento semanal e evolução da equipa
 
+## Percurso na app
+
+O ecrã **Semana e evolução** abre em **Planear e avaliar a semana**. A segunda tarefa, **Acompanhar objetivos da equipa**, abre a ficha dos objetivos sem misturar os dois formulários. Cada tarefa mostra primeiro a ação de registo; as semanas e os objetivos já guardados aparecem abaixo para consulta e edição. Na criação, a avaliação final da semana, as fontes e a análise detalhada de um objetivo ficam recolhidas até o treinador as abrir. Ao editar, as secções com dados existentes abrem para revisão. As fichas históricas mostram o resumo e mantêm evidências e avaliação acessíveis em **Ver sessões e avaliação** ou **Ver evidências e avaliação**. Links vindos de propostas e pesquisas abrem diretamente a tarefa dos objetivos.
+
 ## Plano semanal
 
 Abre **Workspace → Semana e evolução**. Cada plano usa a segunda-feira como chave da semana e liga treino 1, treino 2 e jogo aos registos existentes por UUID remoto. A nota de relação descreve a progressão planeada. A avaliação final é preenchida pelo treinador depois das sessões; o sistema não a deduz do número de treinos. O treinador pode associar à avaliação fontes explícitas — treinos, jogos e observações existentes — e consultá-las na semana. Ao editar, as ligações existentes mantêm-se e as avaliações substituídas ficam acessíveis no histórico da semana. As associações aos objetivos são listas de seleção por toque para PC e telemóvel e podem incluir sessões e exercícios.

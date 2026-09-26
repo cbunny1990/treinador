@@ -547,7 +547,7 @@ test("Workspace includes Head Coach team priority proposals in the review queue"
   await page.goto("/");
   const queue = page.getByRole("heading", { name: /Propostas por rever/ }).locator("xpath=..");
   await expect(queue).toContainText("1");
-  await expect(queue.getByRole("link", { name: /Apoio após passe/ })).toHaveAttribute("href", "#/evolucao");
+  await expect(queue.getByRole("link", { name: /Apoio após passe/ })).toHaveAttribute("href", "#/evolucao?focus=objetivos");
   await expect(queue.getByRole("link", { name: /Prioridade arquivada E2E/ })).toHaveCount(0);
 });
 
@@ -1384,22 +1384,33 @@ test("conflito de eliminação offline mostra versões e exige uma escolha expl�
   await expect.poll(() => page.evaluate(() => window.__identityRecovery)).toEqual(["jogos", "12", "match-stable", "local-v2", "v2"]);
 });
 
-test("atalho do Workspace abre diretamente a fila de conflitos", async ({ page }) => {
+test("Workspace permite rever e decidir um conflito sem sair da página", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined" && typeof router === "function" && typeof MCPConnectors !== "undefined");
   await page.evaluate(async () => {
     RemoteWorkspace.status = async () => ({ configured: true, signedIn: true, email: "treinador@example.test", remoteTeamId: "team-test", conflicts: [{ store: "jogos", local_id: null, sync_id: "match-conflict", reason: "version_mismatch", expected_updated_at: "v1", remote_updated_at: "v2" }] });
     RemoteWorkspace.getConfig = () => ({ url: "https://example.supabase.co", publishableKey: "sb_publishable_test" });
     RemoteWorkspace.listTeams = async () => [{ id: "team-test", name: "Equipa de teste" }];
+    RemoteWorkspace.scheduleSync = () => {};
+    RemoteWorkspace.syncNow = async () => ({ pulled: 0, deleted: 0, conflicts: [] });
+    RemoteWorkspace.readVersionConflict = async () => ({ store: "jogos", sync_id: "match-conflict", remote_updated_at: "v2", local_updated_at: "local-v2", local: { adversario: "Local" }, remote: { adversario: "Remoto" }, merge_unavailable: "Escolhe a versão a manter." });
+    RemoteWorkspace.resolveVersionConflict = async (...args) => { window.__workspaceConflictDecision = args; return { conflicts: [] }; };
+    window.confirm = () => true;
+    window.alert = () => {};
     MCPConnectors.list = async () => [];
     await router();
   });
-  await page.getByRole("link", { name: "Rever conflitos" }).click();
-  await expect(page).toHaveURL(/#\/definicoes\?focus=conflitos$/);
+  const workspaceUrl = page.url();
+  await page.getByRole("button", { name: "Abrir revisão" }).click();
+  expect(page.url()).toBe(workspaceUrl);
+  await expect(page.locator("[data-workspace-conflicts]")).toHaveAttribute("open", "");
   await expect(page.getByText("1 ocorrências detetadas")).toBeVisible();
   await expect.poll(() => page.locator("#remote-conflicts").evaluate(element => element.getBoundingClientRect().top)).toBeLessThan(140);
   const top = await page.locator("#remote-conflicts").evaluate(element => element.getBoundingClientRect().top);
   expect(top).toBeGreaterThanOrEqual(-8);
+  await page.getByRole("button", { name: "Comparar versões" }).click();
+  await page.getByRole("button", { name: "Usar versão do workspace remoto" }).click();
+  await expect.poll(() => page.evaluate(() => window.__workspaceConflictDecision)).toEqual(["match-conflict", "jogos", "keep_remote", "v2", "local-v2", null]);
 });
 
 test("Definições carrega em paralelo e não lê os bytes de media para contar conflitos", async ({ page }) => {
