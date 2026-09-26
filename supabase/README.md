@@ -4,7 +4,7 @@ A aplicação continua a funcionar offline com IndexedDB, mas o deployment ofici
 
 ## 1. Estado do projeto oficial
 
-O projeto Supabase de produção já existe e as migrations em `supabase/migrations/` foram aplicadas. Para criar outro ambiente do zero, aplicar as migrations pela ordem do nome do ficheiro.
+O projeto Supabase de produção já existe, mas nem todas as migrations desta branch estão aplicadas. A auditoria read-only de 26/09/2026 confirmou 18 versões remotas aplicadas e 9 pendentes. O remoto já tem `20260924144849`, que vem depois de oito das pendentes (`20260923120000` a `20260924120000`); por isso, o deploy está bloqueado até rever e reconciliar a sequência. A migration local `20260926120000_enforce_team_member_roles.sql` também ainda não está publicada. Não executar `db push` diretamente. Para criar outro ambiente do zero, aplicar todas as migrations pela ordem do nome do ficheiro.
 
 As migrations criam e protegem:
 - equipas e membros;
