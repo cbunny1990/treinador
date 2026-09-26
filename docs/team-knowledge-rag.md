@@ -1,8 +1,8 @@
 # Vision Coach — pesquisa RAG da equipa
 
-## Estado do branch e do projeto remoto (25/09/2026)
+## Estado do branch e do projeto remoto (26/09/2026)
 
-O branch local contém a pesquisa híbrida estruturada + semântica e os respetivos testes em Postgres WASM e stack Supabase isolada. A última leitura read-only do Supabase partilhado encontrou 18 migrations aplicadas e oito pendentes, `vector` disponível mas não instalada, sem tabelas/chunks RAG, `vision-coach-mcp` v7 e `head-coach-gateway` v1 sem a integração desta branch. Não foram lidos valores de secrets. Até revisão do treinador e autorizações explícitas separadas, não aplicar migrations, publicar Edge Functions, configurar secrets, enviar texto ao provider nem reindexar dados reais.
+O branch local contém a pesquisa híbrida estruturada + semântica e os respetivos testes em Postgres WASM e stack Supabase isolada. A auditoria read-only mais recente do Supabase partilhado encontrou 18 migrations aplicadas e nove pendentes; oito versões locais anteriores à migration remota `20260924144849` ainda precisam de revisão da ordem. A extensão `vector` está disponível mas não instalada, ainda não existem tabelas/chunks RAG remotos, `vision-coach-mcp` está na v7, `head-coach-gateway` na v1 e `vision-coach-connectors` na v2, sem o código RAG desta branch. Não foram lidos valores de secrets e a configuração de provider não foi confirmada. Até revisão do treinador e autorizações explícitas separadas, não aplicar migrations, publicar Edge Functions, configurar secrets, enviar texto ao provider nem reindexar dados reais.
 
 O snapshot remoto acima é a última verificação documentada, não uma garantia em tempo real. As secções históricas abaixo preservam o contexto das implementações e testes locais, sem afirmar que o RAG já está ativo para a equipa.
 

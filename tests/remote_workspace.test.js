@@ -1529,6 +1529,46 @@ test("dois dispositivos sincronizam criação, edição e eliminação sem dupli
   });
 });
 
+test("objetivos individuais acima de 50 persistem e sincronizam entre dispositivos", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    const playerRef = "89000000-0000-4000-8000-000000000001";
+    const goals = Array.from({ length: 51 }, (_, index) => ({
+      id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      title: `Objetivo ${index + 1}`, started_at: "2026-09-01", status: "completed",
+      evidence_refs: [], exercise_refs: [], notes: `Histórico ${index + 1}`, updated_at: new Date(index * 1000).toISOString(), history: [],
+    }));
+    useDevice(0);
+    const localId = await devices[0].criar("jogadores", {
+      team_id: "default", sync_id: playerRef, remote_team_id: remoteTeamId, nome: "Atleta sintético",
+      development_goals: { schema: "vision-player-goals@1", revision: 51, items: goals }, sync_dirty: true,
+    });
+    assert.equal((await RemoteWorkspace._syncRecords(remoteTeamId, "coach")).pushed, 1);
+
+    useDevice(1);
+    assert.equal((await RemoteWorkspace._syncRecords(remoteTeamId, "coach")).pulled, 1);
+    let player = (await devices[1].listar("jogadores"))[0];
+    assert.equal(player.development_goals.items.length, 51);
+    assert.equal(player.development_goals.items[0].notes, "Histórico 1");
+    player = await devices[1].atualizar("jogadores", {
+      ...player,
+      development_goals: { ...player.development_goals, revision: 52, items: [...player.development_goals.items, {
+        id: "00000000-0000-4000-8000-000000000052", title: "Objetivo 52", started_at: "2026-09-26", status: "active",
+        evidence_refs: [], exercise_refs: [], notes: "Novo objetivo", history: [],
+      }] },
+      sync_dirty: true,
+    });
+    assert.equal((await RemoteWorkspace._syncRecords(remoteTeamId, "coach")).pushed, 1);
+
+    useDevice(0);
+    assert.equal((await RemoteWorkspace._syncRecords(remoteTeamId, "coach")).pulled, 1);
+    const reopened = await devices[0].obter("jogadores", localId);
+    assert.equal(reopened.development_goals.items.length, 52);
+    assert.equal(reopened.development_goals.items[50].notes, "Histórico 51");
+    assert.equal(reopened.development_goals.items[51].title, "Objetivo 52");
+    assert.equal(remote.rows.filter((row) => row.kind === "player" && row.id === playerRef).length, 1);
+  });
+});
+
 test("consolidação pagina registos e media antes de decidir que IDs remotos desapareceram",async()=>{
  await withTwoDeviceSync(async({remote,devices,remoteTeamId,useDevice})=>{
   const originals={navigator:Object.getOwnPropertyDescriptor(globalThis,"navigator"),localStorage:globalThis.localStorage,
