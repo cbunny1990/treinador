@@ -13,6 +13,13 @@ test('weekly plans refuse malformed references instead of silently converting th
  assert.throws(()=>D.saveWeek({body:old.body},{week_start:'2026-09-23',training1:'legacy-local-id'},{expected_revision:0}),/referência de treino 1 não é um UUID válido/i);
  assert.equal(JSON.parse(old.body).training1,'legacy-local-id');
 });
+test('weekly plan proposal status, citations, and coach decision remain in revision history',()=>{
+ const pending=D.saveWeek(null,{week_start:'2026-09-23',objective:'Progressão do apoio',relation_note:'Introduzir oposição',agent_proposal:{status:'proposed',proposal_key:'proposal-1',rationale:'O problema apareceu no jogo.',hypothesis:'Verificar sob oposição.',evidence_refs:[{type:'match',id:M,field:'analysis.problems',quote:'Perdas na saída',record_updated_at:'match-v1'}]}},{expected_revision:0});
+ assert.equal(pending.week_start,'2026-09-21');assert.equal(pending.agent_proposal.status,'proposed');assert.equal(pending.agent_proposal.coach_decision,'');assert.equal(pending.agent_proposal.evidence_refs[0].quote,'Perdas na saída');
+ const accepted=D.saveWeek({body:JSON.stringify(pending)},{...pending,agent_proposal:{...pending.agent_proposal,status:'accepted',coach_decision:'Aprovo esta progressão.'}},{expected_revision:1});
+ assert.equal(accepted.agent_proposal.status,'accepted');assert.equal(accepted.agent_proposal.coach_decision,'Aprovo esta progressão.');assert.equal(accepted.history.at(-1).agent_proposal.status,'proposed');
+ assert.throws(()=>D.saveWeek({body:JSON.stringify(pending)},{...pending,agent_proposal:{...pending.agent_proposal,evidence_refs:[{type:'training',id:'legacy-id',field:'review'}]}},{expected_revision:1}),/evidência da proposta é inválida/i);
+});
 test('team goals reject malformed session, evidence, exercise, and proposal references before saving',()=>{
  const base={title:'Apoio',stage:'identified'};
  for(const field of ['sessions','evidence','worked_sessions','exercises'])assert.throws(()=>D.saveGoal(null,{...base,[field]:[{type:field==='exercises'?'exercise':'training',id:'legacy-local-id'}]},{expected_revision:0}),/referência .* inválida/i,field);

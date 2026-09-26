@@ -20,7 +20,7 @@ import { TEAM_KNOWLEDGE_TOOLS, executeTeamKnowledgeTool } from "./team_knowledge
 import { SERVER_INSTRUCTIONS } from "./server_instructions.mjs";
 
 const SERVER_NAME = "vision-coach";
-const SERVER_VERSION = "1.14.7";
+const SERVER_VERSION = "1.14.8";
 const MODERN_PROTOCOL = "2026-07-28";
 const LEGACY_PROTOCOLS = new Set(["2025-11-25", "2025-06-18", "2025-03-26"]);
 const MAX_BODY_BYTES = 256 * 1024;

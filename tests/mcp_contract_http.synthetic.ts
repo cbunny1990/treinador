@@ -105,6 +105,9 @@ try {
   check(/For a permanently removed athlete's retained development history, use get_archived_player_development/i.test(initialized.result.instructions), "Missing MCP route for archived athlete development.");
 
   const listed = await call("tools/list");
+  for (const name of ["prepare_weekly_plan_proposal", "accept_weekly_plan_proposal", "dismiss_weekly_plan_proposal"]) {
+    check(listed.result.tools.some((item: any) => item.name === name), `The weekly proposal operation ${name} is not exposed over MCP HTTP.`);
+  }
   const tool = listed.result.tools.find((item: any) => item.name === "evaluate_cross_session_pattern");
   check(tool, "The multi-source Jev tool is not exposed over MCP HTTP.");
   check(tool.inputSchema.properties.match_sources.minItems === 2, "MCP did not expose the minimum distinct-match evidence contract.");
