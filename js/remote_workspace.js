@@ -2135,8 +2135,12 @@ const RemoteWorkspace = {
     const result = { pushed: 0, pulled: 0, conflicts: [], deleted: 0 };
 
     const tombstoneResult = await this._syncTombstones(remoteTeamId);
-    const teamResult = await this.syncTeam(remoteTeamId);
-    const snapshots = await this._readSyncSnapshots(remoteTeamId);
+    // The team profile and sync snapshots are independent once tombstones have
+    // been applied. Start them together to avoid an extra network round trip.
+    const [teamResult, snapshots] = await Promise.all([
+      this.syncTeam(remoteTeamId),
+      this._readSyncSnapshots(remoteTeamId),
+    ]);
     const recordResult = await this._syncRecords(remoteTeamId, session.user.id, snapshots.records, snapshots.media);
     const activityResult = await this._syncActivity(remoteTeamId, session.user.id, snapshots.activity);
     const mediaResult = await this._syncMedia(remoteTeamId, session.user.id, snapshots.media);

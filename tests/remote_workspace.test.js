@@ -2865,6 +2865,9 @@ test("sync lê em paralelo os snapshots independentes antes de reconciliar regis
   const calls = [];
   let activeReads = 0;
   let maxActiveReads = 0;
+  let tombstonesDone = false;
+  let teamDone = false;
+  let readsStartedBeforeTeamDone = 0;
   globalThis.localStorage = {
     getItem(key) { return values.get(key) || null; },
     setItem(key, value) { values.set(key, value); },
@@ -2872,9 +2875,17 @@ test("sync lê em paralelo os snapshots independentes antes de reconciliar regis
   Object.defineProperty(globalThis, "navigator", { value: { onLine: true }, configurable: true });
   RemoteWorkspace.getSession = async () => ({ user: { id: "coach" } });
   RemoteWorkspace.ensureSelectedTeam = async () => "team-a";
-  RemoteWorkspace._syncTombstones = async () => { calls.push("tombstones"); return { deleted: 1 }; };
-  RemoteWorkspace.syncTeam = async () => { calls.push("team"); return { pulled: 1 }; };
+  RemoteWorkspace._syncTombstones = async () => { calls.push("tombstones"); tombstonesDone = true; return { deleted: 1 }; };
+  RemoteWorkspace.syncTeam = async () => {
+    assert.equal(tombstonesDone, true, "tombstones são processados antes de qualquer snapshot");
+    calls.push("team");
+    await new Promise((resolve) => setImmediate(resolve));
+    teamDone = true;
+    return { pulled: 1 };
+  };
   RemoteWorkspace._readSyncTable = async (table) => {
+    assert.equal(tombstonesDone, true, "tombstones são processados antes de qualquer snapshot");
+    if (!teamDone) readsStartedBeforeTeamDone++;
     calls.push("read:" + table);
     activeReads++;
     maxActiveReads = Math.max(maxActiveReads, activeReads);
@@ -2889,8 +2900,9 @@ test("sync lê em paralelo os snapshots independentes antes de reconciliar regis
   try {
     const result = await RemoteWorkspace._syncNow();
     assert.equal(maxActiveReads, 3);
-    assert.deepEqual(calls.slice(0, 2), ["tombstones", "team"]);
-    assert.deepEqual(calls.slice(2, 5).sort(), ["read:activity_log", "read:media_assets", "read:workspace_records"]);
+    assert.deepEqual(calls[0], "tombstones");
+    assert.equal(readsStartedBeforeTeamDone, 3, "os três snapshots iniciam enquanto a equipa ainda é lida");
+    assert.deepEqual(calls.slice(1, 5).sort(), ["read:activity_log", "read:media_assets", "read:workspace_records", "team"]);
     assert.deepEqual(calls.slice(5), ["records", "activity", "media"]);
     assert.deepEqual({ pushed: result.pushed, pulled: result.pulled, deleted: result.deleted }, { pushed: 6, pulled: 4, deleted: 1 });
   } finally {
