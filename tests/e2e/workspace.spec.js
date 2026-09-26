@@ -1934,6 +1934,33 @@ test("foto do atleta persiste na fila local antes de iniciar a sincronização r
   expect(saved.syncDelays).toContain(0);
 });
 
+test("foto antiga permanece visível e a remoção da foto de perfil avisa do efeito em todos os dispositivos", async ({ page }) => {
+  await page.goto("/#/equipa");
+  const fixture = await page.evaluate(async () => {
+    const photo = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const playerId = await DB.criar("jogadores", { team_id: DEFAULT_TEAM_ID, nome: "Atleta Foto Antiga E2E", foto: photo });
+    const mediaId = await HeadCoachMedia.create({
+      team_id: DEFAULT_TEAM_ID, subject_type: "player", subject_id: playerId,
+      type: "photo", title: "Foto de perfil E2E", note: "Foto de perfil do atleta", data_url: photo,
+    });
+    return { playerId, mediaId, photo };
+  });
+  await page.goto("/#/equipa/jogador/" + fixture.playerId);
+  await expect(page.locator(".hero-main .avatar img")).toHaveAttribute("src", fixture.photo);
+  await page.goto("/#/media");
+  const messages = [];
+  page.on("dialog", async (dialog) => { messages.push(dialog.message()); await dialog.dismiss(); });
+  await page.locator('.media-card:has-text("Foto de perfil E2E") [data-action="delete-media"]').click();
+  await expect.poll(() => messages.length).toBe(1);
+  expect(messages[0]).toContain("Vai desaparecer do plantel e da ficha do atleta em todos os dispositivos");
+  expect(await page.evaluate(async (id) => Boolean(await DB.obter("media_items", id)), fixture.mediaId)).toBe(true);
+  const legacy = await page.evaluate(async () => {
+    const playerId = await DB.criar("jogadores", { team_id: DEFAULT_TEAM_ID, nome: "Atleta Só Foto Legada", foto: "data:image/png;base64,legado" });
+    return (await applyPlayerProfilePhotos([await DB.obter("jogadores", playerId)]))[0].foto;
+  });
+  expect(legacy).toBe("data:image/png;base64,legado");
+});
+
 test("a UUID local pendente da foto prevalece sobre datas empatadas", async ({ page }) => {
   await page.goto("/#/equipa");
   const fixture = await page.evaluate(async () => {

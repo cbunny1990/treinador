@@ -128,7 +128,7 @@ async function applyPlayerProfilePhotos(players){
     var photo=playerProfilePhotoFor(player,photos);
     var src=photo&&(photo.data_url||photo.url);
     if(src)return Object.assign({},player,{foto:src,profile_media_ref:photo.sync_id||null});
-    if(!photo&&(player.profile_media_ref||String(player.foto||"").startsWith("data:")||/\/storage\/v1\/object\/sign\/team-media\//i.test(String(player.foto||""))))return Object.assign({},player,{foto:null});
+    if(!photo&&player.profile_media_ref&&!player.foto)return Object.assign({},player,{foto:null});
     return player;
   });
 }
@@ -1448,7 +1448,13 @@ app.addEventListener("click",async function(event){
     if(!confirm("Apagar este momento de vídeo?"))return;var matchEvidenceId=Number(target.dataset.match),matchEvidence=await DB.obter("jogos",matchEvidenceId);try{await DB.modificar("jogos",matchEvidenceId,current=>VisionMatchEvidence.apply(current,{type:"delete",id:target.dataset.evidence,confirmed:true,expected_revision:VisionMatchEvidence.state(matchEvidence).revision}));return router();}catch(error){alert(error.message);return;}
   }
   if(action==="delete-media"){
-    if(!confirm("Remover este item da biblioteca partilhada? O ficheiro binário continua guardado no armazenamento privado para preservar o histórico; esta ação não o elimina fisicamente.")) return;
+    var mediaToRemove=await DB.obter("media_items",Number(target.dataset.id));
+    if(!mediaToRemove){alert("Este item de media já não existe neste dispositivo.");return;}
+    var isProfilePhoto=mediaToRemove.subject_type==="player"&&mediaToRemove.type==="photo"&&String(mediaToRemove.note||"").toLowerCase().includes("foto de perfil");
+    var mediaRemovalMessage=isProfilePhoto
+      ? "Remover esta fotografia de perfil? Vai desaparecer do plantel e da ficha do atleta em todos os dispositivos após sincronizar. O ficheiro original permanece no armazenamento privado."
+      : "Remover este item da biblioteca partilhada? O ficheiro binário continua guardado no armazenamento privado para preservar o histórico; esta ação não o elimina fisicamente.";
+    if(!confirm(mediaRemovalMessage)) return;
     await HeadCoachMedia.remove(target.dataset.id);
     await logHuman("removed_media","Removeu um item de media","media",target.dataset.id);
     return router();
