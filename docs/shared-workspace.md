@@ -155,6 +155,8 @@ A fundação remota está implementada com Supabase:
 8. activity log e tabela de autorizações do agente;
 9. sincronização automática ao alterar dados, abrir a app ou recuperar rede.
 
+Os papéis `owner` e `coach` podem escrever registos, media, atividade e ficheiros privados da equipa; `viewer` só pode ler. A migration `20260926120000_enforce_team_member_roles.sql` aplica esta distinção nas policies RLS/Storage. O papel omitido ao criar uma membership é `coach`, compatível com a restrição de valores permitidos.
+
 O código não contém credenciais privadas. A PWA aceita apenas Project URL + publishable key; secret/service-role ficam reservadas às Edge Functions.
 
 Eliminações offline guardam a versão remota que o treinador viu. A sincronização usa essa versão numa atualização condicional; se outro dispositivo editou entretanto, mantém o tombstone e apresenta o conflito com as duas versões. Em Definições, o treinador escolhe manter a cópia remota ou confirmar a sua eliminação. Se houver nova edição durante a decisão, a comparação condicional volta a recusar a eliminação e sinaliza o conflito.
