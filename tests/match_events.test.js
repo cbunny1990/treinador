@@ -93,6 +93,8 @@ test('duplicate event ids are rejected and edits keep identity',()=>{
  assert.equal(edited.match_events.events[0].player_ref,refs[2]);assert.equal(edited.match_events.events[0].type,'shot_on');
  assert.throws(()=>evt(edited,'edit',120000,{id:'missing'}),/inexistente/);
 });
+test('partial edit preserves omitted event details and explicit empty values clear them',()=>{let r=rec(started(),'loss',60000,{id:'patch',player_ref:refs[1],zone:'def_c',reason:'pass',note:'preservar',opponent_player_name:'Adversário'});r=act(r,'pause',120000);r=evt(r,'edit',120000,{id:'patch',at_ms:60000});const event=r.match_events.events[0];assert.equal(event.player_ref,refs[1]);assert.equal(event.zone,'def_c');assert.equal(event.reason,'pass');assert.equal(event.note,'preservar');assert.equal(event.opponent_player_name,'Adversário');r=evt(r,'edit',120001,{id:'patch',player_ref:'',zone:'',reason:'',note:'',opponent_player_name:''});assert.equal(r.match_events.events[0].player_ref,undefined);assert.equal(r.match_events.events[0].zone,undefined);assert.equal(r.match_events.events[0].reason,'');assert.equal(r.match_events.events[0].note,undefined);assert.equal(r.match_events.events[0].opponent_player_name,undefined);});
+test('completed game events cannot be recorded beyond the final clock',()=>{let r=started();r=act(r,'finish',60000,{confirmed:true});assert.throws(()=>rec(r,'goal_for',120000,{id:'late'}),/futuro do cronómetro/);assert.equal(rec(r,'goal_for',60000,{id:'at-final-clock'}).match_events.events.length,1);});
 
 test('edit and delete need pause or completion, like movement corrections',()=>{
  let r=rec(started(),'shot_on',60000,{id:'x'});

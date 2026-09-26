@@ -36,6 +36,8 @@ Proteção do envio ao Jev (25/09/2026): a afirmação e as citações passam pe
 
 ## Limites e verificação
 
+O histórico de revisões da análise é integral; guardar uma nova revisão não elimina versões anteriores.
+
 Não foram criados nem alterados jogos reais. A sincronização remota usa o workspace e os mecanismos de conflito existentes; a auditoria física PC↔telemóvel continua necessária. Testes locais cobrem modelo, MCP, gravação offline, memória explícita e preservação de texto durante sincronização simulada. TypeSafe ainda não foi configurado nem publicado nesta fase.
 
 No telemóvel, os campos de seleção e botões dos formulários de análise e evidência têm pelo menos 44 px de altura. A página foi verificada a 390 px sem rolagem horizontal.

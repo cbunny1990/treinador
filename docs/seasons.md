@@ -8,4 +8,6 @@ Se um relatório receber o UUID de uma época que já não está no arquivo, a e
 
 Editar compara revisão do documento e `updated_at`; um conflito fica no formulário para nova leitura e comparação. O índice único sincroniza pelo workspace existente e conserva o UUID remoto. O MCP fornece `get_team_seasons` e `save_team_season`, valida jogadores na equipa, escopos e revisão e exige confirmação para gravação.
 
+O índice conserva todas as revisões, incluindo mudanças de época ativa; guardar e sincronizar uma revisão nova não remove versões mais antigas.
+
 Sem época arquivada, os relatórios indicam “Período completo registado (sem época definida)”, em vez de atribuir dados a um período que não foi definido.

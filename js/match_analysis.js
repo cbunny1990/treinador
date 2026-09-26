@@ -27,7 +27,7 @@
   const goals={...old.goals_conceded};for(const [id,value] of Object.entries(input.goals_conceded||{})){if(/^[0-9a-f-]{1,100}$/i.test(id))goals[id]=txt(value,2000);}
   const changed=JSON.stringify([old.fields,old.goals_conceded])!==JSON.stringify([fields,goals]);
   const history=old.history.slice();if(changed&&hasCoachContent(old.fields,old.goals_conceded))history.push({revision:old.revision,fields:old.fields,goals_conceded:old.goals_conceded,saved_at:old.updated_at||null,author:old.updated_by||'Treinador'});
-  const analysis={...old,schema:SCHEMA,revision:old.revision+1,status:hasCoachContent(fields,goals)?'done':'draft',fields,goals_conceded:goals,history:history.slice(-20),updated_at:stamp(now),updated_by:actor};
+  const analysis={...old,schema:SCHEMA,revision:old.revision+1,status:hasCoachContent(fields,goals)?'done':'draft',fields,goals_conceded:goals,history,updated_at:stamp(now),updated_by:actor};
   row.post_game={...(row.post_game||{}),analysis};return row;
  }
  function memoryContent(analysis,events=[]){

@@ -58,6 +58,7 @@ test('update and delete require pause or completion plus confirmation',async()=>
  const after=await f.call('delete_match_event',{event_id:'a',confirmed:true});
  assert.equal(after.events.length,0);
 });
+test('MCP partial event update preserves fields omitted from the request',async()=>{const f=fixture();await f.startUsage();await f.advance(600000);await f.call('record_match_event',{event_type:'loss',event_id:'patch',player_ref:refs[1],opponent_player_name:'Adversário 9',zone:'def_c',reason:'pass',note:'Saída registada',minute:5,confirmed:true});await visual.executeMatchVisualTool(f.admin,c,'control_match_usage',{id:MATCH,expected_updated_at:f.match.updated_at,expected_revision:f.match.payload.visual_match?.revision||0,action:'pause',confirmed:true});const out=await f.call('update_match_event',{event_id:'patch',minute:4,confirmed:true});const event=out.events[0];assert.equal(event.at_ms,240000);assert.equal(event.player_ref,refs[1]);assert.equal(event.opponent_player_name,'Adversário 9');assert.equal(event.zone,'def_c');assert.equal(event.reason,'pass');assert.equal(event.note,'Saída registada');});
 test('possession provenance is explicit; estimates never called measured',async()=>{
  const f=fixture();
  await assert.rejects(f.call('save_match_possession',{kind:'measured',confirmed:true}),/percentagem/);
@@ -70,3 +71,4 @@ test('events cannot be recorded before the coach starts the game',async()=>{
  await assert.rejects(f.call('record_match_event',{event_type:'goal_for',event_id:'g',minute:5,confirmed:true}),/depois de iniciar o cronómetro/);
  assert.equal(f.calls.length,0);
 });
+test('completed match MCP rejects events after the final clock but permits earlier recorded moments',async()=>{const f=fixture();await f.startUsage();await f.advance(600000);await visual.executeMatchVisualTool(f.admin,c,'control_match_usage',{id:MATCH,expected_updated_at:f.match.updated_at,expected_revision:f.match.payload.visual_match?.revision||0,action:'finish',confirmed:true});await assert.rejects(f.call('record_match_event',{event_type:'goal_for',event_id:'late',minute:11,confirmed:true}),/futuro do cronómetro/);const out=await f.call('record_match_event',{event_type:'goal_for',event_id:'retro',minute:9,confirmed:true});assert.equal(out.events.length,1);});

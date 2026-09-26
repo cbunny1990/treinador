@@ -41,15 +41,15 @@
   if(typeof e.note==='string'&&e.note.length===0)delete e.note;
   }
   function validateAgainstClock(usage,match,at_ms,now){
-  const M=root.VisionMatchVisual;if(usage.status==='running'||usage.status==='paused'){const total=M.replay(match,usage.status==='running'?now:undefined).total_ms;if(at_ms>total)throw new Error('O lance fica no futuro do cronómetro; usa o minuto real.');}
+  const M=root.VisionMatchVisual;if(at_ms>MAX_MS)throw new Error('Minuto fora do intervalo possível.');if(['running','paused','completed'].includes(usage.status)){const total=M.replay(match,usage.status==='running'?now:undefined).total_ms;if(at_ms>total)throw new Error('O lance fica no futuro do cronómetro; usa o minuto real.');}
  }
  function normalized(command,s){
   const out={};
   for(const k of ['at_ms','player_ref','opponent_player_name','zone','reason','side']){
-   const value=command[k];
-   if(value!=null&&value!=='')out[k]=k==='at_ms'?Number(value):text(value,100);
+   if(!Object.hasOwn(command,k))continue;
+   const value=command[k];out[k]=value==null||value===''?null:k==='at_ms'?Number(value):text(value,100);
   }
-  out.note=command.note==null?'':text(command.note);
+  if(Object.hasOwn(command,'note'))out.note=command.note==null||command.note===''?null:text(command.note);
   if(!s)delete out.player_ref;
   return out;
  }
@@ -72,6 +72,7 @@
    const base=normalized(command,s);
    if(base.at_ms==null)base.at_ms=M.replay(row,at).total_ms;
    validateAgainstClock(usage,row,base.at_ms,at);
+   for(const key of Object.keys(base))if(base[key]===null)delete base[key];
    const event={id:text(command.id,100),type:command.event_type,...base,created_at:iso,created_by:actor};
    if(!event.id||event.id.length>100)throw new Error('Identificador do lance em falta.');
    if(s.events.some(e=>e.id===event.id))throw new Error('Identificador de lance repetido.');
@@ -84,9 +85,9 @@
    const event=s.events.find(e=>e.id===command.id);if(!event)throw new Error('Lance inexistente ou já apagado.');
    const base=normalized(command,s);
     if(base.at_ms!=null)validateAgainstClock(usage,row,base.at_ms,at);else delete base.at_ms;
-   if(Object.hasOwn(base,'at_ms'))event.at_ms=base.at_ms;
-   for(const k of ['player_ref','opponent_player_name','zone','reason','side']){const value=base[k];if(value)event[k]=value;else delete event[k];}
-   if(base.note)event.note=base.note;else delete event.note;
+   if(Object.hasOwn(base,'at_ms')&&base.at_ms!=null)event.at_ms=base.at_ms;
+   for(const k of ['player_ref','opponent_player_name','zone','reason','side'])if(Object.hasOwn(base,k)){const value=base[k];if(value)event[k]=value;else delete event[k];}
+   if(Object.hasOwn(base,'note')){if(base.note)event.note=base.note;else delete event.note;}
    if(event.type==='loss'&&!Object.hasOwn(event,'reason'))event.reason='';
    Object.assign(event,{updated_at:iso,edited_by:actor});
    validEvent(event);playerOk(event.player_ref);

@@ -169,7 +169,7 @@
     if(command.role_a===command.role_b||![command.role_a,command.role_b].every(role=>Object.hasOwn(ROLES,role)))throw new Error('Escolhe duas posições diferentes para a troca.');
     ev.role_a=command.role_a;ev.role_b=command.role_b;
    }
-   ev.at_ms=command.at_ms;ev.note=text(command.note,1000);ev.corrections=[...(ev.corrections||[]),{...previous,corrected_at:iso,corrected_by:actor}].slice(-20);
+   ev.at_ms=command.at_ms;ev.note=text(command.note,1000);ev.corrections=[...(ev.corrections||[]),{...previous,corrected_at:iso,corrected_by:actor}];
   }else if(type==='delete_movement'){
    confirmed();if(!['paused','completed'].includes(s.status))throw new Error('Pausa ou termina o jogo antes de apagar um movimento.');
    const ev=s.events.find(x=>x.id===command.event_id&&!x.voided_at);if(!ev)throw new Error('Movimento inexistente ou já anulado.');ev.voided_at=iso;ev.voided_by=actor;
