@@ -64,7 +64,7 @@ test("MCP expõe ferramentas Vision Coach essenciais", () => {
   assert.match(mcp, /REPORT_TOOLS, executeReportTool/);
   assert.match(mcp, /\.\.\.REPORT_TOOLS/);
   assert.match(mcp, /REPORT_TOOLS\.some\(\(tool\) => tool\.name === name\).*executeReportTool/);
-  assert.match(mcp, /SERVER_VERSION = "1\.14\.3"/);
+  assert.match(mcp, /SERVER_VERSION = "1\.14\.4"/);
   assert.match(mcp, /2026-07-28/);
   assert.match(mcp, /2025-11-25/);
 });
@@ -97,8 +97,13 @@ test("RAG aceita um conjunto limitado de UUIDs para evidência de vários jogos"
 test("MCP distingue dados observados do adversário no plano pré-jogo", () => {
   for (const field of ["opponent_formation", "opponent_style", "opponent_strengths", "opponent_vulnerabilities"])
     assert.match(mcp, new RegExp(field));
-  assert.match(mcp, /adversario_pontos_fortes/);
-  assert.match(mcp, /adversario_vulnerabilidades/);
+  const helper = fs.readFileSync(path.join(root, "supabase", "functions", "vision-coach-mcp", "match_pre_game.mjs"), "utf8");
+  assert.match(helper, /adversario_pontos_fortes/);
+  assert.match(helper, /adversario_vulnerabilidades/);
+  assert.match(mcp, /observation_points:[\s\S]*maxItems: 30/);
+  assert.match(helper, /_too_many_items/);
+  assert.doesNotMatch(helper, /\.slice\(0,\s*20\)|\.slice\(0,\s*500\)/);
+  assert.match(mcp, /payload\.pre_game\s*=\s*updateMatchPreGame\(payload, args\)/);
 });
 
 test("browser não persiste token MCP", () => {
