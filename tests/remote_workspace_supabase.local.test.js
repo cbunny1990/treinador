@@ -90,6 +90,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
   };
   let teamId;
   let exerciseImagePath;
+  let viewerObjectPath;
   try {
     const owner = await makeUser("owner");
     const coach = await makeUser("coach");
@@ -102,6 +103,60 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     teamId = createdTeam.data.id;
     const joined = await admin.from("team_members").insert({ team_id: teamId, user_id: coach.user.id, role: "coach" });
     assert.ifError(joined.error);
+    const viewer = await makeUser("viewer");
+    const viewerMembership = await admin.from("team_members").insert({ team_id: teamId, user_id: viewer.user.id, role: "viewer" });
+    assert.ifError(viewerMembership.error);
+    const defaultRoleUser = await makeUser("default-role");
+    const defaultRoleMembership = await admin.from("team_members").insert({ team_id: teamId, user_id: defaultRoleUser.user.id });
+    assert.ifError(defaultRoleMembership.error);
+    const defaultRole = await admin.from("team_members").select("role").eq("team_id", teamId).eq("user_id", defaultRoleUser.user.id).single();
+    assert.ifError(defaultRole.error);
+    assert.equal(defaultRole.data.role, "coach", "an omitted membership role must use a valid writable role");
+
+    const roleProbeId = crypto.randomUUID();
+    const roleProbe = await admin.from("workspace_records").insert({
+      id: roleProbeId, team_id: teamId, kind: "document", payload: { text: "viewer read-only probe" },
+    });
+    assert.ifError(roleProbe.error);
+    const viewerRead = await viewer.client.from("workspace_records").select("id,payload").eq("id", roleProbeId).single();
+    assert.ifError(viewerRead.error);
+    assert.equal(viewerRead.data.id, roleProbeId, "viewer membership must retain team reads");
+    const viewerInsert = await viewer.client.from("workspace_records").insert({
+      id: crypto.randomUUID(), team_id: teamId, kind: "document", payload: { text: "must be rejected" },
+    });
+    assert.ok(viewerInsert.error, "viewer cannot create workspace records");
+    const viewerUpdate = await viewer.client.from("workspace_records").update({ payload: { text: "must remain unchanged" } }).eq("id", roleProbeId).select("id");
+    assert.ifError(viewerUpdate.error);
+    assert.deepEqual(viewerUpdate.data, [], "viewer cannot update workspace records");
+    const viewerDelete = await viewer.client.from("workspace_records").delete().eq("id", roleProbeId).select("id");
+    assert.ifError(viewerDelete.error);
+    assert.deepEqual(viewerDelete.data, [], "viewer cannot delete workspace records");
+    const stillPresent = await admin.from("workspace_records").select("payload").eq("id", roleProbeId).single();
+    assert.ifError(stillPresent.error);
+    assert.equal(stillPresent.data.payload.text, "viewer read-only probe");
+
+    const coachWriteId = crypto.randomUUID();
+    const coachWrite = await coach.client.from("workspace_records").insert({
+      id: coachWriteId, team_id: teamId, kind: "document", payload: { text: "coach write allowed" },
+    });
+    assert.ifError(coachWrite.error, "coach membership keeps workspace writes");
+    const viewerMedia = await viewer.client.from("media_assets").insert({
+      id: crypto.randomUUID(), team_id: teamId, subject_type: "player", subject_ref: crypto.randomUUID(),
+      media_type: "photo", title: "viewer upload probe", storage_path: `${teamId}/players/viewer-blocked.jpg`,
+    });
+    assert.ok(viewerMedia.error, "viewer cannot create media metadata");
+    const viewerActivity = await viewer.client.from("activity_log").insert({
+      id: crypto.randomUUID(), team_id: teamId, actor_type: "human", actor_label: "viewer",
+      action: "viewer_write_probe", summary: "must be rejected",
+    });
+    assert.ok(viewerActivity.error, "viewer cannot write activity");
+    viewerObjectPath = `${teamId}/viewer/${crypto.randomUUID()}.bin`;
+    const viewerUpload = await viewer.client.storage.from("team-media").upload(viewerObjectPath, new Uint8Array([1, 2, 3]), {
+      contentType: "application/octet-stream", upsert: false,
+    });
+    assert.ok(viewerUpload.error, "viewer cannot write the private team-media bucket");
+    const removedRoleProbes = await admin.from("workspace_records").delete().in("id", [roleProbeId, coachWriteId]);
+    assert.ifError(removedRoleProbes.error);
 
     const connectorHash = crypto.createHash("sha256").update(crypto.randomUUID()).digest("hex");
     const connectorCreated = await admin.rpc("mcp_connector_create", {
@@ -667,6 +722,10 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
     globalThis.DEFAULT_TEAM_ID = original.team;
     globalThis.mediaSubjectKey = original.subjectKey;
     if (teamId) {
+      if (viewerObjectPath) {
+        const removedViewerProbe = await admin.storage.from("team-media").remove([viewerObjectPath]);
+        assert.ifError(removedViewerProbe.error);
+      }
       if (exerciseImagePath) {
         const removedExerciseImage = await admin.storage.from("team-media").remove([exerciseImagePath]);
         assert.ifError(removedExerciseImage.error);
