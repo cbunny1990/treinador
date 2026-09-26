@@ -1777,14 +1777,24 @@ const RemoteWorkspace = {
       const subjectId = await this._localIdForRemoteRef(
         remote.subject_type, String(remote.subject_ref), remoteTeamId, localReferenceCache
       );
-      let url = remote.external_url || null;
+      const signedUrlStillValid = Boolean(
+        local?.url && local.storage_path === remote.storage_path
+        && local.remote_updated_at === remote.updated_at
+        && Number(local.signed_url_expires_at) > Date.now() + 120_000
+      );
+      let url = remote.external_url || (signedUrlStillValid ? local.url : null);
+      let signedUrlExpiresAt = remote.external_url ? null : (signedUrlStillValid ? local.signed_url_expires_at : null);
       if (!url && remote.storage_path) {
         const signed = await client.storage.from("team-media")
           .createSignedUrl(remote.storage_path, 3600);
-        if (!signed.error) url = signed.data?.signedUrl || null;
+        if (!signed.error) {
+          url = signed.data?.signedUrl || null;
+          if (url) signedUrlExpiresAt = Date.now() + 3_480_000;
+        }
         else {
           addConflict(remoteConflict("media_items", local, remote, "storage_signed_url_failed"));
           url = local?.url || null;
+          signedUrlExpiresAt = local?.signed_url_expires_at || null;
         }
       }
 
@@ -1798,6 +1808,7 @@ const RemoteWorkspace = {
         title: remote.title,
         note: remote.note || null,
         url,
+        signed_url_expires_at: signedUrlExpiresAt,
         storage_path: remote.storage_path || null,
         file_name: remote.file_name || null,
         mime_type: remote.mime_type || null,
@@ -1813,7 +1824,8 @@ const RemoteWorkspace = {
       };
 
       if (local) {
-        if (local.remote_updated_at === remote.updated_at && !remote.storage_path) continue;
+        if (local.remote_updated_at === remote.updated_at
+          && (!remote.storage_path || signedUrlStillValid)) continue;
         merged.id = local.id;
         const applied = await this._applyPulledRecord("media_items", local, merged);
         if (!applied.applied) {

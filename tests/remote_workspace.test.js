@@ -2455,6 +2455,49 @@ test("pull de media não apaga nota local feita enquanto recebe URL assinada", a
   });
 });
 
+test("pull reutiliza URL assinada válida e renova-a quando está perto de expirar", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    useDevice(0);
+    await devices[0].criar("media_items", {
+      team_id: "default", subject_type: "team", subject_id: "default",
+      type: "file", title: "Evidência", file_name: "evidencia.txt",
+      mime_type: "text/plain", data_url: "data:text/plain;base64,QQ==", sync_dirty: true,
+    });
+    await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+    useDevice(1);
+    await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+    const id = (await devices[1].listar("media_items"))[0].id;
+    const first = await devices[1].obter("media_items", id);
+    assert.ok(first.signed_url_expires_at > Date.now());
+
+    let signs = 0;
+    const originalFrom = remote.client.storage.from;
+    remote.client.storage.from = function (...args) {
+      const bucket = originalFrom.apply(this, args);
+      return { ...bucket, async createSignedUrl(path) {
+        signs++;
+        return { data: { signedUrl: `https://signed.example/${path}?renewal=${signs}` }, error: null };
+      } };
+    };
+    try {
+      const unchanged = await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+      assert.equal(signs, 0);
+      assert.equal(unchanged.pulled, 0);
+      assert.equal((await devices[1].obter("media_items", id)).url, first.url);
+
+      await devices[1].atualizar("media_items", { ...first, signed_url_expires_at: Date.now() + 30_000 });
+      const refreshed = await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+      const after = await devices[1].obter("media_items", id);
+      assert.equal(signs, 1);
+      assert.equal(refreshed.pulled, 1);
+      assert.match(after.url, /renewal=1$/);
+      assert.ok(after.signed_url_expires_at > Date.now() + 3_000_000);
+    } finally {
+      remote.client.storage.from = originalFrom;
+    }
+  });
+});
+
 test("substituir bytes de media mantém o ficheiro anterior e sincroniza a nova versão", async () => {
   await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
     useDevice(0);
@@ -2549,7 +2592,7 @@ test("foto do atleta faz ida e volta entre dispositivos pela UUID estável e Sto
 
     useDevice(0);
     const returnedPhoto = await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
-    assert.equal(returnedPhoto.pulled, 2);
+    assert.equal(returnedPhoto.pulled, 1, "só a fotografia nova precisa de ser importada; a URL anterior ainda é válida");
     const returnedMedia = (await devices[0].listar("media_items")).find((row) => row.sync_id === phonePhotoRef);
     const returnedPlayer = await devices[0].obter("jogadores", playerLocalId);
     assert.equal(returnedMedia.subject_id, String(playerLocalId));
@@ -2570,7 +2613,8 @@ test("foto do atleta faz ida e volta entre dispositivos pela UUID estável e Sto
     assert.equal((await devices[0].listar("media_items")).some((row) => row.sync_id === phonePhotoRef), false);
     assert.equal(afterDeletePlayer.profile_media_ref, photoRef);
     assert.equal(afterDeletePlayer.foto, null, "A foto antiga continua disponível no registo media local.");
-    assert.equal((await RemoteWorkspace._syncMedia(remoteTeamId, "coach")).pulled, 1);
+    assert.equal((await RemoteWorkspace._syncMedia(remoteTeamId, "coach")).pulled, 0,
+      "a foto antiga já está local e conserva uma URL assinada válida");
     assert.equal((await devices[0].listar("media_items")).length, 1);
     assert.equal((await devices[0].listar("media_items")).some((row) => row.sync_id === phonePhotoRef), false);
   });
