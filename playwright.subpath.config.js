@@ -8,7 +8,7 @@ module.exports = defineConfig({
   timeout: 30000,
   workers: 1,
   use: {
-    browserName: "chromium",
+    channel: "chrome",
     baseURL: "http://127.0.0.1:18771/treinador/",
     viewport: { width: 390, height: 844 },
     serviceWorkers: "allow",
