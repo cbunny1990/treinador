@@ -916,6 +916,15 @@ const RemoteWorkspace = {
     const ref = String(subjectId ?? "").trim();
     if (!ref) throw remoteReferenceError("missing_subject_id");
     if (remoteIsUuid(ref)) {
+      const knownRows = options.knownRemoteRows;
+      if (knownRows) {
+        const row = knownRows.get(ref);
+        const valid = row && row.team_id === remoteTeamId
+          && (subjectType === "media" || row.kind === subjectType)
+          && (options.allowDeleted || !row.deleted_at);
+        if (!valid) throw remoteReferenceError("subject_uuid_not_in_team");
+        return ref;
+      }
       const client = await this.init();
       const table = subjectType === "media" ? "media_assets" : "workspace_records";
       let query = client.from(table).select("id")
@@ -977,22 +986,29 @@ const RemoteWorkspace = {
     const found = rows.find((x) => x.sync_id === remoteRef && x.remote_team_id === remoteTeamId);
     return found ? String(found.id) : remoteRef;
   },
-  async _refsForRemote(refs, remoteTeamId) {
+  async _refsForRemote(refs, remoteTeamId, referenceContext = {}) {
     const out = [];
     for (const ref of (Array.isArray(refs) ? refs : [])) {
       out.push({
         ...ref,
-        id: await this._subjectRemoteRef(ref.type, ref.id, remoteTeamId),
+        id: await this._subjectRemoteRef(ref.type, ref.id, remoteTeamId, {
+          knownRemoteRows: ref.type === "media" ? referenceContext.mediaRows : referenceContext.recordRows,
+        }),
       });
     }
     return out;
   },
-  async _payloadForRemote(store, local, remoteTeamId) {
+  async _payloadForRemote(store, local, remoteTeamId, referenceContext = {}) {
     const payload = remotePayload(local);
+    const knownRowsFor = (subjectType) => subjectType === "media"
+      ? referenceContext.mediaRows
+      : referenceContext.recordRows;
     if (store === "jogos") {
       const mapPlayers = async (refs) => {
         const out = [];
-        for (const ref of refs) out.push(await this._subjectRemoteRef("player", ref, remoteTeamId, { allowDeleted: true }));
+        for (const ref of refs) out.push(await this._subjectRemoteRef("player", ref, remoteTeamId, {
+          allowDeleted: true, knownRemoteRows: knownRowsFor("player"),
+        }));
         return out;
       };
       if (Array.isArray(payload.callup?.player_ids)) {
@@ -1000,7 +1016,9 @@ const RemoteWorkspace = {
       }
       if (payload.lineup) {
         const lineup = { ...payload.lineup };
-        if (lineup.goalkeeper_id) lineup.goalkeeper_id = await this._subjectRemoteRef("player", lineup.goalkeeper_id, remoteTeamId, { allowDeleted: true });
+        if (lineup.goalkeeper_id) lineup.goalkeeper_id = await this._subjectRemoteRef("player", lineup.goalkeeper_id, remoteTeamId, {
+          allowDeleted: true, knownRemoteRows: knownRowsFor("player"),
+        });
         if (Array.isArray(lineup.starters)) lineup.starters = await mapPlayers(lineup.starters);
         if (Array.isArray(lineup.substitutes)) lineup.substitutes = await mapPlayers(lineup.substitutes);
         payload.lineup = lineup;
@@ -1012,7 +1030,9 @@ const RemoteWorkspace = {
         if (!block?.exercise_ref) { blocks.push(block); continue; }
         blocks.push({
           ...block,
-          exercise_ref: await this._subjectRemoteRef("exercise", block.exercise_ref, remoteTeamId),
+          exercise_ref: await this._subjectRemoteRef("exercise", block.exercise_ref, remoteTeamId, {
+            knownRemoteRows: knownRowsFor("exercise"),
+          }),
         });
       }
       return blocks;
@@ -1024,27 +1044,27 @@ const RemoteWorkspace = {
       }
     }
     if (Array.isArray(payload.subject_refs)) {
-      payload.subject_refs = await this._refsForRemote(payload.subject_refs, remoteTeamId);
+      payload.subject_refs = await this._refsForRemote(payload.subject_refs, remoteTeamId, referenceContext);
     }
     if (Array.isArray(payload.refs)) {
-      payload.refs = await this._refsForRemote(payload.refs, remoteTeamId);
+      payload.refs = await this._refsForRemote(payload.refs, remoteTeamId, referenceContext);
     }
     if (store === "memory_items") {
       const mapIds = async (ids) => {
         const out = [];
         for (const id of (Array.isArray(ids) ? ids : [])) {
-          out.push(await this._subjectRemoteRef("memory", id, remoteTeamId));
+          out.push(await this._subjectRemoteRef("memory", id, remoteTeamId, { knownRemoteRows: knownRowsFor("memory") }));
         }
         return out;
       };
       payload.evidence_ids = await mapIds(payload.evidence_ids);
       payload.related_ids = await mapIds(payload.related_ids);
       if (payload.supersedes_id) {
-        payload.supersedes_id = await this._subjectRemoteRef("memory", payload.supersedes_id, remoteTeamId);
+        payload.supersedes_id = await this._subjectRemoteRef("memory", payload.supersedes_id, remoteTeamId, { knownRemoteRows: knownRowsFor("memory") });
       }
     }
     if (store === "game_models" && payload.supersedes_id) {
-      payload.supersedes_id = await this._subjectRemoteRef("game_model", payload.supersedes_id, remoteTeamId);
+      payload.supersedes_id = await this._subjectRemoteRef("game_model", payload.supersedes_id, remoteTeamId, { knownRemoteRows: knownRowsFor("game_model") });
     }
     return payload;
   },
@@ -1186,10 +1206,16 @@ const RemoteWorkspace = {
     ]);
     return { records, activity, media };
   },
-  async _syncRecords(remoteTeamId, userId, initialRows) {
+  async _syncRecords(remoteTeamId, userId, initialRows, initialMediaRows) {
     const client = await this.init();
     const first = initialRows || await remoteReadTeamRows(client, "workspace_records", remoteTeamId);
     let remoteMap = new Map(first.map((x) => [x.id, x]));
+    const referenceContext = {
+      recordRows: remoteMap,
+      mediaRows: Array.isArray(initialMediaRows)
+        ? new Map(initialMediaRows.map((row) => [row.id, row]))
+        : null,
+    };
     const result = { pushed: 0, pulled: 0, deleted: 0, conflicts: [] };
     const conflictKeys = new Set();
     const addConflict = (conflict) => {
@@ -1260,7 +1286,7 @@ const RemoteWorkspace = {
         }
 
         let payload;
-        try { payload = await this._payloadForRemote(store, local, remoteTeamId); }
+        try { payload = await this._payloadForRemote(store, local, remoteTeamId, referenceContext); }
         catch (error) {
           if (error.code !== "LOCAL_REFERENCE_CONFLICT") throw error;
           addConflict(remoteConflict(store, local, remote, error.reason));
@@ -2103,7 +2129,7 @@ const RemoteWorkspace = {
     const tombstoneResult = await this._syncTombstones(remoteTeamId);
     const teamResult = await this.syncTeam(remoteTeamId);
     const snapshots = await this._readSyncSnapshots(remoteTeamId);
-    const recordResult = await this._syncRecords(remoteTeamId, session.user.id, snapshots.records);
+    const recordResult = await this._syncRecords(remoteTeamId, session.user.id, snapshots.records, snapshots.media);
     const activityResult = await this._syncActivity(remoteTeamId, session.user.id, snapshots.activity);
     const mediaResult = await this._syncMedia(remoteTeamId, session.user.id, snapshots.media);
     const parts = [tombstoneResult, teamResult, recordResult, activityResult, mediaResult];

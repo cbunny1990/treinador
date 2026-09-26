@@ -1429,6 +1429,48 @@ test("pull reutiliza a resolução local de referências repetidas entre registo
   }, { maxRows: 250 });
 });
 
+test("push valida UUIDs de exercício pelo snapshot já lido e não consulta cada referência", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    const exerciseRef = "89000000-0000-4000-8000-000000000001";
+    const trainingRef = "89000000-0000-4000-8000-000000000002";
+    remote.rows.push(
+      { id: exerciseRef, team_id: remoteTeamId, kind: "exercise", payload: { nome: "Passe e apoio" }, updated_at: "exercise-v1", deleted_at: null },
+      { id: trainingRef, team_id: remoteTeamId, kind: "training", payload: { data: "2026-09-25", blocos: [] }, updated_at: "training-v1", deleted_at: null },
+    );
+    useDevice(0);
+    await devices[0].criar("exercicios", {
+      team_id: "default", sync_id: exerciseRef, remote_team_id: remoteTeamId,
+      remote_updated_at: "exercise-v1", sync_dirty: false, nome: "Passe e apoio",
+    });
+    await devices[0].criar("treinos", {
+      team_id: "default", sync_id: trainingRef, remote_team_id: remoteTeamId,
+      remote_updated_at: "training-v1", sync_dirty: true, data: "2026-09-25",
+      blocos: [{ exercise_ref: exerciseRef, duracao_min: 10 }],
+    });
+    remote.queryLog.length = 0;
+
+    const result = await RemoteWorkspace._syncRecords(remoteTeamId, "coach", remote.rows, remote.mediaRows);
+    assert.equal(result.pushed, 1);
+    assert.equal(result.conflicts.length, 0);
+    assert.equal(remote.rows.find((row) => row.id === trainingRef).payload.blocos[0].exercise_ref, exerciseRef);
+    assert.equal(remote.queryLog.filter((query) => query.table === "workspace_records"
+      && query.action === "select"
+      && query.filters.some(([op, key]) => op === "eq" && key === "id")
+      && query.filters.some(([op, key]) => op === "eq" && key === "kind")).length, 0,
+    "a lista completa da equipa já confirma UUID, tipo e tombstone; não repetir GET por referência");
+    const invalidRef = "89000000-0000-4000-8000-000000000003";
+    await assert.rejects(RemoteWorkspace._subjectRemoteRef("exercise", invalidRef, remoteTeamId, {
+      knownRemoteRows: new Map([[invalidRef, { id: invalidRef, team_id: "other-team", kind: "exercise", deleted_at: null }]]),
+    }), (error) => error.reason === "subject_uuid_not_in_team");
+    await assert.rejects(RemoteWorkspace._subjectRemoteRef("exercise", exerciseRef, remoteTeamId, {
+      knownRemoteRows: new Map([[exerciseRef, { id: exerciseRef, team_id: remoteTeamId, kind: "match", deleted_at: null }]]),
+    }), (error) => error.reason === "subject_uuid_not_in_team");
+    await assert.rejects(RemoteWorkspace._subjectRemoteRef("exercise", exerciseRef, remoteTeamId, {
+      knownRemoteRows: new Map([[exerciseRef, { id: exerciseRef, team_id: remoteTeamId, kind: "exercise", deleted_at: "deleted-v1" }]]),
+    }), (error) => error.reason === "subject_uuid_not_in_team");
+  });
+});
+
 test("sync reutiliza o snapshot quando está limpo e só volta a ler a tabela para rever conflitos", async () => {
   await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
     useDevice(0);
