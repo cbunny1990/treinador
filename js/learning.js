@@ -27,7 +27,29 @@
   function isVisible(r){return r?.status==="aprovado"&&!r.broken;}
   function byKind(items){const g={ver:[],ler:[],seguir:[]};for(const r of items||[])if(isVisible(r)&&g[r.kind])g[r.kind].push(r);return g;}
   function progress(rows){const v=(rows||[]).filter(isVisible);return{seen:v.filter(r=>r.seen_at).length,total:v.length};}
+  function utcDay(iso){const m=String(iso||"").match(/^(\d{4})-(\d{2})-(\d{2})$/);return m?Date.UTC(Number(m[1]),Number(m[2])-1,Number(m[3])):NaN;}
+  function currentWeek(weeks,todayISO){
+    const sorted=[...(weeks||[])].sort((a,b)=>a.starts_on.localeCompare(b.starts_on)||a.week_no-b.week_no);
+    if(!sorted.length)return null;
+    const today=utcDay(todayISO);
+    if(!Number.isFinite(today))return sorted[0];
+    for(const week of sorted){const start=utcDay(week.starts_on);if(today>=start&&today<start+7*86400000)return week;}
+    return today<utcDay(sorted[0].starts_on)?sorted[0]:sorted[sorted.length-1];
+  }
+  function groupWeeksByBlock(weeks){
+    const groups=new Map();
+    for(const week of weeks||[]){if(!groups.has(week.block_no))groups.set(week.block_no,{block_no:week.block_no,block_title:week.block_title,weeks:[]});groups.get(week.block_no).weeks.push(week);}
+    return [...groups.values()].sort((a,b)=>a.block_no-b.block_no).map(group=>({...group,weeks:group.weeks.slice().sort((a,b)=>a.week_no-b.week_no)}));
+  }
+  function filterLibrary(sessions,filters={}){
+    return (sessions||[]).filter(session=>session?.status==="aprovado"&&
+      (!filters.pillar||(session.pillars||[]).includes(filters.pillar))&&
+      (!filters.block||Number(session.season_block)===Number(filters.block))&&
+      (!filters.focus||session.focus===filters.focus))
+      .slice().sort((a,b)=>String(a.library_code||"").localeCompare(String(b.library_code||"")));
+  }
+  function focuses(sessions){return [...new Set((sessions||[]).map(session=>session?.focus).filter(focus=>typeof focus==="string"&&focus.length>0))].sort((a,b)=>a.localeCompare(b));}
   const BLOCKS=[{id:"jogador",title:"O jogador"},{id:"ensinar",title:"O que ensinar"},{id:"treinador",title:"O treinador"}];
-  const api={FLAG_KEY,isEnabled,setEnabled,normalizeUrl,youtubeId,embedUrl,isVisible,byKind,progress,BLOCKS};
+  const api={FLAG_KEY,isEnabled,setEnabled,normalizeUrl,youtubeId,embedUrl,isVisible,byKind,progress,currentWeek,groupWeeksByBlock,filterLibrary,focuses,BLOCKS};
   root.Learning=api;if(typeof module!=="undefined"&&module.exports)module.exports=api;
 })(globalThis);
