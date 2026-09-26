@@ -600,6 +600,43 @@ test("lista offline só mostra workspaces confirmados para a mesma conta e proje
   }
 });
 
+test("sync reuse seleção de equipa confirmada e atualiza a lista quando muda a conta", async () => {
+  const originalStorage = globalThis.localStorage, originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const originalGetSession = RemoteWorkspace.getSession, originalListTeams = RemoteWorkspace.listTeams;
+  const originalStartRealtime = RemoteWorkspace.startRealtime;
+  const teamA = "11111111-1111-4111-8111-111111111111", teamB = "22222222-2222-4222-8222-222222222222";
+  const userId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", url = "https://coach.example.supabase.co";
+  const values = new Map([['treinador.remote.supabase.v1', JSON.stringify({
+    url, remoteTeamId: teamA, cachedRemoteTeamsUrl: url, cachedRemoteTeamsUserId: userId,
+    cachedRemoteTeams: [{ id: teamA, name: "Sub-8", metadata: {}, updated_at: "v1" }],
+  })]]);
+  const started = [];
+  globalThis.localStorage = { getItem(key) { return values.get(key) || null; }, setItem(key, value) { values.set(key, value); } };
+  Object.defineProperty(globalThis, "navigator", { value: { onLine: true }, configurable: true });
+  RemoteWorkspace.getSession = async () => ({ user: { id: userId } });
+  RemoteWorkspace.startRealtime = async (teamId) => { started.push(teamId); };
+  RemoteWorkspace.listTeams = async () => { throw new Error("não deve listar equipas no sync normal"); };
+  try {
+    assert.equal(await RemoteWorkspace.ensureSelectedTeam(), teamA);
+    assert.deepEqual(started, [teamA]);
+
+    const config = JSON.parse(values.get("treinador.remote.supabase.v1"));
+    config.cachedRemoteTeamsUserId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    values.set("treinador.remote.supabase.v1", JSON.stringify(config));
+    let listCalls = 0;
+    RemoteWorkspace.listTeams = async () => { listCalls++; return [{ id: teamB, name: "Sub-9", metadata: {}, updated_at: "v2" }]; };
+    assert.equal(await RemoteWorkspace.ensureSelectedTeam(), teamB);
+    assert.equal(listCalls, 1, "mudança de conta força uma listagem remota antes de escolher equipa");
+    assert.deepEqual(started, [teamA, teamB]);
+  } finally {
+    RemoteWorkspace.getSession = originalGetSession;
+    RemoteWorkspace.listTeams = originalListTeams;
+    RemoteWorkspace.startRealtime = originalStartRealtime;
+    globalThis.localStorage = originalStorage;
+    if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator); else delete globalThis.navigator;
+  }
+});
+
 test("troca offline usa snapshot da equipa conhecida e mantém os registos separados", async () => {
   const originalStorage = globalThis.localStorage, originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
   const originalGetSession = RemoteWorkspace.getSession, originalStopRealtime = RemoteWorkspace.stopRealtime;

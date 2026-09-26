@@ -684,8 +684,16 @@ const RemoteWorkspace = {
   async ensureSelectedTeam() {
     const session = await this.getSession();
     if (!session) return null;
-    const teams = await this.listTeams();
-    const config = remoteLoadConfig();
+    let config = remoteLoadConfig();
+    const knownTeams = remoteCachedTeams(config, session.user?.id);
+    // The selected team's current row is read through RLS in syncTeam; reuse
+    // this same-user/project list only to avoid fetching every team per sync.
+    const selectedKnownTeam = config.remoteTeamId
+      && knownTeams.some((team) => team.id === config.remoteTeamId);
+    const teams = !navigator.onLine || selectedKnownTeam
+      ? knownTeams
+      : await this.listTeams();
+    config = remoteLoadConfig();
     if (!navigator.onLine) {
       return teams.some((team) => team.id === config.remoteTeamId) ? config.remoteTeamId : null;
     }
