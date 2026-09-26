@@ -2720,6 +2720,17 @@ test("sincronizações simultâneas serializam, repetem a passagem do mesmo work
   }
 });
 
+test("prévia de conflito assinala explicitamente conteúdo truncado", () => {
+  const preview = remoteConflictPreview({
+    entries: Array.from({ length: 103 }, (_, index) => index),
+    fields: Object.fromEntries(Array.from({ length: 152 }, (_, index) => [`field_${index}`, index])),
+    text: "x".repeat(4012),
+  });
+  assert.equal(preview.entries.at(-1), "[conteúdo omitido: mais 3 itens]");
+  assert.equal(preview.fields["[conteúdo omitido]"], "2 campos");
+  assert.match(preview.text, /\[conteúdo omitido: 12 caracteres\]$/);
+});
+
 test("sync lê em paralelo os snapshots independentes antes de reconciliar registos, atividade e media", async () => {
   const names = ["getSession", "ensureSelectedTeam", "_syncTombstones", "syncTeam", "_readSyncTable", "_syncRecords", "_syncActivity", "_syncMedia", "_clearSyncRetry"];
   const originalMethods = Object.fromEntries(names.map((name) => [name, RemoteWorkspace[name]]));

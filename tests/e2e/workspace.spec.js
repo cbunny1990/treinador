@@ -1473,12 +1473,14 @@ test("conflito de edição compara as duas versões antes de permitir uma decis�
     RemoteWorkspace.getConfig = () => ({ url: "https://example.supabase.co", publishableKey: "sb_publishable_test" });
     RemoteWorkspace.listTeams = async () => [{ id: "team-test", name: "Equipa de teste" }];
     MCPConnectors.list = async () => [];
-    RemoteWorkspace.readVersionConflict = async (id, store) => ({ sync_id: id, store, local_updated_at: "local-v2", remote_updated_at: "v2", local: { nota_tatica: "Versão escrita no telemóvel" }, remote: { nota_tatica: "Versão atual do PC" }, merge_suggestion: null, merge_unavailable: "As duas versões alteraram os mesmos campos; a combinação automática ficou bloqueada." });
+    RemoteWorkspace.readVersionConflict = async (id, store) => ({ sync_id: id, store, local_updated_at: "local-v2", remote_updated_at: "v2", local: { nota_tatica: "Versão escrita no telemóvel", historico: ["[conteúdo omitido: mais 3 itens]"] }, remote: { nota_tatica: "Versão atual do PC" }, merge_suggestion: null, merge_unavailable: "As duas versões alteraram os mesmos campos; a combinação automática ficou bloqueada." });
     RemoteWorkspace.resolveVersionConflict = async (...args) => { window.__versionResolution = args; return { conflicts: [] }; };
     go("#/definicoes");
   });
   await expect(page.getByText(/As duas versões estão preservadas/)).toBeVisible();
   await page.getByRole("button", { name: "Comparar versões" }).click();
+  await expect(page.getByText(/conteúdo omitido da pré-visualização aparece assinalado/)).toBeVisible();
+  await expect(page.locator(".conflict-preview").first()).toContainText("[conteúdo omitido: mais 3 itens]");
   await expect(page.getByText('"nota_tatica": "Versão escrita no telemóvel"')).toBeVisible();
   await expect(page.getByText('"nota_tatica": "Versão atual do PC"')).toBeVisible();
   await expect(page.getByText("As duas versões alteraram os mesmos campos; a combinação automática ficou bloqueada.")).toBeVisible();

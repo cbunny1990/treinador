@@ -240,14 +240,21 @@ function remoteConflictPreview(value) {
   const temporaryUrl = /\/storage\/v1\/object\/sign\/|[?&](?:token|access_token|signature|sig|x-amz-(?:signature|credential|security-token)|x-goog-(?:signature|credential|security-token))=/i;
   const clean = (item, key = "") => {
     if (privateKeys.test(key)) return undefined;
-    if (Array.isArray(item)) return item.slice(0, 100).map((entry) => clean(entry)).filter((entry) => entry !== undefined);
-    if (item && typeof item === "object") return Object.fromEntries(Object.entries(item)
-      .filter(([name]) => !privateKeys.test(name))
-      .slice(0, 150)
-      .map(([name, child]) => [name, clean(child, name)]));
+    if (Array.isArray(item)) {
+      const cleaned = item.slice(0, 100).map((entry) => clean(entry)).filter((entry) => entry !== undefined);
+      if (item.length > 100) cleaned.push(`[conteúdo omitido: mais ${item.length - 100} itens]`);
+      return cleaned;
+    }
+    if (item && typeof item === "object") {
+      const visible = Object.entries(item).filter(([name]) => !privateKeys.test(name));
+      const cleaned = Object.fromEntries(visible.slice(0, 150).map(([name, child]) => [name, clean(child, name)]));
+      if (visible.length > 150) cleaned["[conteúdo omitido]"] = `${visible.length - 150} campos`;
+      return cleaned;
+    }
     if (typeof item === "string" && /^data:/i.test(item)) return "[conteúdo local oculto]";
     if (typeof item === "string" && temporaryUrl.test(item)) return "[ligação temporária ocultada]";
-    return typeof item === "string" && item.length > 4000 ? item.slice(0, 4000) + "…" : item;
+    return typeof item === "string" && item.length > 4000
+      ? item.slice(0, 4000) + `… [conteúdo omitido: ${item.length - 4000} caracteres]` : item;
   };
   return clean(value);
 }
