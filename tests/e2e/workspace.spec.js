@@ -1793,23 +1793,32 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
     navigator.serviceWorker.dispatchEvent(new Event("controllerchange"));
     navigator.serviceWorker.dispatchEvent(new Event("controllerchange"));
   });
-  await expect(page.getByText(/Atualização disponível\. Termina ou guarda o trabalho em curso/)).toBeVisible();
+  await expect(page.getByText(/Atualização disponível\. Guarda o trabalho em curso antes de atualizar/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeDisabled();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
   expect(await page.evaluate((version) => sessionStorage.getItem(`vision-sw-reloaded-v${version}`), appVersion)).toBeNull();
 });
 
-test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
+test("service worker update asks before reloading and preserves Workspace scroll", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => !!navigator.serviceWorker?.controller);
-  const reloaded = page.waitForEvent("framenavigated");
-  void page.evaluate(() => {
-    sessionStorage.setItem("vision-sw-reloaded-v95", "1");
+  await page.waitForFunction(() => typeof routerRunning === "boolean" && !routerRunning);
+  await page.waitForTimeout(350);
+  const initial = await page.evaluate(() => {
+    document.getElementById("app").style.minHeight = "2200px";
+    window.scrollTo(0, 640);
+    return { scroll: window.scrollY, navigation: performance.getEntriesByType("navigation").length };
+  });
+  expect(initial.scroll).toBe(640);
+  await page.evaluate(() => {
     navigator.serviceWorker.dispatchEvent(new Event("controllerchange"));
-  }).catch(() => {});
-  await reloaded;
-  await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate((version) => sessionStorage.getItem(`vision-sw-reloaded-v${version}`), appVersion)).toBe("1");
+  });
+  await expect(page.getByRole("status").filter({ hasText: "Atualização disponível" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Atualizar app" })).toBeEnabled();
+  await page.waitForTimeout(100);
+  await expect(page.getByRole("heading", { name: "O estado da equipa, num único lugar." })).toBeVisible();
+  expect(await page.evaluate(() => ({ scroll: window.scrollY, navigation: performance.getEntriesByType("navigation").length }))).toEqual(initial);
+  expect(await page.evaluate((version) => sessionStorage.getItem(`vision-sw-reloaded-v${version}`), appVersion)).toBeNull();
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {
