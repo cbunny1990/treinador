@@ -26,6 +26,13 @@ const gatewayHandlerSource = fs.readFileSync(
 const mcpSource = fs.readFileSync(path.join(__dirname, "..", "supabase", "functions", "vision-coach-mcp", "index.ts"), "utf8");
 const supabaseConfig = fs.readFileSync(path.join(__dirname, "..", "supabase", "config.toml"), "utf8");
 
+test("Formação: tabelas learning_* com RLS e sem referências a tabelas existentes", () => {
+  for (const table of ["learning_age_groups", "learning_modules", "learning_items", "learning_guides", "learning_sessions"])
+    assert.match(sql, new RegExp(`alter table public\\.${table} enable row level security`));
+  assert.match(sql, /unique \(owner_id, url_normalized\)/);
+  assert.doesNotMatch(sql, /learning_[a-z_]+[^;]*references public\.(teams|jogadores|treinos|workspace_records)/);
+});
+
 test("schema remoto ativa RLS nas tabelas privadas", () => {
   for (const table of ["teams","team_members","workspace_records","media_assets","activity_log","agent_authorizations"]) {
     assert.match(sql, new RegExp("alter table public\\." + table + " enable row level security", "i"));

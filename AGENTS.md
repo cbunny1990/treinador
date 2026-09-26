@@ -1,5 +1,8 @@
 # Vision Coach: instruções para agentes
 
+## Formação
+Lê `docs/learning.md` antes de alterar a secção Formação. Mantém o interruptor desligado por omissão, a separação da sincronização do workspace e a aprovação do conteúdo sob controlo do treinador.
+
 ## Imagens de exercícios — caminho rápido
 Lê `docs/ai-image-workflow.md` antes de publicar uma imagem.
 Usa o conector **Vision Coach MCP** existente ou `npm run images:publish`.

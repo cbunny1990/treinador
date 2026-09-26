@@ -344,3 +344,12 @@ tr:last-child td{border-bottom:0}
 .match-event-quick .btn{min-height:48px;text-align:center;white-space:normal}
 @media(max-width:800px){.match-visual-grid{grid-template-columns:1fr}.match-visual-grid .hero-main{padding:16px}.match-pitch{max-width:480px;margin:0 auto}.match-visual-grid .form-grid{grid-template-columns:1fr}}
 @media(max-width:600px){.match-event-quick{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}}
+/* Formação: visible only after the local switch is enabled. */
+.learning-nav[hidden]{display:none!important}
+.learning-groups,.learning-modules,.learning-items{display:grid;gap:12px}
+.learning-groups,.learning-modules{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.learning-block,.learning-guide,.learning-session,.learning-item{margin-top:16px}
+.learning-tabs,.learning-controls{display:flex;flex-wrap:wrap;gap:12px;margin:16px 0}
+.learning-item iframe{width:100%;aspect-ratio:16/9;border:0}
+.learning-controls label{display:grid;gap:6px;width:100%}
+.learning-controls textarea{min-height:72px;width:100%}

@@ -213,6 +213,7 @@ async function routeOnce(){
     if(root==="calendario") return viewCalendar();
     if(root==="evolucao") return viewTeamDevelopment();
     if(root==="epocas") return viewSeasons();
+    if(root==="formacao") return FormacaoUI.view(parts);
     if(root==="pesquisa") return viewSearch();
     if(root==="consulta"){
       return TrainingUI.viewTrainingConsultation(parts[1]||null,parts[2]||null);
@@ -279,6 +280,7 @@ function router(){
 }
 
 quickCapture && quickCapture.addEventListener("click",function(){go("#/capturar");});
+FormacaoUI.syncNav();
 window.addEventListener("hashchange",router);
 window.addEventListener("DOMContentLoaded",router);
 if(document.readyState!=="loading") router();
@@ -1071,7 +1073,9 @@ async function viewSettings(){
   html+='<div class="grid cols-2 section"><section class="panel hero-main"><div class="kicker">Dados</div><h2 style="font-size:22px;margin:8px 0">Backup local</h2><p class="lead">Mantém uma cópia independente do backend remoto.</p><div class="toolbar" style="margin-top:18px"><button class="btn" data-action="export-backup">Exportar backup</button><label class="btn secondary">Importar backup<input hidden type="file" accept="application/json" data-action="import-backup"></label></div></section>';
   html+='<section class="panel hero-main"><div class="kicker">Agente</div><h2 style="font-size:22px;margin:8px 0">Contrato preparado</h2><p class="lead">Depois da sincronização estar ativa, o servidor do agente poderá trabalhar sobre estes mesmos dados com permissões separadas e auditáveis.</p></section></div>';
   html+='<section class="section"><div class="grid cols-4"><div class="panel metric"><div class="metric-label">Jogadores</div><div class="metric-value">'+s.players+'</div></div><div class="panel metric"><div class="metric-label">Documentos</div><div class="metric-value">'+s.documents+'</div></div><div class="panel metric"><div class="metric-label">Media</div><div class="metric-value">'+s.media_count+'</div></div><div class="panel metric"><div class="metric-label">Atividade</div><div class="metric-value">'+s.activity_count+'</div></div></div></section>';
+  html+='<section class="panel section"><h2>Formação</h2><label><input type="checkbox" id="learning-toggle" '+(Learning.isEnabled()?'checked':'')+'> Mostrar a secção Formação (em testes)</label></section>';
   setView("Definições",html,"Sistema");
+  document.getElementById("learning-toggle").addEventListener("change",function(event){Learning.setEnabled(event.target.checked);FormacaoUI.syncNav();});
   if(new URLSearchParams((location.hash.split("?")[1]||"")).get("focus")==="conflitos")requestAnimationFrame(function(){document.getElementById("remote-conflicts")?.scrollIntoView({behavior:"smooth",block:"start"});});
 }
 function fileToDataURL(file,maxBytes){

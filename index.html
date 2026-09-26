@@ -25,6 +25,7 @@
         <a href="#/planos" data-tab="planos"><span class="nav-dot"></span>Planos</a>
         <a href="#/media" data-tab="media"><span class="nav-dot"></span>Media</a>
         <a href="#/timeline" data-tab="timeline"><span class="nav-dot"></span>Timeline</a>
+        <a class="learning-nav" href="#/formacao" data-tab="formacao" hidden><span class="nav-dot"></span>Formação</a>
       </nav>
       <div class="sidebar-foot">
         <div class="agent-state" id="remote-state">
@@ -58,6 +59,7 @@
     <a href="#/planos" data-tab="planos"><span>P</span>Planos</a>
     <a href="#/media" data-tab="media"><span>M</span>Media</a>
     <a href="#/timeline" data-tab="timeline"><span>T</span>Timeline</a>
+    <a class="learning-nav" href="#/formacao" data-tab="formacao" hidden><span>F</span>Formação</a>
   </nav>
   <script src="vendor/supabase.min.js"></script>
   <script src="vendor/tus.min.js"></script>
@@ -91,12 +93,15 @@
   <script src="js/training_ui.js"></script>
   <script src="js/training_session_ui.js"></script>
   <script src="js/agent_contract.js"></script>
+  <script src="js/learning.js"></script>
+  <script src="js/learning_store.js"></script>
+  <script src="js/learning_ui.js"></script>
   <script src="js/app.js"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
         let hadController = !!navigator.serviceWorker.controller;
-        const serviceWorkerVersion = 170;
+        const serviceWorkerVersion = 171;
         const registration = await navigator.serviceWorker.register("sw.js?v="+serviceWorkerVersion).catch(() => null);
         if(!registration) return;
         registration.update().catch(() => {});
