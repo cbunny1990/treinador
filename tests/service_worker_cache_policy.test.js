@@ -66,7 +66,7 @@ test('service worker caches only public allowlisted shell assets', async () => {
   const worker = loadServiceWorker();
   const asset = new Request('https://coach.test/treinador/js/app.js');
   await dispatchFetch(worker.listeners, asset);
-  assert.deepEqual(worker.cacheWrites, [{ name: 'vision-coach-v181', key: asset.url }]);
+  assert.deepEqual(worker.cacheWrites, [{ name: 'vision-coach-v182', key: asset.url }]);
 
   const privateResponseWorker = loadServiceWorker({ responseHeaders: { 'cache-control': 'private, no-store' } });
   await dispatchFetch(privateResponseWorker.listeners, asset);

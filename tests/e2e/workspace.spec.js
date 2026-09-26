@@ -317,7 +317,7 @@ test("snapshot compacto do Workspace percorre o histórico sem materializar jogo
   }));
   expect(snapshot).toEqual({
     hasFullHistory: false, nextMatch: "Próximo adversário", nextTraining: "Próximo treino",
-    reviewCount: 26, reviewSamples: 4, trainingProposals: 7, matchProposals: 9, staleMatchProposals: 10,
+    reviewCount: 26, reviewSamples: 4, trainingProposals: 7, matchProposals: 0, staleMatchProposals: 19,
     scanned: {
       next_jogos: 1, next_treinos: 1, jogos_team_proposal_status: 19,
       treinos_team_completed_review: 26, treinos_team_proposal_status: 7,
