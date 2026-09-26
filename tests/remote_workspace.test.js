@@ -2464,6 +2464,8 @@ test("pull reutiliza URL assinada válida e renova-a quando está perto de expir
       mime_type: "text/plain", data_url: "data:text/plain;base64,QQ==", sync_dirty: true,
     });
     await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
+    assert.equal("signed_url_expires_at" in remote.mediaRows[0], false,
+      "a validade do URL assinado é estado local e nunca é enviada para o Supabase");
     useDevice(1);
     await RemoteWorkspace._syncMedia(remoteTeamId, "coach");
     const id = (await devices[1].listar("media_items"))[0].id;
