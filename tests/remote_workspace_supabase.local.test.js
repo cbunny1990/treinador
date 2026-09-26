@@ -576,7 +576,7 @@ test("RLS + sincronização real com duas sessões locais: round trip, conflito,
 
     globalThis.DB = devices[0];
     const latestPhotoPull = await RemoteWorkspace._syncMedia(teamId, owner.user.id);
-    assert.equal(latestPhotoPull.pulled, 2, "O PC refresca a URL assinada da foto anterior e recebe a nova foto.");
+    assert.equal(latestPhotoPull.pulled, 1, "o PC reutiliza a URL válida da foto anterior e importa apenas a nova foto");
     const pcLatestPhotoPlayer = await devices[0].obter("jogadores", playerId);
     assert.equal(pcLatestPhotoPlayer.profile_media_ref, refs.latestPhoto);
     assert.equal(pcLatestPhotoPlayer.foto, null, "O perfil não duplica os bytes da imagem; a origem é media_items.");

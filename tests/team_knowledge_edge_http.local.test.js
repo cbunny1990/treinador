@@ -175,7 +175,9 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     });
     assert.equal(recentMatches.status, 200);
     const recentResult = JSON.parse((await recentMatches.json()).result.content[0].text);
-    assert.deepEqual(recentResult.map((row) => row.payload.data), ["2026-09-22", "2026-09-20", "2026-09-17", "2026-09-10", "2026-09-05"]);
+    assert.deepEqual(recentResult.matches.map((row) => row.payload.data), ["2026-09-22", "2026-09-20", "2026-09-17", "2026-09-10", "2026-09-05"]);
+    assert.equal(recentResult.has_more, true);
+    assert.equal(recentResult.next_offset, 5);
     assert.doesNotMatch(JSON.stringify(recentResult), /SEGREDO_EQUIPA_EXTERNA/);
 
     const recentContextResponse = await mcpRequest(token, "tools/call", {
@@ -256,7 +258,7 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     assert.equal(trainingCount.count, 3, "preparing a match analysis proposal must not create a training");
 
     const search = await mcpRequest(token, "tools/call", {
-      name: "search_team_knowledge", arguments: { query: "problemas nos jogos recentes", match_refs: recentResult.map((row) => row.id) },
+      name: "search_team_knowledge", arguments: { query: "problemas nos jogos recentes", match_refs: recentResult.matches.map((row) => row.id) },
     });
     assert.equal(search.status, 200);
     const result = JSON.parse((await search.json()).result.content[0].text);
