@@ -56,6 +56,16 @@ globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   if (url.origin === "http://supabase.synthetic" && url.pathname === "/rest/v1/workspace_records") {
     workspaceQueries.push(url.searchParams);
     const query = url.searchParams;
+    if (query.get("order")?.includes("updated_at.desc") && query.get("order")?.includes("id.asc")) {
+      check(query.get("team_id") === `eq.${connector.team_id}`, "Workspace search was not scoped to the authorized team.");
+      check(query.get("deleted_at") === "is.null", "Workspace search included deleted records.");
+      check(query.get("kind") === "in.(match)", "Workspace search ignored the requested kind filter.");
+      check(query.get("offset") === "0" && query.get("limit") === "500", "Workspace search did not page records at the origin.");
+      return Response.json([{
+        id: "70000000-0000-4000-8000-000000000007", kind: "match", payload: { analysis: "Apoio após passe" },
+        actor_type: "coach", actor_label: null, updated_at: "2026-09-25T11:00:00.000Z",
+      }]);
+    }
     check(query.get("team_id") === `eq.${connector.team_id}`, "Archived athlete read was not scoped to the authorized team.");
     check(query.get("deleted_at") === "is.null", "Archived athlete read included deleted archive documents.");
     const kind = query.get("kind");
@@ -126,6 +136,14 @@ try {
   check(archivedPlayer.result.structuredContent.participation_history.player_ref === archivePlayerRef, "The MCP archive result did not resolve participation by stable athlete UUID.");
   check(workspaceQueries.length === 3, "The MCP archive read did not query the archive and its historical game/training records.");
 
+  const lexicalSearch = await call("tools/call", {
+    name: "search_workspace",
+    arguments: { query: "apoio após passe", kinds: ["match"], limit: 10 },
+  });
+  check(!lexicalSearch.result.isError, `The paginated lexical workspace search failed over MCP HTTP: ${JSON.stringify(lexicalSearch.result)}`);
+  check(lexicalSearch.result.structuredContent.search_complete === true, "The lexical search did not report its scan coverage.");
+  check(lexicalSearch.result.structuredContent.results[0].id === "70000000-0000-4000-8000-000000000007", "The lexical search lost its matching record.");
+
   const refused = await call("tools/call", {
     name: "evaluate_cross_session_pattern",
     arguments: {
@@ -142,7 +160,7 @@ try {
   check(refused.result.isError === true, "A call without a provider key should return an MCP error result.");
   check(/typesafe_api_not_configured/.test(refused.result.content?.[0]?.text || ""), "The missing Jev provider was not identified.");
   check(networkPaths.every((path) => path.endsWith("/rest/v1/rpc/mcp_connector_lookup") || path.endsWith("/rest/v1/workspace_records")), "The synthetic test attempted a non-fixture database or external provider request.");
-  console.log("MCP HTTP synthetic contract: initialize, archived athlete read, tools/list, RAG sensitive-query refusal, tool refusal without provider key — passed; external network calls: 0.");
+  console.log("MCP HTTP synthetic contract: initialize, archived athlete read, paginated lexical search, tools/list, RAG sensitive-query refusal, tool refusal without provider key — passed; external network calls: 0.");
 } finally {
   if (server) {
     server.shutdown();

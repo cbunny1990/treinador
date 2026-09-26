@@ -1,7 +1,7 @@
 const PAGE_SIZE_MAX = 50;
 const OFFSET_MAX = 1000000;
 
-export async function listMatches(admin, teamId, { state, dateOrder = "asc", limit = 20, offset = 0 } = {}) {
+export async function listMatches(admin, teamId, { state, dateOrder = "asc", limit = 20, offset = 0 } = /** @type {{ state?: string | null, dateOrder?: string, limit?: number, offset?: number }} */ ({})) {
   if (!["asc", "desc"].includes(dateOrder)) throw new Error("invalid_match_date_order");
   if (!Number.isInteger(limit) || limit < 1 || limit > PAGE_SIZE_MAX) throw new Error("invalid_match_limit");
   if (!Number.isSafeInteger(offset) || offset < 0 || offset > OFFSET_MAX) throw new Error("invalid_match_offset");

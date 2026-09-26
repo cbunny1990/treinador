@@ -64,7 +64,7 @@ test("MCP expõe ferramentas Vision Coach essenciais", () => {
   assert.match(mcp, /REPORT_TOOLS, executeReportTool/);
   assert.match(mcp, /\.\.\.REPORT_TOOLS/);
   assert.match(mcp, /REPORT_TOOLS\.some\(\(tool\) => tool\.name === name\).*executeReportTool/);
-  assert.match(mcp, /SERVER_VERSION = "1\.14\.6"/);
+  assert.match(mcp, /SERVER_VERSION = "1\.14\.7"/);
   assert.match(mcp, /2026-07-28/);
   assert.match(mcp, /2025-11-25/);
 });
@@ -96,6 +96,19 @@ test("workspace summary uses bounded Supabase queries and an exact exercise coun
   assert.match(helper, /\.limit\(5\)/);
   assert.match(helper, /count: "exact", head: true/);
   assert.doesNotMatch(helper, /\.select\([^\n]+\)\.eq\("team_id", teamId\)\.is\("deleted_at", null\);\s*$/);
+});
+
+test("search_workspace pagina na origem e anuncia cobertura e cursor", () => {
+  const helper = fs.readFileSync(path.join(root, "supabase", "functions", "vision-coach-mcp", "workspace_search.mjs"), "utf8");
+  assert.match(mcp, /searchWorkspace\(admin, teamId/);
+  assert.match(helper, /\.eq\("team_id", teamId\)\.is\("deleted_at", null\)/);
+  assert.match(helper, /\.order\("updated_at"[\s\S]*?\.order\("id"/);
+  assert.match(helper, /\.range\(cursor, cursor \+ pageLimit - 1\)/);
+  assert.match(helper, /search_complete: searchComplete/);
+  assert.match(helper, /has_more_results: hasMoreResults/);
+  assert.match(helper, /next_offset: nextOffset/);
+  assert.match(mcp, /offset: \{ type: "integer", minimum: 0, maximum: 1000000, default: 0 \}/);
+  assert.match(mcp, /SERVER_VERSION = "1\.14\.7"/);
 });
 
 test("RAG aceita um conjunto limitado de UUIDs para evidência de vários jogos", () => {

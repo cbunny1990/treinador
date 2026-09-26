@@ -11,6 +11,7 @@ import { MATCH_EVIDENCE_TOOLS, executeMatchEvidenceTool } from "./match_evidence
 import { updateMatchPreGame } from "./match_pre_game.mjs";
 import { listMatches } from "./match_queries.mjs";
 import { getWorkspaceSummary } from "./workspace_summary.mjs";
+import { searchWorkspace } from "./workspace_search.mjs";
 import { PLAYER_GOAL_TOOLS, executePlayerGoalTool } from "./player_goals.mjs";
 import { TEAM_DEVELOPMENT_TOOLS, executeTeamDevelopmentTool } from "./team_development.mjs";
 import { SEASON_TOOLS, executeSeasonTool } from "./seasons.mjs";
@@ -19,7 +20,7 @@ import { TEAM_KNOWLEDGE_TOOLS, executeTeamKnowledgeTool } from "./team_knowledge
 import { SERVER_INSTRUCTIONS } from "./server_instructions.mjs";
 
 const SERVER_NAME = "vision-coach";
-const SERVER_VERSION = "1.14.6";
+const SERVER_VERSION = "1.14.7";
 const MODERN_PROTOCOL = "2026-07-28";
 const LEGACY_PROTOCOLS = new Set(["2025-11-25", "2025-06-18", "2025-03-26"]);
 const MAX_BODY_BYTES = 256 * 1024;
@@ -113,7 +114,7 @@ const TOOLS = [
   },
   {
     name: "search_workspace",
-    description: "Pesquisa texto nos registos ativos do workspace (jogos, exercícios, treinos, documentos, memória e jogadores).",
+    description: "Pesquisa texto nos registos ativos do workspace. A resposta contém results, search_complete, has_more_results e next_offset. Examina até 10 000 registos por pedido; se search_complete=false, repete com next_offset para percorrer mais histórico. Se has_more_results=null, a pesquisa foi limitada antes de confirmar se há outras correspondências.",
     inputSchema: {
       type: "object",
       properties: {
@@ -417,17 +418,13 @@ async function executeTool(admin: any, connector: any, name: string, args: any, 
 
   if (name === "search_workspace") {
     requireScope(connector, "read");
-    const query = String(args?.query || "").trim().toLowerCase();
-    if (!query) throw new Error("query_required");
-    const kinds = Array.isArray(args?.kinds) && args.kinds.length ? new Set(args.kinds.map(String)) : null;
     const limit = clampLimit(args?.limit, 20, 50);
-    const { data, error } = await admin.from("workspace_records")
-      .select("id,kind,payload,actor_type,actor_label,updated_at")
-      .eq("team_id", teamId).is("deleted_at", null);
-    if (error) throw error;
-    return (data || [])
-      .filter((x: any) => (!kinds || kinds.has(x.kind)) && JSON.stringify(x.payload || {}).toLowerCase().includes(query))
-      .slice(0, limit);
+    return await searchWorkspace(admin, teamId, {
+      query: args?.query,
+      kinds: args?.kinds,
+      limit,
+      offset: args?.offset == null ? 0 : Number(args.offset),
+    });
   }
 
   if (name === "list_players") {
