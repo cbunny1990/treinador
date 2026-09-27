@@ -113,7 +113,7 @@
     if(p.status!=='approved')return {stage:'proposed',label:p.source_key===sourceKey(source)?'Proposta por aprovar':'Proposta desatualizada'};
     if(!target)return {stage:'created',label:'Treino aprovado; não disponível neste dispositivo'};
     const review=effectiveReview(target);if(review.status==='done')return {stage:'evaluated',label:'Avaliado',outcome:OUTCOMES[review.focus_outcome]||OUTCOMES.pending};
-    if(target.session?.status==='completed')return {stage:'trained',label:'Realizado · falta avaliar'};
+    if(target.session?.status==='completed'||target.status==='completed')return {stage:'trained',label:'Realizado · falta avaliar'};
     return {stage:'created',label:'Treino criado'};
   }
   const api={schema:SCHEMA,fields:FIELDS,outcomes:OUTCOMES,state,effectiveReview,reviewKey,sourceKey,sourceData,stableId,identities,evidence,saveReview,clearReview,memory,prepare,check,update,dismiss,approve,progress,blocks,available};

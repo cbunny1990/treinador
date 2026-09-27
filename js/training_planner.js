@@ -159,15 +159,23 @@ function tpNormalizeTraining(input) {
   return row;
 }
 
-function tpTrainingStatus(training) {
+function tpLocalDate(now = new Date()) {
+  return now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
+}
+
+function tpTrainingStatus(training, referenceDate = tpLocalDate()) {
   const sessionStatus = String(training?.session?.status || "");
   const sessionLabels = {
-    not_started: "Por iniciar",
     running: "Em curso",
     paused: "Em pausa",
     completed: "Terminado",
   };
   if (Object.hasOwn(sessionLabels, sessionStatus)) return sessionLabels[sessionStatus];
+  if (training?.manual_completion?.status === "confirmed" && training?.status === "completed") return "Realizado sem cronómetro";
+  if (training?.status === "completed") return "Realização registada";
+  const plannedDate = String(training?.data || "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(plannedDate) && plannedDate < referenceDate) return "Plano passado";
+  if (sessionStatus === "not_started") return "Por iniciar";
   const planStatus = String(training?.status || "draft");
   return planStatus === "ready" ? "Pronto" : "Rascunho";
 }
@@ -185,6 +193,7 @@ const TrainingPlanner = {
   trainingDuration: tpTrainingDuration,
   normalizeTraining: tpNormalizeTraining,
   trainingStatus: tpTrainingStatus,
+  localDate: tpLocalDate,
 };
 
 if (typeof globalThis !== "undefined") globalThis.TrainingPlanner = TrainingPlanner;
