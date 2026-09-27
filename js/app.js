@@ -1016,11 +1016,25 @@ async function viewCapture(subjectType,subjectId){
   html+='<div class="toolbar"><button class="btn accent" type="submit">Guardar observação</button><a class="btn secondary" href="#/">Cancelar</a></div></form></section>';
   setView("Registar observação",html,"Workspace");
 }
+function remoteConflictLocalHref(conflict){
+  var id=Number(conflict.local_id);
+  if(!Number.isSafeInteger(id)||id<1)return null;
+  var routes={jogadores:"#/equipa/jogador/",jogos:"#/equipa/jogo/",treinos:"#/treinos/",exercicios:"#/exercicios/",workspace_documents:"#/planos/",media_items:"#/media/"};
+  if(!routes[conflict.store])return null;
+  return routes[conflict.store]+id+(conflict.store==="media_items"?"/editar":"");
+}
 function remoteConflictCardHTML(conflict){
   var reasons={delete_version_mismatch:"A cópia remota mudou depois da eliminação offline; ambas as versões foram preservadas.",remote_deleted_local_dirty:"O registo foi apagado no servidor, mas contém alterações locais pendentes. A cópia local foi preservada.",version_mismatch:"O mesmo registo foi alterado neste dispositivo e no remoto. As duas versões estão preservadas.",duplicate_identity:"Foi encontrada outra identidade para este registo; não foi criada uma cópia adicional.",invalid_local_sync_id:"O identificador guardado neste dispositivo não é um UUID remoto. Os dados ficaram preservados e não foram enviados; é necessária reconciliação.",remote_team_unknown:"Não foi possível confirmar a equipa de origem deste registo; os dados ficaram preservados.",invalid_subject_id:"A atividade referencia um ID antigo sem correspondência. A atividade continua preservada e não foi ligada a outro registo.",ambiguous_external_reference:"A referência corresponde a mais de um registo local. Nenhum foi escolhido automaticamente.",subject_not_found_locally:"O registo de origem da atividade não está neste dispositivo; a atividade continua preservada.",subject_other_team:"O registo de origem pertence a outra equipa; a atividade não foi enviada.",subject_uuid_not_in_team:"A UUID de origem não pertence ao workspace selecionado; a atividade continua preservada.",storage_path_team_mismatch:"O caminho do ficheiro pertence a outro workspace; não foi enviado nem assinado.",storage_signed_url_failed:"O ficheiro continua privado, mas não foi possível abrir uma ligação temporária. A sincronização tentará novamente."};
-  var stores={jogadores:"Atleta",jogos:"Jogo",treinos:"Treino",exercicios:"Exercício",workspace_documents:"Documento",head_coach_memory:"Memória",media_items:"Media",teams:"Equipa",activity_items:"Atividade"};
+  var stores={jogadores:"Atleta",jogos:"Jogo",treinos:"Treino",exercicios:"Exercício",workspace_documents:"Documento",memory_items:"Memória",head_coach_memory:"Memória",media_items:"Media",teams:"Equipa",activity_items:"Atividade"};
   var label=conflict.reason==='delete_version_mismatch'?'Eliminação offline em conflito':conflict.reason==='remote_deleted_local_dirty'?'Eliminação remota em conflito':conflict.reason==='storage_signed_url_failed'?'Media temporariamente indisponível':'Conflito de sincronização';
   var html='<article class="list-item" data-conflict-card="'+esc(conflict.sync_id||'')+'" data-conflict-store="'+esc(conflict.store||'')+'"><strong>'+label+' · '+esc(conflict.display_name||stores[conflict.store]||'Registo')+'</strong><p>'+esc(reasons[conflict.reason]||'A sincronização detetou versões diferentes e não substituiu os dados locais.')+'</p>';
+  var localHref=remoteConflictLocalHref(conflict);
+  if(localHref)html+='<div class="toolbar"><a class="btn secondary" data-conflict-local-link href="'+esc(localHref)+'">Abrir registo local</a></div>';
+  if(['remote_team_unknown','subject_other_team','storage_path_team_mismatch'].includes(conflict.reason))html+='<div class="notice section"><strong>Próximo passo: confirmar a equipa do workspace</strong><p>Em Definições, seleciona a equipa proprietária deste registo ou ficheiro. Se a equipa de origem continuar desconhecida, pede ao responsável do workspace que confirme a pertença. O conflito mantém-se até a origem ser confirmada.</p><a class="btn secondary" href="#/definicoes?focus=workspace">Abrir seleção do workspace</a></div>';
+  else if(conflict.reason==='subject_uuid_not_in_team')html+='<p class="hint">Próximo passo: verifica a referência local deste registo e pede ao responsável do workspace que confirme qual é o registo de origem. Não alteres a equipa para tentar resolver esta referência.</p>';
+  else if(conflict.reason==='storage_signed_url_failed')html+='<p class="hint">Próximo passo: volta a sincronizar quando houver ligação. O ficheiro continua privado e a tentativa será repetida.</p>';
+  else if(!['version_mismatch','delete_version_mismatch','remote_deleted_local_dirty','invalid_local_sync_id'].includes(conflict.reason)&&!(conflict.reason==='duplicate_identity'&&conflict.store!=='activity_items'&&conflict.store!=='media_items'))html+='<p class="hint" data-conflict-next-step>Próximo passo: pede revisão ao responsável do workspace com o código <code>'+esc(conflict.reason||'unknown')+'</code>. Mantém as duas versões; esta ocorrência não tem uma correção segura automática.</p>';
+  html+='<p class="meta">Código do motivo: <code data-conflict-reason>'+esc(conflict.reason||'unknown')+'</code></p>';
   html+='<details class="section"><summary>Detalhes técnicos</summary><p class="meta">Tipo: '+esc(stores[conflict.store]||conflict.store||'desconhecido')+' · ID remoto: '+esc(conflict.sync_id||'indisponível')+' · versão local vista: '+esc(conflict.expected_updated_at||'sem versão')+' · versão remota: '+esc(conflict.remote_updated_at||'indisponível')+'</p></details>';
   if(conflict.reason==='version_mismatch')html+='<button class="btn secondary" type="button" data-action="review-version-conflict" data-sync-id="'+esc(conflict.sync_id)+'" data-store="'+esc(conflict.store)+'">Comparar versões</button><div class="conflict-review section" data-conflict-review hidden></div>';
   if(conflict.reason==='invalid_local_sync_id'||(conflict.reason==='duplicate_identity'&&conflict.store!=='activity_items'&&conflict.store!=='media_items'))html+='<button class="btn secondary" type="button" data-action="find-invalid-id-match" data-local-id="'+esc(conflict.local_id)+'" data-store="'+esc(conflict.store)+'">Procurar correspondência exata</button><div class="conflict-review section" data-identity-recovery hidden></div>';
@@ -1035,16 +1049,19 @@ function remoteConflictQueueHTML(conflicts){
   var retry=conflicts.filter(function(item){return item.reason==='storage_signed_url_failed';}).length;
   var investigate=conflicts.length-decisions-retry;
   var summary=[];
+  var stores={jogadores:"Atleta",jogos:"Jogo",treinos:"Treino",exercicios:"Exercício",workspace_documents:"Documento",memory_items:"Memória",head_coach_memory:"Memória",media_items:"Media",teams:"Equipa",activity_items:"Atividade"};
   if(decisions)summary.push(decisions+' '+(decisions===1?'alteração requer':'alterações requerem')+' escolha do treinador');
   if(investigate)summary.push(investigate+' '+(investigate===1?'registo aguarda':'registos aguardam')+' correção');
   if(retry)summary.push(retry===1?'1 falha temporária será repetida automaticamente':retry+' falhas temporárias serão repetidas automaticamente');
   var html='<div id="remote-conflicts"><div class="notice" style="margin-top:12px"><strong>'+conflicts.length+' ocorrências detetadas</strong><p>'+summary.join(' · ')+'. As versões locais e remotas continuam preservadas.</p></div>';
+  var groups={};conflicts.forEach(function(item){var key=(item.reason||'unknown')+' · '+(stores[item.store]||item.store||'Registo');groups[key]=(groups[key]||0)+1;});
+  html+='<details class="section"><summary>Contagem por motivo e tipo de registo</summary><ul class="conflict-counts">'+Object.keys(groups).sort().map(function(key){return '<li>'+esc(key)+': <strong>'+groups[key]+'</strong></li>';}).join('')+'</ul></details>';
   if(versionConflicts>1)html+='<section class="section"><button class="btn secondary" type="button" data-action="review-independent-conflict-batch">Analisar resoluções seguras ('+versionConflicts+')</button><p class="hint">A prévia não altera dados. Mostra combinações de campos independentes e casos em que só uma versão mudou desde a base comum.</p><div class="conflict-review section" data-conflict-batch-preview hidden></div></section>';
   return html+'<div class="list section">'+conflicts.map(remoteConflictCardHTML).join('')+'</div></div>';
 }
 function remoteConflictBatchReviewHTML(result){
   var safe=result?.safe||[],manual=result?.manual_review||[],blocked=result?.needs_review||[];
-  var stores={jogadores:"Atleta",jogos:"Jogo",treinos:"Treino",exercicios:"Exercício",workspace_documents:"Documento",head_coach_memory:"Memória",teams:"Equipa",activity_items:"Atividade"};
+  var stores={jogadores:"Atleta",jogos:"Jogo",treinos:"Treino",exercicios:"Exercício",workspace_documents:"Documento",memory_items:"Memória",head_coach_memory:"Memória",teams:"Equipa",activity_items:"Atividade"};
   var label=function(key){return ({nome:"Nome",title:"Título",titulo:"Título",objetivo:"Objetivo",descricao:"Descrição",note:"Nota",data:"Data",hora:"Hora",local:"Local",adversario:"Adversário",status:"Estado",observacoes:"Observações",nota_tatica:"Nota tática",summary:"Resumo"})[key]||String(key||"").replace(/_/g," ");};
   var safeLabel=safe.length===1?'1 resolução segura':safe.length+' resoluções seguras';
   var manualLabel=manual.length===1?'1 conflito com escolha por campo':manual.length+' conflitos com escolha por campo';
@@ -1201,7 +1218,7 @@ async function viewSettings(){
   html+='<label class="field"><span>Publishable key</span><input name="publishable_key" type="password" value="'+esc(config.publishableKey)+'" required autocomplete="off"></label><button class="btn secondary" type="submit">Guardar configuração</button></form>';
   if(remoteError) html+='<div class="notice" style="margin-top:12px">'+esc(remoteError)+'</div>';
   html+='</section>';
-  html+='<section class="panel hero-main"><div class="kicker">Conta e sincronização</div>'+remoteAccountHTML(status,teams,options)+'</section></div>';
+  html+='<section class="panel hero-main" id="remote-workspace-settings"><div class="kicker">Conta e sincronização</div>'+remoteAccountHTML(status,teams,options)+'</section></div>';
   html+=mcpConnectorsHTML(status,mcpData,mcpError);
   html+='<div class="grid cols-2 section"><section class="panel hero-main"><div class="kicker">Dados</div><h2 style="font-size:22px;margin:8px 0">Backup local</h2><p class="lead">Mantém uma cópia independente do backend remoto.</p><div class="toolbar" style="margin-top:18px"><button class="btn" data-action="export-backup">Exportar backup</button><label class="btn secondary">Importar backup<input hidden type="file" accept="application/json" data-action="import-backup"></label></div></section>';
   html+='<section class="panel hero-main"><div class="kicker">Agente</div><h2 style="font-size:22px;margin:8px 0">Contrato preparado</h2><p class="lead">Depois da sincronização estar ativa, o servidor do agente poderá trabalhar sobre estes mesmos dados com permissões separadas e auditáveis.</p></section></div>';
@@ -1210,6 +1227,7 @@ async function viewSettings(){
   setView("Definições",html,"Sistema");
   document.getElementById("learning-toggle").addEventListener("change",function(event){Learning.setEnabled(event.target.checked);FormacaoUI.syncNav();});
   if(new URLSearchParams((location.hash.split("?")[1]||"")).get("focus")==="conflitos")requestAnimationFrame(function(){document.getElementById("remote-conflicts")?.scrollIntoView({behavior:"smooth",block:"start"});});
+  if(new URLSearchParams((location.hash.split("?")[1]||"")).get("focus")==="workspace")requestAnimationFrame(function(){document.getElementById("remote-workspace-settings")?.scrollIntoView({behavior:"smooth",block:"start"});document.getElementById("remote-team-select")?.focus({preventScroll:true});});
 }
 function fileToDataURL(file,maxBytes){
   maxBytes=maxBytes||5*1024*1024;

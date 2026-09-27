@@ -1482,6 +1482,39 @@ test("conflito de eliminação offline mostra versões e exige uma escolha expl�
   await expect.poll(() => page.evaluate(() => window.__identityRecovery)).toEqual(["jogos", "12", "match-stable", "local-v2", "v2"]);
 });
 
+test("conflito bloqueado orienta para a equipa e liga ao registo local sem transbordo móvel", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined" && typeof router === "function");
+  await page.evaluate(async () => {
+    RemoteWorkspace.status = async () => ({ configured: true, signedIn: true, email: "coach@example.test", remoteTeamId: "team-test", conflicts: [
+      { store: "jogos", local_id: 12, sync_id: "match-blocked", reason: "subject_other_team" },
+      { store: "treinos", local_id: 4, sync_id: "training-blocked", reason: "subject_uuid_not_in_team" },
+      { store: "media_items", local_id: 9, sync_id: "media-blocked", reason: "storage_path_team_mismatch" },
+      { store: "activity_items", local_id: null, sync_id: "unknown-origin", reason: "remote_team_unknown" },
+      { store: "memory_items", local_id: null, sync_id: "unknown-memory", reason: "invalid_subject_id" }
+    ] });
+    RemoteWorkspace.getConfig = () => ({ url: "https://example.supabase.co", publishableKey: "sb_publishable_test" });
+    RemoteWorkspace.listTeams = async () => [{ id: "team-test", name: "Equipa de teste" }];
+    MCPConnectors.list = async () => [];
+    await router();
+  });
+  await page.getByRole("button", { name: "Abrir revisão" }).click();
+  await expect(page.locator('[data-conflict-card="match-blocked"] [data-conflict-local-link]')).toHaveAttribute("href", "#/equipa/jogo/12");
+  await expect(page.locator('[data-conflict-card="training-blocked"] [data-conflict-local-link]')).toHaveAttribute("href", "#/treinos/4");
+  await expect(page.locator('[data-conflict-card="training-blocked"]')).not.toContainText("Abrir seleção do workspace");
+  await expect(page.locator('[data-conflict-card="media-blocked"] [data-conflict-local-link]')).toHaveAttribute("href", "#/media/9/editar");
+  await expect(page.locator('[data-conflict-card="match-blocked"] [data-conflict-reason]')).toHaveText("subject_other_team");
+  await expect(page.locator('[data-conflict-card="unknown-memory"] [data-conflict-next-step]')).toContainText("invalid_subject_id");
+  await page.getByText("Contagem por motivo e tipo de registo").click();
+  await expect(page.locator(".conflict-counts li").filter({ hasText: "invalid_subject_id · Memória: 1" })).toBeVisible();
+  const width = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }));
+  expect(width.content).toBeLessThanOrEqual(width.viewport);
+  await page.locator('[data-conflict-card="match-blocked"]').getByRole("link", { name: "Abrir seleção do workspace" }).click();
+  await expect(page).toHaveURL(/#\/definicoes\?focus=workspace$/);
+  await expect(page.locator("#remote-team-select")).toBeVisible();
+});
+
 test("Workspace permite rever e decidir um conflito sem sair da página", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined" && typeof router === "function" && typeof MCPConnectors !== "undefined");
