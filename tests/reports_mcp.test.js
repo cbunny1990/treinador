@@ -117,3 +117,20 @@ test('athlete and team reports expose explicit unknown minutes, exact team scope
  await assert.rejects(api.executeReportTool(admin,c,'get_player_report',{id:playerId,from_date:'2026-10-01',to_date:'2026-09-01'}),/invalid_report_period/);
  await assert.rejects(api.executeReportTool(admin,c,'get_team_report',{season_id:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'}),/season_not_found/);
 });
+
+test('player report counts UUID-attributed goals and distinguishes empty from missing event lists',async()=>{
+ const playerId='33333333-3333-4333-8333-333333333333',otherId='55555555-5555-4555-8555-555555555555';
+ const rows=[
+  {id:playerId,team_id:'team-a',kind:'player',updated_at:'p1',deleted_at:null,payload:{external_key:'ana',nome:'Ana'}},
+  {id:'66666666-6666-4666-8666-666666666666',team_id:'team-a',kind:'match',updated_at:'m1',deleted_at:null,payload:{data:'2026-09-10',estado:'concluido',golos_favor:9,callup:{player_ids:[playerId]},match_events:{schema:'vision-match-events@1',revision:1,events:[{id:'g1',type:'goal_for',at_ms:1000,player_ref:playerId},{id:'g2',type:'goal_for',at_ms:2000},{id:'g3',type:'goal_for',at_ms:3000,player_ref:otherId}]}}},
+  {id:'77777777-7777-4777-8777-777777777777',team_id:'team-a',kind:'match',updated_at:'m2',deleted_at:null,payload:{data:'2026-09-20',estado:'concluido',golos_favor:4,callup:{player_ids:[playerId]},match_events:{schema:'vision-match-events@1',revision:1,events:[]}}},
+  {id:'88888888-8888-4888-8888-888888888888',team_id:'team-a',kind:'match',updated_at:'m3',deleted_at:null,payload:{data:'2026-09-25',estado:'concluido',golos_favor:3,callup:{player_ids:[playerId]}}},
+ ];
+ const admin={from(table){const filters=[];return{select(){return this},eq(k,v){filters.push([k,v]);return this},is(k,v){filters.push([k,v]);return this},then(resolve){return Promise.resolve({data:rows.filter(row=>filters.every(([k,v])=>k==='payload->>external_key'?row.payload.external_key===v:row[k]===v)).map(row=>structuredClone(row)),error:null}).then(resolve)}}}};
+ const out=await api.executeReportTool(admin,c,'get_player_report',{id:playerId,from_date:'2026-09-01',to_date:'2026-09-20'});
+ assert.deepEqual(out.goal_for.match_records.map(row=>[row.attributed_goal_for,row.events_status]),[[0,'recorded_empty'],[1,'recorded']]);
+ assert.deepEqual(out.goal_for.summary,{matches_with_event_lists:2,matches_with_empty_event_lists:1,matches_missing_events:0,concluded_matches_missing_events:0,total_attributed_goals:1,known_attributed_goals:1});
+ assert.equal(out.provenance.goal_for.includes('manual match scores'),true);
+ const full=await api.executeReportTool(admin,c,'get_player_report',{id:playerId});
+ assert.equal(full.goal_for.summary.total_attributed_goals,null);assert.equal(full.goal_for.summary.known_attributed_goals,1);assert.equal(full.goal_for.summary.concluded_matches_missing_events,1);assert.equal(full.goal_for.match_records[0].events_status,'missing_concluded');assert.equal(full.missing_data.concluded_matches_missing_goal_events,true);
+});
