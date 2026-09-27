@@ -64,7 +64,7 @@ test("MCP expõe ferramentas Vision Coach essenciais", () => {
   assert.match(mcp, /REPORT_TOOLS, executeReportTool/);
   assert.match(mcp, /\.\.\.REPORT_TOOLS/);
   assert.match(mcp, /REPORT_TOOLS\.some\(\(tool\) => tool\.name === name\).*executeReportTool/);
-  assert.match(mcp, /SERVER_VERSION = "1\.14\.10"/);
+  assert.match(mcp, /SERVER_VERSION = "1\.14\.11"/);
   assert.match(mcp, /2026-07-28/);
   assert.match(mcp, /2025-11-25/);
 });
@@ -108,7 +108,7 @@ test("search_workspace pagina na origem e anuncia cobertura e cursor", () => {
   assert.match(helper, /has_more_results: hasMoreResults/);
   assert.match(helper, /next_offset: nextOffset/);
   assert.match(mcp, /offset: \{ type: "integer", minimum: 0, maximum: 1000000, default: 0 \}/);
-  assert.match(mcp, /SERVER_VERSION = "1\.14\.10"/);
+  assert.match(mcp, /SERVER_VERSION = "1\.14\.11"/);
 });
 
 test("RAG aceita um conjunto limitado de UUIDs para evidência de vários jogos", () => {

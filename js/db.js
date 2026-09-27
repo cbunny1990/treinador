@@ -200,6 +200,9 @@ function _visibleInSelectedRemoteWorkspace(row) {
   const selected = _selectedRemoteTeamId();
   return !selected || !row?.remote_team_id || row.remote_team_id === selected;
 }
+function _visibleMatchTeam(store, row) {
+  return store !== "jogos" || !row || row.team_id === DEFAULT_TEAM_ID;
+}
 function _prepareSyncRecord(store, obj, options = {}) {
   const indexed = _operationalIndexFields(store, obj);
   if (!SYNCABLE_STORES.has(store) || options.remote) return indexed;
@@ -237,7 +240,7 @@ const DB = {
   async obter(store, id) {
     const os = await _tx(store, "readonly");
     const row = await _prom(os.get(store === "teams" ? String(id) : Number(id)));
-    return store === "teams" || _visibleInSelectedRemoteWorkspace(row) ? row : undefined;
+    return store === "teams" || (_visibleInSelectedRemoteWorkspace(row) && _visibleMatchTeam(store, row)) ? row : undefined;
   },
   async criar(store, obj, options = {}) {
     const os = await _tx(store, "readwrite");
@@ -287,6 +290,7 @@ const DB = {
         try{
           if(!req.result) throw new Error("O registo foi apagado ou já não existe.");
           if(store!=="teams"&&!options.remote&&!_visibleInSelectedRemoteWorkspace(req.result)) throw new Error("O registo pertence a outro workspace remoto.");
+          if(!options.remote&&!_visibleMatchTeam(store,req.result)) throw new Error("O jogo pertence a outra equipa.");
           result=_prepareSyncRecord(store,transform(req.result),options);
           if(!result||result.id!==req.result.id||result.then) throw new Error("Alteração local inválida.");
           os.put(result);
@@ -316,6 +320,11 @@ const DB = {
           }
           if (anterior && store !== "teams" && !options.remote && !_visibleInSelectedRemoteWorkspace(anterior)) {
             failure = new Error("O registo pertence a outro workspace remoto.");
+            tx.abort();
+            return;
+          }
+          if (anterior && !options.remote && !_visibleMatchTeam(store, anterior)) {
+            failure = new Error("O jogo pertence a outra equipa.");
             tx.abort();
             return;
           }

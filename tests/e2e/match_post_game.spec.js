@@ -89,6 +89,37 @@ test('concluir jogo pelo formulário também abre os relatórios dos convocados'
  await expect(page.locator('#match-player-reports')).toContainText('Convocado formulário');
 });
 
+for(const width of [390,1440])test(`resultado pós-jogo preserva o texto local quando outra edição mudou os mesmos campos · ${width}px`,async({page})=>{
+ await page.setViewportSize({width,height:844});
+ await page.goto('/#/calendario');
+ await page.waitForFunction(()=>typeof DB!=='undefined'&&typeof go==='function');
+ const id=await page.evaluate(async()=>{
+  RemoteWorkspace.scheduleSync=()=>{};
+  const id=await DB.criar('jogos',{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:'2026-09-27',adversario:'Resultado concorrente',estado:'concluido',golos_favor:1,golos_contra:1,notas:'Versão inicial'});
+  go('#/equipa/jogo/'+id);return id;
+ });
+ const result=page.locator('form[data-form="match-result"]'),dialogs=[];
+ await expect(result).toBeVisible();
+ await result.locator('[name="golos_favor"]').fill('2');
+ await result.locator('[name="golos_contra"]').fill('1');
+ await result.locator('[name="notas"]').fill('Texto ainda não guardado');
+ await page.evaluate(id=>DB.modificar('jogos',id,current=>({...current,golos_favor:3,golos_contra:0,notas:'Versão do outro dispositivo'})),id);
+ page.on('dialog',async dialog=>{dialogs.push(dialog.message());await dialog.accept();});
+ await result.getByRole('button',{name:'Guardar resultado e notas'}).click();
+ await expect.poll(()=>dialogs.length).toBe(1);
+ expect(dialogs[0]).toContain('mudaram noutro dispositivo');
+ await expect(result.locator('[name="golos_favor"]')).toHaveValue('2');
+ await expect(result.locator('[name="notas"]')).toHaveValue('Texto ainda não guardado');
+ expect(await page.evaluate(id=>DB.obter('jogos',id).then(row=>[row.golos_favor,row.golos_contra,row.notas]),id)).toEqual([3,0,'Versão do outro dispositivo']);
+ await page.reload();
+ await expect(result.locator('[name="golos_favor"]')).toHaveValue('3');
+ await page.evaluate(id=>DB.modificar('jogos',id,current=>({...current,post_game:{...current.post_game,status:'reviewed'}})),id);
+ await result.locator('[name="golos_favor"]').fill('2');
+ await result.getByRole('button',{name:'Guardar resultado e notas'}).click();
+ await expect.poll(()=>page.evaluate(id=>DB.obter('jogos',id).then(row=>row.golos_favor),id)).toBe(2);
+ expect(dialogs).toHaveLength(1);
+});
+
 test('relatório de convocado eliminado usa nome do arquivo da mesma equipa sem cronómetro',async({page})=>{
  await page.goto('/#/calendario');
  await page.waitForFunction(()=>typeof DB!=='undefined'&&typeof deletePlayerPermanently==='function');
