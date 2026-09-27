@@ -191,6 +191,27 @@ function linesFromText(value){
 function linesText(value){return Array.isArray(value)?value.join(String.fromCharCode(10)):"";}
 function matchStructure(match){return VisionCalendar.normalizeMatch(match||{});}
 function matchResultSnapshot(match){return JSON.stringify([match.golos_favor??null,match.golos_contra??null,match.notas||null]);}
+function matchDetailsValues(match,team){var row=matchStructure(match);return{data:row.data||today(),hora:row.hora||null,adversario:row.adversario||"",casa_fora:row.casa_fora==="fora"?"fora":"casa",local:row.local||null,hora_saida:row.hora_saida||null,hora_concentracao:row.hora_concentracao||null,competicao:row.competicao||team?.competicao||null,estado:row.estado,golos_favor:row.golos_favor??null,golos_contra:row.golos_contra??null,notas:row.notas||null};}
+function matchDetailsSnapshot(match,team){return JSON.stringify(matchDetailsValues(match,team));}
+function matchPreValues(match){var pre=matchStructure(match).pre_game;return{objetivo_principal:pre.objetivo_principal||null,plano_jogo:pre.plano_jogo||null,pontos_observar:linesFromText(linesText(pre.pontos_observar))};}
+function matchPreSnapshot(match){return JSON.stringify(matchPreValues(match));}
+function matchCallupValues(match){var callup=matchStructure(match).callup;return{player_ids:[...new Set(callup.player_ids.map(String))].sort(),notes:callup.notes||null};}
+function matchCallupSnapshot(match){return JSON.stringify(matchCallupValues(match));}
+function matchLineupSnapshot(match){var lineup=matchStructure(match).lineup;return JSON.stringify([lineup.status,lineup.system,lineup.goalkeeper_id,lineup.starters,lineup.substitutes,lineup.positions||null]);}
+function matchDuringValues(match){var during=matchStructure(match).during;return{halftime_score:during.halftime_score||null,notes:linesFromText(linesText(during.notes))};}
+function matchDuringSnapshot(match){return JSON.stringify(matchDuringValues(match));}
+function matchFormChanges(expected,current,submitted,section,labels){
+  var base;try{base=JSON.parse(expected);}catch(_){throw new Error("A versão do formulário é inválida. Reabre a ficha antes de guardar.");}
+  if(!base||typeof base!=="object"||Object.keys(submitted).some(function(key){return !Object.hasOwn(base,key);}))throw new Error("A versão do formulário é inválida. Reabre a ficha antes de guardar.");
+  var changes={},conflicts=[],same=function(a,b){return JSON.stringify(a)===JSON.stringify(b);};
+  Object.keys(submitted).forEach(function(key){
+    if(same(submitted[key],base[key]))return;
+    if(!same(current[key],base[key])&&!same(current[key],submitted[key]))conflicts.push(labels[key]||key);
+    else changes[key]=submitted[key];
+  });
+  if(conflicts.length)throw new Error(section+" noutro dispositivo em: "+conflicts.join(", ")+". Revê a versão atual antes de guardar.");
+  return changes;
+}
 function matchOpponentObservation(match){
   var data=match?.post_game?.opponent_observation||match?.pre_game||{};
   return {
@@ -768,7 +789,7 @@ async function viewPlayer(id){
 async function viewMatchForm(id){
   var team=await HeadCoachMemory.ensureTeam();
   var match=matchStructure(id?await DB.obter("jogos",id):null);
-  var html='<section class="panel hero-main" style="max-width:820px"><form class="form" data-form="match" data-id="'+(id||"")+'">';
+  var html='<section class="panel hero-main" style="max-width:820px"><form class="form" data-form="match" data-id="'+(id||"")+'">'+(id?'<input type="hidden" name="expected_details" value="'+esc(matchDetailsSnapshot(match,team))+'">':'');
   html+='<div class="form-grid"><label class="field"><span>Data</span><input type="date" name="data" required value="'+esc(match.data||today())+'"></label><label class="field"><span>Hora do jogo</span><input type="time" name="hora" value="'+esc(match.hora)+'"></label></div>';
   html+='<label class="field"><span>Adversário</span><input name="adversario" required value="'+esc(match.adversario)+'"></label>';
   html+='<div class="form-grid"><label class="field"><span>Casa / Fora</span><select name="casa_fora"><option value="casa" '+(match.casa_fora!=="fora"?"selected":"")+'>Casa</option><option value="fora" '+(match.casa_fora==="fora"?"selected":"")+'>Fora</option></select></label><label class="field"><span>Local</span><input name="local" value="'+esc(match.local)+'"></label></div>';
@@ -837,10 +858,10 @@ async function viewMatch(id){
   if(match.estado==="concluido")html+='<section class="notice section"><strong>Jogo terminado</strong><p>Preenche o relatório de cada convocado, o resultado, os acontecimentos que recordas e a análise. '+(match.visual_match?.started_at?'A utilização vem do cronómetro registado.':'Não foi usado cronómetro: os minutos dos atletas continuam desconhecidos.')+'</p><a class="btn accent" href="#/equipa/jogo/'+id+'?focus=players">Relatórios dos convocados</a></section>';
   html+='<div class="match-stage-nav"><button type="button" data-action="jump-match" data-target="match-before">Antes</button><button type="button" data-action="jump-match" data-target="match-after">Depois</button></div>';
   html+='<section class="section match-stage" id="match-before"><div class="section-head"><div><h2>Antes do jogo</h2><p>Plano, convocatória e alinhamento</p></div></div><div class="grid cols-2">';
-  html+='<form class="panel match-form form" data-form="match-pre" data-id="'+id+'"><h3>Plano pré-jogo</h3><label class="field"><span>Objetivo principal</span><input name="objetivo_principal" value="'+esc(match.pre_game.objetivo_principal)+'"></label><label class="field"><span>Plano de jogo</span><textarea name="plano_jogo">'+esc(match.pre_game.plano_jogo)+'</textarea></label><label class="field"><span>Pontos a observar · um por linha</span><textarea name="pontos_observar">'+esc(linesText(match.pre_game.pontos_observar))+'</textarea></label><button class="btn accent" type="submit">Guardar plano</button></form>';
-  html+='<form class="panel match-form form" data-form="match-callup" data-id="'+id+'"><h3>Convocatória</h3>'+(retiredCalled.length?'<div class="notice">Histórico: '+retiredCalled.map(function(p){return esc(p.nome);}).join(", ")+' já não pertence ao plantel atual.</div>':'')+(unavailableCalled.length?'<div class="notice">'+unavailableCalled.map(function(p){return esc(p.nome)+" · "+esc(PlayerStatus.label(p.estado_disponibilidade));}).join("<br>")+'<br>Estes jogadores deixaram de estar disponíveis e serão retirados ao guardar a convocatória.</div>':'')+'<div class="player-choice-grid">'+playerChecks(players,match.callup.player_ids,"player_ids")+'</div><label class="field"><span>Notas</span><textarea name="notes">'+esc(match.callup.notes)+'</textarea></label><button class="btn accent" type="submit">Guardar convocatória</button></form></div>';
+  html+='<form class="panel match-form form" data-form="match-pre" data-id="'+id+'"><h3>Plano pré-jogo</h3><input type="hidden" name="expected_pre" value="'+esc(matchPreSnapshot(match))+'"><label class="field"><span>Objetivo principal</span><input name="objetivo_principal" value="'+esc(match.pre_game.objetivo_principal)+'"></label><label class="field"><span>Plano de jogo</span><textarea name="plano_jogo">'+esc(match.pre_game.plano_jogo)+'</textarea></label><label class="field"><span>Pontos a observar · um por linha</span><textarea name="pontos_observar">'+esc(linesText(match.pre_game.pontos_observar))+'</textarea></label><button class="btn accent" type="submit">Guardar plano</button></form>';
+  html+='<form class="panel match-form form" data-form="match-callup" data-id="'+id+'"><h3>Convocatória</h3><input type="hidden" name="expected_callup" value="'+esc(matchCallupSnapshot(match))+'"><input type="hidden" name="expected_lineup" value="'+esc(matchLineupSnapshot(match))+'">'+(retiredCalled.length?'<div class="notice">Histórico: '+retiredCalled.map(function(p){return esc(p.nome);}).join(", ")+' já não pertence ao plantel atual.</div>':'')+(unavailableCalled.length?'<div class="notice">'+unavailableCalled.map(function(p){return esc(p.nome)+" · "+esc(PlayerStatus.label(p.estado_disponibilidade));}).join("<br>")+'<br>Estes jogadores deixaram de estar disponíveis e serão retirados ao guardar a convocatória.</div>':'')+'<div class="player-choice-grid">'+playerChecks(players,match.callup.player_ids,"player_ids")+'</div><label class="field"><span>Notas</span><textarea name="notes">'+esc(match.callup.notes)+'</textarea></label><button class="btn accent" type="submit">Guardar convocatória</button></form></div>';
   html+='<section class="panel section" data-match-lineup-summary><div class="section-head"><div><h2>Alinhamento 5v5</h2><p>Sistema '+esc(visualSystem)+' · posições guardadas no quadro visual</p></div><a class="btn accent" href="#/jogo-visual/'+id+'">'+(match.visual_match?.started_at?'Ver jogo visual':'Editar alinhamento visual')+'</a></div><ul class="match-lineup-summary">'+visualRoles+'</ul><p class="hint">O quadro visual é o único local para alterar o sistema e as posições iniciais.</p></section></div></section>';
-  var matchNotes=match.estado==="concluido"?'<details class="panel section"><summary>Notas do jogo e resultado ao intervalo · opcional</summary><form class="form" data-form="match-during" data-id="'+id+'"><label class="field"><span>Resultado ao intervalo</span><input name="halftime_score" placeholder="Ex.: 2-1" value="'+esc(match.during.halftime_score)+'"></label><label class="field"><span>Notas recordadas · uma por linha</span><textarea name="notes">'+esc(linesText(match.during.notes))+'</textarea></label><button class="btn accent" type="submit">Guardar notas do jogo</button></form></details>':'';
+  var matchNotes=match.estado==="concluido"?'<details class="panel section"><summary>Notas do jogo e resultado ao intervalo · opcional</summary><form class="form" data-form="match-during" data-id="'+id+'"><input type="hidden" name="expected_during" value="'+esc(matchDuringSnapshot(match))+'"><label class="field"><span>Resultado ao intervalo</span><input name="halftime_score" placeholder="Ex.: 2-1" value="'+esc(match.during.halftime_score)+'"></label><label class="field"><span>Notas recordadas · uma por linha</span><textarea name="notes">'+esc(linesText(match.during.notes))+'</textarea></label><button class="btn accent" type="submit">Guardar notas do jogo</button></form></details>':'';
   var resultForm=match.estado==="concluido"?'<form class="panel form section" data-form="match-result" data-id="'+id+'"><h3>Resultado</h3><p class="hint">Introduz o resultado observado. Não é preenchido pelos lances nem pelo alinhamento.</p><input type="hidden" name="expected_result" value="'+esc(matchResultSnapshot(match))+'"><div class="form-grid"><label class="field"><span>Golos a favor</span><input name="golos_favor" type="number" min="0" value="'+esc(match.golos_favor??'')+'"></label><label class="field"><span>Golos contra</span><input name="golos_contra" type="number" min="0" value="'+esc(match.golos_contra??'')+'"></label></div><label class="field"><span>Notas gerais do jogo</span><textarea name="notas">'+esc(match.notas||'')+'</textarea></label><button class="btn accent" type="submit">Guardar resultado e notas</button></form>':'';
   var postMatchEvents=match.estado==="concluido"?'<details class="section" data-post-match-events><summary>Registar acontecimentos e estatísticas</summary>'+MatchEventsUI.html(match,allPlayers)+'</details>':'';
   html+='<section class="section match-stage" id="match-after"><div class="section-head"><div><h2>Depois do jogo</h2><p>Resultado, relatórios dos convocados, adversário, acontecimentos e análise registados pelo treinador</p></div></div>'+matchPlayerReportsSection(match,allPlayers,id,archivedPlayerNames)+resultForm+matchOpponentForm(match,id)+matchNotes+postMatchEvents+matchAnalysisSection(match,players,id,memory)+(progress.post_game?'<a class="btn secondary section" href="#/treinos/novo/jogo/'+id+'">Preparar treino desta análise</a>':'')+'<div class="grid cols-2 section"><div><div class="section-head"><div><h2>Contexto associado</h2><p>Observações e decisões</p></div></div>'+context+'</div><div><div class="section-head"><div><h2>Media</h2><p>'+media.length+' item(ns)</p></div></div>'+renderMediaCards(media)+'</div></div></section>';
@@ -1990,23 +2011,28 @@ app.addEventListener("submit",async function(event){
       during:existing.during,
       post_game:existing.post_game
     };
-    var matchId;
-    if(id){for(const key of ["pre_game","callup","lineup","during","post_game"])delete matchData[key];await DB.modificar("jogos",id,current=>({...current,...matchData}));matchId=id;}
+    var matchId,savedMatch;
+    if(id){
+      for(const key of ["team_id","escalao","external_key","pre_game","callup","lineup","during","post_game"])delete matchData[key];
+      try{savedMatch=await DB.modificar("jogos",id,function(current){
+        var changes=matchFormChanges(fd.get("expected_details"),matchDetailsValues(current,team),matchData,"Os dados do jogo mudaram",{data:"data",hora:"hora",adversario:"adversário",casa_fora:"casa/fora",local:"local",hora_saida:"hora de saída",hora_concentracao:"hora de concentração",competicao:"competição",estado:"estado",golos_favor:"golos a favor",golos_contra:"golos contra",notas:"notas"});
+        if(changes.estado==="concluido"&&["running","paused"].includes(VisionMatchVisual.state(current).status))throw new Error("Termina primeiro o registo de utilização para não deixar o cronómetro ativo.");
+        return {...current,...changes};
+      });}catch(error){alert(error.message);return;}
+      matchId=id;
+    }
     else matchId=await DB.criar("jogos",matchData);
-    await logHuman(id?"updated_match":"created_match",(id?"Atualizou jogo · ":"Criou jogo · ")+fd.get("adversario"),"match",matchId);
+    await logHuman(id?"updated_match":"created_match",(id?"Atualizou jogo · ":"Criou jogo · ")+(savedMatch?.adversario||fd.get("adversario")),"match",matchId);
     return go("#/equipa/jogo/"+matchId+(completingInForm?"?focus=players":""));
   }
   if(type==="match-pre"){
-    var preMatch=matchStructure(await DB.obter("jogos",id));
-    preMatch.pre_game={
-      ...preMatch.pre_game,
-      status:"ready",
-      objetivo_principal:fd.get("objetivo_principal")||null,
-      plano_jogo:fd.get("plano_jogo")||null,
-      pontos_observar:linesFromText(fd.get("pontos_observar"))
-    };
-    await DB.modificar("jogos",id,current=>({...current,pre_game:preMatch.pre_game}));
-    await logHuman("updated_match_pre_game","Atualizou plano pré-jogo · "+preMatch.adversario,"match",id);
+    var preSaved;
+    try{preSaved=await DB.modificar("jogos",id,function(current){
+      var changes=matchFormChanges(fd.get("expected_pre"),matchPreValues(current),{objetivo_principal:fd.get("objetivo_principal")||null,plano_jogo:fd.get("plano_jogo")||null,pontos_observar:linesFromText(fd.get("pontos_observar"))},"O plano pré-jogo mudou",{objetivo_principal:"objetivo",plano_jogo:"plano",pontos_observar:"pontos a observar"});
+      var pre=matchStructure(current).pre_game;
+      return {...current,pre_game:{...pre,...changes,status:"ready"}};
+    });}catch(error){alert(error.message);return;}
+    await logHuman("updated_match_pre_game","Atualizou plano pré-jogo · "+preSaved.adversario,"match",id);
     return router();
   }
   if(type==="match-opponent"){
@@ -2028,25 +2054,22 @@ app.addEventListener("submit",async function(event){
     }catch(error){alert(error.message);return;}
   }
   if(type==="match-callup"){
-    var callMatch=matchStructure(await DB.obter("jogos",id));
-    var calledIds=fd.getAll("player_ids").map(String);
-    callMatch.callup={status:calledIds.length?"ready":"draft",player_ids:calledIds,notes:fd.get("notes")||null};
-    callMatch.lineup.starters=callMatch.lineup.starters.filter(function(ref){return calledIds.includes(String(ref));});
-    callMatch.lineup.substitutes=callMatch.lineup.substitutes.filter(function(ref){return calledIds.includes(String(ref));});
-    if(callMatch.lineup.goalkeeper_id&&!calledIds.includes(String(callMatch.lineup.goalkeeper_id))) callMatch.lineup.goalkeeper_id=null;
-    if(callMatch.lineup.positions){
-      var retainedPositions=new Set();
-      callMatch.lineup.positions=Object.fromEntries(Object.entries(callMatch.lineup.positions).filter(function(entry){
-        var ref=String(entry[1]||"");
-        if(!calledIds.includes(ref)||retainedPositions.has(ref))return false;
-        retainedPositions.add(ref);return true;
-      }));
-    }
-    try{await DB.modificar("jogos",id,current=>{
+    var calledIds=[...new Set(fd.getAll("player_ids").map(String))],callSaved;
+    try{callSaved=await DB.modificar("jogos",id,current=>{
       if(current.visual_match?.started_at)throw new Error("O alinhamento e a convocatória iniciais já estão preservados. Usa o Jogo visual para registar substituições.");
-      return {...current,callup:callMatch.callup,lineup:callMatch.lineup};
+      var currentMatch=matchStructure(current),changes=matchFormChanges(fd.get("expected_callup"),matchCallupValues(current),{player_ids:calledIds.slice().sort(),notes:fd.get("notes")||null},"A convocatória mudou",{player_ids:"atletas convocados",notes:"notas"}),mergedIds=changes.player_ids||matchCallupValues(current).player_ids,currentIds=currentMatch.callup.player_ids.map(String),samePlayers=mergedIds.length===currentIds.length&&mergedIds.every(function(ref){return currentIds.includes(ref);});
+      if(!samePlayers&&matchLineupSnapshot(current)!==fd.get("expected_lineup"))throw new Error("O alinhamento mudou noutro dispositivo. Revê-o antes de alterar a convocatória.");
+      var lineup=currentMatch.lineup;
+      if(!samePlayers){
+        lineup={...lineup,starters:lineup.starters.filter(function(ref){return mergedIds.includes(String(ref));}),substitutes:lineup.substitutes.filter(function(ref){return mergedIds.includes(String(ref));}),goalkeeper_id:lineup.goalkeeper_id&&mergedIds.includes(String(lineup.goalkeeper_id))?lineup.goalkeeper_id:null};
+        if(lineup.positions){
+          var retainedPositions=new Set();
+          lineup.positions=Object.fromEntries(Object.entries(lineup.positions).filter(function(entry){var ref=String(entry[1]||"");if(!mergedIds.includes(ref)||retainedPositions.has(ref))return false;retainedPositions.add(ref);return true;}));
+        }
+      }
+      return {...current,callup:{...currentMatch.callup,...changes,status:mergedIds.length?"ready":"draft"},lineup};
     });}catch(error){alert(error.message);return;}
-    await logHuman("updated_match_callup","Atualizou convocatória · "+callMatch.adversario,"match",id);
+    await logHuman("updated_match_callup","Atualizou convocatória · "+callSaved.adversario,"match",id);
     return router();
   }
   if(type==="match-lineup"){
@@ -2054,10 +2077,14 @@ app.addEventListener("submit",async function(event){
     return go("#/jogo-visual/"+id);
   }
   if(type==="match-during"){
-    var liveMatch=matchStructure(await DB.obter("jogos",id));
-    liveMatch.during={...liveMatch.during,halftime_score:fd.get("halftime_score")||null,notes:linesFromText(fd.get("notes"))};
-    await DB.modificar("jogos",id,current=>({...current,during:liveMatch.during}));
-    await logHuman("updated_match_during","Atualizou registo durante o jogo · "+liveMatch.adversario,"match",id);
+    var notesSaved;
+    try{notesSaved=await DB.modificar("jogos",id,function(current){
+      if(current.estado!=="concluido")throw new Error("Conclui o jogo antes de guardar as notas recordadas.");
+      var changes=matchFormChanges(fd.get("expected_during"),matchDuringValues(current),{halftime_score:fd.get("halftime_score")||null,notes:linesFromText(fd.get("notes"))},"As notas do jogo mudaram",{halftime_score:"resultado ao intervalo",notes:"notas recordadas"});
+      var during=matchStructure(current).during;
+      return {...current,during:{...during,...changes}};
+    });}catch(error){alert(error.message);return;}
+    await logHuman("updated_match_during","Atualizou notas recordadas do jogo · "+notesSaved.adversario,"match",id);
     return router();
   }
   if(type==="match-post"){
