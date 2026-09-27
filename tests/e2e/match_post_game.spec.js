@@ -88,3 +88,32 @@ test('concluir jogo pelo formulário também abre os relatórios dos convocados'
  await expect(page.locator('#match-player-reports')).toContainText('0 de 1 concluídos · 1 por preencher');
  await expect(page.locator('#match-player-reports')).toContainText('Convocado formulário');
 });
+
+test('relatório de convocado eliminado usa nome do arquivo da mesma equipa sem cronómetro',async({page})=>{
+ await page.goto('/#/calendario');
+ await page.waitForFunction(()=>typeof DB!=='undefined'&&typeof deletePlayerPermanently==='function');
+ const fixture=await page.evaluate(async()=>{
+  RemoteWorkspace.scheduleSync=()=>{};
+  const ref=crypto.randomUUID(),playerId=await DB.criar('jogadores',{team_id:DEFAULT_TEAM_ID,sync_id:ref,nome:'Convocado arquivado',plantel_ativo:true,estado_disponibilidade:'disponivel'});
+  const matchId=await DB.criar('jogos',{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:'2026-09-27',adversario:'Histórico sem relógio',estado:'concluido',callup:{player_ids:[ref]}});
+  await deletePlayerPermanently(playerId);
+  const foreignArchive=PlayerArchive.snapshot({sync_id:ref,nome:'Nome de outra equipa'},{teamId:'other-team'});
+  await DB.criar('workspace_documents',{team_id:'other-team',type:'player_archive',title:'Arquivo externo',body:JSON.stringify(foreignArchive),status:'archived',sync_id:crypto.randomUUID()});
+  go('#/equipa/jogo/'+matchId+'?focus=players');
+  return{matchId,ref,playerId};
+ });
+ const report=page.locator('[data-match-player-report="'+fixture.ref+'"]');
+ await expect(report.locator('summary strong')).toHaveText('Convocado arquivado');
+ await expect(report).not.toContainText('Nome de outra equipa');
+ await expect(report).not.toContainText(fixture.ref);
+ await expect(page.locator('#match-player-reports')).toContainText('0 de 1 concluídos · 1 por preencher');
+ const printable=await page.evaluate(async id=>({sheet:await ReportExporter.render('match-sheet',id),report:await ReportExporter.render('match-report',id)}),fixture.matchId);
+ expect(printable.sheet).toContain('Convocado arquivado');
+ expect(printable.report).toContain('Convocado arquivado · Por preencher');
+ expect(printable.sheet).not.toContain('Nome de outra equipa');
+ expect(printable.report).not.toContain('Atleta · '+fixture.ref);
+ await expect.poll(()=>page.evaluate(id=>DB.obter('jogadores',id),fixture.playerId)).toBeUndefined();
+ page.on('dialog',dialog=>dialog.accept());
+ await report.getByRole('button',{name:'Não observado'}).click();
+ await expect.poll(()=>page.evaluate(id=>DB.obter('jogos',id).then(row=>row.post_game.player_reports.items[0]),fixture.matchId)).toMatchObject({player_ref:fixture.ref,status:'not_observed'});
+});

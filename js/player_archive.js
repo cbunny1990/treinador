@@ -1,7 +1,7 @@
 "use strict";
 // Read-only longitudinal snapshots retained when an athlete profile is deleted.
 (function(root){
- const SCHEMA="vision-player-archive@1",copy=value=>JSON.parse(JSON.stringify(value));
+ const SCHEMA="vision-player-archive@1",UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,copy=value=>JSON.parse(JSON.stringify(value));
  async function stableId(teamId,playerRef){
   const namespace=Uint8Array.from("89d48759ac124c3a930fd77f3a838d11".match(/../g),x=>parseInt(x,16)),bytes=new TextEncoder().encode("vision-player-archive:"+teamId+":"+playerRef),input=new Uint8Array(16+bytes.length);input.set(namespace);input.set(bytes,16);
   const out=new Uint8Array(await crypto.subtle.digest("SHA-1",input)).slice(0,16);out[6]=(out[6]&15)|80;out[8]=(out[8]&63)|128;const hex=[...out].map(x=>x.toString(16).padStart(2,"0")).join("");return hex.slice(0,8)+"-"+hex.slice(8,12)+"-"+hex.slice(12,16)+"-"+hex.slice(16,20)+"-"+hex.slice(20);
@@ -12,5 +12,14 @@
   return{schema:SCHEMA,team_id:String(teamId||player.team_id||"default"),team_name:String(teamName||""),team_age_group:String(teamAgeGroup||player.escalao||""),player:{ref:playerRef,name:String(player.nome||"Atleta"),number:player.numero??null,age_group:String(player.escalao||"")},development_goals:goals,archived_at:archivedAt};
  }
  function state(doc){if(doc?.type!=="player_archive")throw new Error("Arquivo de atleta inválido.");let value;try{value=JSON.parse(doc.body||"{}");}catch{throw new Error("O arquivo de atleta não pode ser lido.");}if(value.schema!==SCHEMA||!Array.isArray(value.development_goals?.items))throw new Error("Atualiza a app para abrir este arquivo de atleta.");return value;}
- root.PlayerArchive={schema:SCHEMA,stableId,snapshot,state};if(typeof module!=="undefined"&&module.exports)module.exports=root.PlayerArchive;
+ function identitiesForRefs(teamId,refs,documents){
+  const team=String(teamId||""),wanted=new Set(Array.from(refs||[],String)),identities=new Map(),ambiguous=new Set();
+  for(const doc of documents||[]){
+   if(doc?.type!=="player_archive"||String(doc.team_id)!==team)continue;
+   try{const archive=state(doc),ref=String(archive.player?.ref||""),name=String(archive.player?.name||"").trim();if(archive.team_id!==team||!UUID.test(ref)||!wanted.has(ref)||!name||ambiguous.has(ref))continue;if(identities.has(ref)){identities.delete(ref);ambiguous.add(ref);}else identities.set(ref,{name,number:archive.player.number??null});}
+   catch(_){/* Invalid archives do not establish an athlete's identity. */}
+  }
+  return identities;
+ }
+ root.PlayerArchive={schema:SCHEMA,stableId,snapshot,state,identitiesForRefs};if(typeof module!=="undefined"&&module.exports)module.exports=root.PlayerArchive;
 })(globalThis);

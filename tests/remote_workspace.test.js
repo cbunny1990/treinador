@@ -69,6 +69,18 @@ test("payload remoto remove chaves locais e data_url", () => {
   assert.deepEqual(remotePayload({ nome: "Legado", foto: "https://legacy.example/photo.jpg" }), { nome: "Legado", foto: "https://legacy.example/photo.jpg" });
 });
 
+test("confirmação manual de treino mantém proveniência e histórico no registo remoto", () => {
+  const manual_completion = { schema: "vision-training-manual-completion@1", status: "confirmed", revision: 1, confirmed_at: "2026-09-27T12:00:00.000Z", history: [{ action: "confirm", at: "2026-09-27T12:00:00.000Z", actor: "Treinador" }] };
+  const local = { id: 7, team_id: "default", sync_id: "training-uuid", sync_dirty: true, status: "completed", data: "2026-09-24", blocos: [{ exercise_name: "Passe" }], review: { status: "done", conclusao: "Observado" }, manual_completion };
+  const remote = remoteRecordRow("treinos", local, "team-uuid", "user-uuid");
+  assert.equal(remote.id, "training-uuid");
+  assert.equal(remote.kind, "training");
+  assert.deepEqual(remote.payload.manual_completion, manual_completion);
+  assert.deepEqual(remote.payload.review, local.review);
+  assert.equal(remote.payload.id, undefined);
+  assert.equal(remote.payload.status, "completed");
+});
+
 test("falhas de sincronização têm espera progressiva limitada", () => {
   assert.deepEqual([1, 2, 3, 4, 5, 6, 20].map(remoteSyncRetryDelay), [2000, 4000, 8000, 16000, 32000, 60000, 60000]);
 });

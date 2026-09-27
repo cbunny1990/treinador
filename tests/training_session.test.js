@@ -3,6 +3,28 @@ const M=require('../js/training_session.js'),Planner=require('../js/training_pla
 const plan=()=>({sync_id:'training-id',id:4,team_id:'default',data:'2026-09-24',hora:'19:15',objetivo:'Passar e apoiar',notas:'Manter',review:{status:'done',conclusao:'Não copiar'},blocos:[{block_id:'a',order:0,exercise_ref:'ex-a',exercise_name:'Passe',duration_min:10,notes:'Abrir o corpo'},{block_id:'b',order:1,exercise_ref:'ex-b',exercise_name:'Jogo',duration_min:15}]});
 const apply=(row,type,now=0,extra={},controller_id='phone')=>M.apply(row,{type,expected_revision:M.normalize(row.session).revision,...extra},{now,controller_id});
 test('legacy plans stay unchanged and default to not started',()=>{const p=plan(),old=JSON.stringify(p);assert.equal(M.normalize(p.session).status,'not_started');assert.equal(JSON.stringify(p),old);assert.equal(M.summary().actual_ms,0);});
+test('explicit retrospective confirmation preserves plan and review without inventing session facts',()=>{
+ const p={...plan(),status:'ready',session:{attendance:[{player_ref:'p',name:'Atleta',status:'unknown'}]}};
+ assert.throws(()=>M.setOccurrence(p,{action:'confirm'},{now:'2026-09-27T12:00:00Z',local_date:'2026-09-27'}),/Confirma/);
+ const done=M.setOccurrence(p,{action:'confirm',confirmed:true,expected_revision:0},{now:'2026-09-27T12:00:00Z',local_date:'2026-09-27'});
+ assert.equal(done.status,'completed');assert.equal(done.manual_completion.status,'confirmed');assert.equal(done.manual_completion.prior_status,'ready');
+ assert.deepEqual(done.blocos,p.blocos);assert.deepEqual(done.review,p.review);assert.deepEqual(done.session,p.session);
+ assert.equal(M.summary(done.session).actual_ms,0);assert.equal(M.summary(done.session).participants,0);
+ assert.throws(()=>M.apply(done,{type:'start',expected_revision:0},{controller_id:'phone'}),/assinalado como realizado/);
+ assert.throws(()=>M.setOccurrence(done,{action:'confirm',confirmed:true},{now:'2026-09-27T12:01:00Z',local_date:'2026-09-27'}),/já está/);
+ const undone=M.setOccurrence(done,{action:'retract',confirmed:true,expected_revision:0},{now:'2026-09-27T12:02:00Z',local_date:'2026-09-27'});
+ assert.equal(undone.status,'ready');assert.equal(undone.manual_completion.status,'retracted');assert.equal(undone.manual_completion.history.length,2);assert.deepEqual(undone.review,p.review);
+ assert.throws(()=>M.setOccurrence(undone,{action:'retract',confirmed:true},{now:'2026-09-27T12:03:00Z',local_date:'2026-09-27'}),/Não existe/);
+ assert.equal(M.setOccurrence({...done,data:'2026-09-28'},{action:'retract',confirmed:true},{now:'2026-09-27T12:04:00Z',local_date:'2026-09-27'}).status,'ready');
+});
+test('retrospective confirmation refuses future dates, started sessions and stale revisions',()=>{
+ const opts={now:'2026-09-27T12:00:00Z',local_date:'2026-09-27'},command={action:'confirm',confirmed:true,expected_revision:0};
+ assert.throws(()=>M.setOccurrence({...plan(),data:'2026-09-28'},command,opts),/hoje ou anterior/);
+ assert.throws(()=>M.setOccurrence({...plan(),data:'2026-02-31'},command,opts),/inválida/);
+ assert.throws(()=>M.setOccurrence({...plan(),session:{revision:1}},command,opts),/mudou/);
+ assert.throws(()=>M.setOccurrence(apply(plan(),'start'),command,opts),/mudou|sessão em campo/);
+ assert.throws(()=>M.setOccurrence({...plan(),manual_completion:{schema:'vision-training-manual-completion@99'}},command,opts),/versão mais recente/);
+});
 test('available players are unmarked, not automatically present',()=>{const entries=M.roster([{sync_id:'p',nome:'Atleta',estado_disponibilidade:'disponivel'}],null);assert.equal(entries[0].status,'unknown');assert.equal(M.summary({attendance:entries}).participants,0);});
 test('attendance uses stable references and retains historical retired players',()=>{let p=apply(plan(),'attendance',0,{entries:[{player_ref:'p',name:'Atleta',status:'late'}]});const roster=M.roster([{sync_id:'q',nome:'Novo'},{sync_id:'p',nome:'Atleta',plantel_ativo:false}],p.session);assert.equal(roster.length,2);assert.equal(M.summary(p.session).participants,1);assert.throws(()=>apply(p,'attendance',1,{entries:[{player_ref:'x',name:'X',status:'lesionado'}]}),/inválida/);});
 test('start freezes plan and keeps approved exercise identities and notes',()=>{const p=plan(),started=apply(p,'start',1000,{players:[{sync_id:'p',nome:'A'}]});assert.deepEqual(started.blocos,p.blocos);assert.equal(started.session.blocks[0].planned_notes,'Abrir o corpo');assert.equal(started.session.attendance[0].status,'unknown');assert.throws(()=>apply(started,'start',2000),/iniciado/);});

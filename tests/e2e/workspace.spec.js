@@ -1516,6 +1516,13 @@ test("conflito bloqueado orienta para a equipa e liga ao registo local sem trans
   await expect(page.locator('[data-conflict-card="unknown-memory"] [data-conflict-next-step]')).toContainText("invalid_subject_id");
   await page.getByText("Contagem por motivo e tipo de registo").click();
   await expect(page.locator(".conflict-counts li").filter({ hasText: "invalid_subject_id · Memória: 1" })).toBeVisible();
+  await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async text => { window.__conflictSummary = text; } } }));
+  await page.getByRole("button", { name: "Copiar resumo sem dados pessoais" }).click();
+  await expect(page.locator("[data-conflict-copy-feedback]")).toContainText("Resumo copiado");
+  const summary = await page.evaluate(() => window.__conflictSummary);
+  expect(summary).toContain("invalid_subject_id · Memória: 1");
+  expect(summary).not.toContain("match-blocked");
+  expect(summary).not.toContain("coach@example.test");
   const width = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }));
   expect(width.content).toBeLessThanOrEqual(width.viewport);
   await page.locator('[data-conflict-card="match-blocked"]').getByRole("link", { name: "Abrir seleção do workspace" }).click();

@@ -11,6 +11,7 @@ export const SESSION_TOOLS=[
   tool('write_training_session_note','Create or edit factual text explicitly supplied by the coach on an executed block. A stable note_id allows updates; requires confirmation and the current revision.',{expected_updated_at:{type:'string'},expected_revision:{type:'integer',minimum:0},confirmed:{type:'boolean',const:true},block_key:{type:'string'},note_id:{type:'string'},text:{type:'string',minLength:1,maxLength:3000}},['expected_updated_at','expected_revision','confirmed','block_key','note_id','text']),
   tool('remove_training_session_note','Delete only the explicitly confirmed block note; never deletes the training.',{expected_updated_at:{type:'string'},expected_revision:{type:'integer',minimum:0},block_key:{type:'string'},note_id:{type:'string'},confirmed:{type:'boolean',const:true}},['expected_updated_at','expected_revision','block_key','note_id','confirmed']),
   tool('control_training_session','Start, pause, resume, move to next block or finish a training only after explicit coach confirmation. A timer belongs to one controller. Another controller can take over only while paused, with confirmation.',{expected_updated_at:{type:'string'},expected_revision:{type:'integer',minimum:0},action:{type:'string',enum:['start','pause','resume','next','finish','take_control','reset']},confirmed:{type:'boolean',const:true}},['expected_updated_at','expected_revision','action','confirmed']),
+  tool('set_training_occurrence','Only after an explicit coach decision, confirm that a past training took place without a timer or retract that manual confirmation. Does not infer attendance, completed exercises or minutes; preserves the review and session history.',{expected_updated_at:{type:'string'},expected_revision:{type:'integer',minimum:0},action:{type:'string',enum:['confirm','retract']},confirmed:{type:'boolean',const:true}},['expected_updated_at','expected_revision','action','confirmed']),
   tool('duplicate_training_plan','Copy the current training plan to a new date only after explicit coach confirmation, without copying attendance, timing or review. Requires its current version and preserves the source link. Reuse request_key on retries.',{expected_updated_at:{type:'string'},expected_revision:{type:'integer',minimum:0},date:{type:'string',format:'date'},time:{type:'string'},request_key:{type:'string',minLength:1,maxLength:80},confirmed:{type:'boolean',const:true}},['expected_updated_at','expected_revision','date','request_key','confirmed'])
 ];
 async function find(admin,c,kind,args){
@@ -20,12 +21,13 @@ async function find(admin,c,kind,args){
   q=args.id?q.eq('id',args.id):q.eq('payload->>external_key',args.external_key);
   const {data,error}=await q;if(error)throw error;if(data?.length!==1)throw new Error(data?.length?'ambiguous_identity':'record_not_found');return data[0];
 }
-function output(row){const session=M.normalize(row.payload.session);return {id:row.id,updated_at:row.updated_at,external_key:row.payload.external_key,plan:{date:row.payload.data,time:row.payload.hora,objective:row.payload.objetivo,blocks:row.payload.blocos},session,summary:M.summary(session)};}
+function output(row){const session=M.normalize(row.payload.session);return {id:row.id,updated_at:row.updated_at,external_key:row.payload.external_key,plan:{date:row.payload.data,time:row.payload.hora,objective:row.payload.objetivo,status:row.payload.status||'draft',manual_completion:row.payload.manual_completion||null,blocks:row.payload.blocos},session,summary:M.summary(session)};}
+function lisbonDate(){const parts=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()).map(p=>[p.type,p.value]));return parts.year+'-'+parts.month+'-'+parts.day;}
 export async function executeSessionTool(admin,c,name,args){
   if(!c.scopes?.includes('read'))throw new Error('connector_scope_read_required');
   if(!SESSION_TOOLS.some(tool=>tool.name===name))throw new Error('unknown_training_tool');
   if(name!=='get_training_session'&&!c.scopes?.includes('write'))throw new Error('connector_scope_write_required');
-  if(['update_training_attendance','write_training_session_note','control_training_session'].includes(name)&&args.confirmed!==true)throw new Error('explicit_confirmation_required');
+  if(['update_training_attendance','write_training_session_note','control_training_session','set_training_occurrence'].includes(name)&&args.confirmed!==true)throw new Error('explicit_confirmation_required');
   if(name==='duplicate_training_plan'&&args.confirmed!==true)throw new Error('explicit_confirmation_required');
   if(name==='update_training_attendance'){
     if(!Array.isArray(args.entries)||args.entries.length<1||args.entries.length>150)throw new Error('invalid_attendance');
@@ -41,6 +43,13 @@ export async function executeSessionTool(admin,c,name,args){
     const payload=M.duplicate({...row.payload,sync_id:row.id},{date:args.date,time:args.time,identity});
     const {data,error}=await admin.rpc('head_coach_put_record',{p_team_id:c.team_id,p_kind:'training',p_payload:payload,p_record_id:null,p_expected_updated_at:null,p_idempotency_key:'training-copy:'+identity,p_agent_subject:'head-coach'});if(error)throw error;
     return {created:true,record:data};
+  }
+  if(name==='set_training_occurrence'){
+    if(!['confirm','retract'].includes(args.action))throw new Error('invalid_occurrence_action');
+    const payload=M.setOccurrence(row.payload,{action:args.action,confirmed:args.confirmed,expected_revision:args.expected_revision},{actor:'Head Coach',local_date:lisbonDate()});
+    const {error}=await admin.rpc('head_coach_put_record',{p_team_id:c.team_id,p_kind:'training',p_payload:payload,p_record_id:row.id,p_expected_updated_at:row.updated_at,p_idempotency_key:'training-occurrence:'+c.id+':'+row.id+':'+row.updated_at+':'+args.action,p_agent_subject:'head-coach'});
+    if(error)throw error;
+    return output(await find(admin,c,'training',{id:row.id}));
   }
   let command={expected_revision:args.expected_revision};
   if(name==='update_training_attendance'||(name==='control_training_session'&&args.action==='start')){
