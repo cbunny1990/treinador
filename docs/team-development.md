@@ -2,7 +2,7 @@
 
 ## Percurso na app
 
-O ecrã **Semana e evolução** abre em **Planear e avaliar a semana**. A segunda tarefa, **Acompanhar objetivos da equipa**, abre a ficha dos objetivos sem misturar os dois formulários. Cada tarefa mostra primeiro a ação de registo; as semanas e os objetivos já guardados aparecem abaixo para consulta e edição. Na criação, a avaliação final da semana, as fontes e a análise detalhada de um objetivo ficam recolhidas até o treinador as abrir. Ao editar, as secções com dados existentes abrem para revisão. As fichas históricas mostram o resumo e mantêm evidências e avaliação acessíveis em **Ver sessões e avaliação** ou **Ver evidências e avaliação**. Links vindos de propostas e pesquisas abrem diretamente a tarefa dos objetivos.
+O ecrã **Semana e evolução** abre em **Planear e avaliar a semana**. A segunda tarefa, **Acompanhar objetivos da equipa**, abre a ficha dos objetivos sem misturar os dois formulários. Cada tarefa mostra as semanas ou os objetivos já guardados sem expor os campos extensos. A ação **Planear nova semana** ou **Registar novo objetivo** fica visível no início do painel e abre o formulário recolhido depois dos registos; **Editar** abre diretamente o formulário preenchido. Na criação, a avaliação final da semana, as fontes e a análise detalhada de um objetivo também ficam recolhidas até o treinador as abrir. Ao editar, as secções com dados existentes abrem para revisão. As fichas históricas mostram o resumo e mantêm evidências e avaliação acessíveis em **Ver sessões e avaliação** ou **Ver evidências e avaliação**. Links vindos de propostas e pesquisas abrem diretamente a tarefa dos objetivos.
 
 ## Plano semanal
 

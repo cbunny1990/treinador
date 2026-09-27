@@ -15,18 +15,22 @@ var skipNextRemoteSync = false;
 var pendingIndependentConflictPreviews = null;
 var viewRenderSequence = 0;
 var userScrollIntentSequence = 0;
+var lastUserScrollIntentAt = -Infinity;
 var routeScrollIntentSequence = 0;
 var lastSyncConflictSignature = null;
+var workspaceSyncRefreshPromise = null;
 var activeSearchResults = null;
 var SEARCH_RESULT_PAGE_SIZE = 100;
-window.addEventListener("wheel",function(){userScrollIntentSequence++;},{passive:true});
-window.addEventListener("touchmove",function(){userScrollIntentSequence++;},{passive:true});
+var WORKSPACE_SCROLL_IDLE_MS = 400;
+function markUserScrollIntent(){userScrollIntentSequence++;lastUserScrollIntentAt=performance.now();}
+window.addEventListener("wheel",markUserScrollIntent,{passive:true});
+window.addEventListener("touchmove",markUserScrollIntent,{passive:true});
 window.addEventListener("pointerdown",function(event){
   var gutter=Math.max(12,window.innerWidth-document.documentElement.clientWidth);
-  if(event.clientX<=gutter||event.clientX>=window.innerWidth-gutter||event.clientY<=gutter||event.clientY>=window.innerHeight-gutter)userScrollIntentSequence++;
+  if(event.clientX<=gutter||event.clientX>=window.innerWidth-gutter||event.clientY<=gutter||event.clientY>=window.innerHeight-gutter)markUserScrollIntent();
 },{passive:true});
 window.addEventListener("keydown",function(event){
-  if(["ArrowUp","ArrowDown","PageUp","PageDown","Home","End"," "].includes(event.key))userScrollIntentSequence++;
+  if(["ArrowUp","ArrowDown","PageUp","PageDown","Home","End"," "].includes(event.key))markUserScrollIntent();
 });
 
 function esc(v){
@@ -307,6 +311,11 @@ document.addEventListener("reset",function(event){
   if(form instanceof HTMLFormElement&&form.matches("form[data-form], form[data-event-form]"))setTimeout(function(){delete form.dataset.dirty;},0);
 });
 
+function showSyncRefreshNotice(dirtyForm){
+  var notice=app.querySelector('[data-sync-refresh-notice]');
+  if(!notice){notice=document.createElement("p");notice.className="notice section";notice.setAttribute("role","status");notice.dataset.syncRefreshNotice="true";dirtyForm.insertAdjacentElement("beforebegin",notice);}
+  notice.textContent="Chegaram alterações de outro dispositivo. O texto por guardar foi preservado; guarda ou cancela antes de atualizar esta vista.";
+}
 window.addEventListener("visioncoach:sync-complete",async function(syncEvent){
   remoteSyncFailed=false;
   refreshRemoteIndicator();
@@ -321,10 +330,26 @@ window.addEventListener("visioncoach:sync-complete",async function(syncEvent){
   if(!(Number(detail.pulled||0)>0||Number(detail.deleted||0)>0||conflictsChanged))return;
   var dirtyForm=app.querySelector('form[data-form][data-dirty="true"], form[data-event-form][data-dirty="true"]');
   if(dirtyForm){
-    var refreshNotice=app.querySelector('[data-sync-refresh-notice]');
-    if(!refreshNotice){refreshNotice=document.createElement("p");refreshNotice.className="notice section";refreshNotice.setAttribute("role","status");refreshNotice.dataset.syncRefreshNotice="true";dirtyForm.insertAdjacentElement("beforebegin",refreshNotice);}
-    refreshNotice.textContent="Chegaram alterações de outro dispositivo. O texto por guardar foi preservado; guarda ou cancela antes de atualizar esta vista.";
+    showSyncRefreshNotice(dirtyForm);
     return;
+  }
+  if((location.hash||"#/")==="#/"){
+    if(!workspaceSyncRefreshPromise){
+      workspaceSyncRefreshPromise=(async function(){
+        while((location.hash||"#/")==="#/"&&performance.now()-lastUserScrollIntentAt<WORKSPACE_SCROLL_IDLE_MS){
+          await new Promise(function(resolve){setTimeout(resolve,Math.max(1,WORKSPACE_SCROLL_IDLE_MS-(performance.now()-lastUserScrollIntentAt)));});
+        }
+        if((location.hash||"#/")!=="#/")return;
+        var activeForm=app.querySelector('form[data-form][data-dirty="true"], form[data-event-form][data-dirty="true"]');
+        if(activeForm){
+          showSyncRefreshNotice(activeForm);
+          return;
+        }
+        skipNextRemoteSync=true;
+        await router();
+      })().finally(function(){workspaceSyncRefreshPromise=null;});
+    }
+    return workspaceSyncRefreshPromise;
   }
   skipNextRemoteSync=true;
   await router();
@@ -522,11 +547,13 @@ async function viewTeamDevelopment(){
   html+='<nav class="toolbar section" aria-label="Tarefas da evolução"><a class="btn '+(evolutionFocus==="semana"?'accent':'secondary')+'" href="#/evolucao?focus=semana" '+(evolutionFocus==="semana"?'aria-current="page"':'')+'>Planear e avaliar a semana</a><a class="btn '+(evolutionFocus==="objetivos"?'accent':'secondary')+'" href="#/evolucao?focus=objetivos" '+(evolutionFocus==="objetivos"?'aria-current="page"':'')+'>Acompanhar objetivos da equipa</a></nav>';
   html+='<div data-evolution-panel="semana" '+(evolutionFocus==="semana"?'':'hidden')+'>';
   html+='<section class="section"><div class="section-head"><div><h2>Planear e avaliar</h2><p>Começa pela semana atual. Podes consultar as anteriores abaixo.</p></div></div>';
+  html+='<button class="btn accent evolution-open-button" type="button" data-action="open-team-editor" data-kind="week">Planear nova semana</button>';
   html+='<form class="panel form" data-form="team-week"><input type="hidden" name="doc_id"><input type="hidden" name="expected_revision" value="0"><input type="hidden" name="expected_updated_at"><h3>Planear semana</h3><div class="form-grid"><label class="field"><span>Segunda-feira da semana</span><input name="week_start" type="date" required value="'+TeamDevelopment.monday(today())+'"></label><label class="field"><span>Objetivo da semana</span><input name="objective" required maxlength="1000" placeholder="Ex.: criar apoio após passe"></label></div><div class="form-grid"><label class="field"><span>Treino 1</span><select name="training1">'+trainingOpts+'</select></label><label class="field"><span>Treino 2</span><select name="training2">'+trainingOpts+'</select></label><label class="field"><span>Jogo</span><select name="match">'+matchOpts+'</select></label></div><label class="field"><span>Como as sessões se relacionam</span><input name="relation_note" maxlength="500" placeholder="Segunda: princípio · quinta: progressão · jogo: observar"></label><label class="field"><span>Avaliação final da semana</span><textarea name="evaluation" maxlength="3000" placeholder="Preencher depois de observar; não é inferida pelo número de sessões."></textarea></label><div class="toolbar"><button class="btn accent" type="submit">Guardar semana</button><button class="btn secondary" type="button" data-action="cancel-team-edit" hidden>Cancelar edição</button></div><p class="notice" data-team-feedback hidden></p></form></section>';
   html+=(weeklyProposalCards?'<div class="section-head"><div><h3>Propostas do Head Coach · por rever</h3><p>A aprovação é uma ação do treinador. Nenhum treino é criado pela proposta.</p></div></div><div class="list">'+weeklyProposalCards+'</div>':'')+'<h3>Semanas guardadas</h3><div class="list">'+(weeks.length?weeks.map(function(d){return compactEvolutionCard(card(d,'week'));}).join(''):'<div class="empty">Ainda não há semanas planeadas.</div>')+'</div>';
   html+='</div><div data-evolution-panel="objetivos" '+(evolutionFocus==="objetivos"?'':'hidden')+'>';
   var stageOpts=TeamDevelopment.stages.map(function(x){return '<option value="'+x+'">'+esc(TeamDevelopment.labels[x])+'</option>';}).join('');
   html+='<section class="section"><div class="section-head"><div><h2>Objetivos da equipa</h2><p>Regista um foco e atualiza o estado apenas quando houver observações.</p></div></div>';
+  html+='<button class="btn accent evolution-open-button" type="button" data-action="open-team-editor" data-kind="goal">Registar novo objetivo</button>';
   var exerciseOptions=exercises.map(function(x){return '<label class="player-choice"><input type="checkbox" name="exercise_refs" value="'+esc(x.sync_id)+'"><span><strong>'+esc(x.nome||'Exercício')+'</strong></span></label>';}).join('');
   html+='<form class="panel form" data-form="team-goal"><input type="hidden" name="doc_id"><input type="hidden" name="expected_revision" value="0"><input type="hidden" name="expected_updated_at"><h3>Registar objetivo</h3><div class="form-grid"><label class="field"><span>Objetivo</span><input name="title" required maxlength="200"></label><label class="field"><span>Identificado em</span><input name="identified_at" type="date" value="'+today()+'"></label><label class="field"><span>Estado decidido pelo treinador</span><select name="stage">'+stageOpts+'</select></label></div><fieldset class="field" data-reference-group="session_refs"><legend>Sessões de origem ou relacionadas</legend><div class="player-choice-grid">'+(sessionOptions||'<p class="empty">Ainda sem treinos ou jogos com UUID partilhado.</p>')+'</div><small>Associar uma sessão como origem não conta como trabalho realizado.</small></fieldset><fieldset class="field" data-reference-group="worked_session_refs"><legend>Sessões em que o foco foi trabalhado</legend><div class="player-choice-grid">'+(workedSessionOptions||'<p class="empty">Ainda não há sessões concluídas registadas para selecionar.</p>')+'</div><small>Seleciona apenas sessões concluídas em que o treinador trabalhou explicitamente este foco. Melhoria nunca é inferida.</small></fieldset><fieldset class="field" data-reference-group="evidence_refs"><legend>Observações usadas como evidência</legend><div class="player-choice-grid">'+(memoryEvidenceOptions||'<p class="empty">Ainda sem observações ligadas à equipa.</p>')+'</div><small>As sessões relacionadas também ficam registadas como evidências. As observações são referências adicionais.</small></fieldset><fieldset class="field" data-reference-group="exercise_refs"><legend>Exercícios relacionados</legend><div class="player-choice-grid">'+(exerciseOptions||'<p class="empty">Ainda sem exercícios com UUID partilhado.</p>')+'</div></fieldset><label class="field"><span>Facto observado</span><textarea name="observations" maxlength="3000"></textarea></label><label class="field"><span>Interpretação</span><textarea name="interpretation" maxlength="3000"></textarea></label><label class="field"><span>Hipótese por confirmar</span><textarea name="hypothesis" maxlength="3000"></textarea></label><label class="field"><span>Avaliação do treinador</span><textarea name="evaluation" maxlength="3000" placeholder="O que foi observado ao trabalhar este objetivo?"></textarea></label><label class="field"><span>Decisão explícita do treinador</span><textarea name="coach_decision" maxlength="3000"></textarea></label><div class="toolbar"><button class="btn accent" type="submit">Guardar objetivo</button><button class="btn secondary" type="button" data-action="cancel-team-edit" hidden>Cancelar edição</button></div><p class="notice" data-team-feedback hidden></p></form></section>';
   var weeklyEvidenceOptions=trainings.filter(function(x){return /^[0-9a-f-]{36}$/i.test(x.sync_id||'');}).map(function(x){return '<label class="player-choice"><input type="checkbox" name="weekly_evidence_refs" value="training:'+esc(x.sync_id)+'"><span><strong>Treino · '+esc(x.objetivo||x.escalao||'Sessão')+'</strong><small>'+fmtDate(x.data)+'</small></span></label>';}).join('')+matches.filter(function(x){return /^[0-9a-f-]{36}$/i.test(x.sync_id||'');}).map(function(x){return '<label class="player-choice"><input type="checkbox" name="weekly_evidence_refs" value="match:'+esc(x.sync_id)+'"><span><strong>Jogo · '+esc(x.adversario||'Adversário')+'</strong><small>'+fmtDate(x.data)+'</small></span></label>';}).join('')+memories.filter(function(x){return /^[0-9a-f-]{36}$/i.test(x.sync_id||'');}).map(function(x){return '<label class="player-choice"><input type="checkbox" name="weekly_evidence_refs" value="memory:'+esc(x.sync_id)+'"><span><strong>Observação · '+esc(x.title||'Observação')+'</strong><small>'+fmtDate(x.occurred_at)+'</small></span></label>';}).join('');
@@ -536,6 +563,19 @@ async function viewTeamDevelopment(){
   html=html.replace('</fieldset><label class="field"><span>Facto observado</span>','</fieldset></details><details class="section" data-goal-analysis><summary>Registar análise e decisão</summary><label class="field"><span>Facto observado</span>');
   html=html.replace('</textarea></label><div class="toolbar"><button class="btn accent" type="submit">Guardar objetivo','</textarea></label></details><div class="toolbar"><button class="btn accent" type="submit">Guardar objetivo');
   html+='<h3>Objetivos guardados</h3><div class="list">'+(goals.length?goals.map(function(d){return compactEvolutionCard(card(d,'goal'));}).join(''):'<div class="empty">Ainda não há objetivos de equipa.</div>')+'</div></div>';
+  function moveEvolutionEditor(kind,label,panel){
+    var start=html.indexOf('<form class="panel form" data-form="'+kind+'">');
+    var end=start<0?-1:html.indexOf('</form>',start)+7;
+    if(start<0||end<7)throw new Error('Formulário de evolução indisponível: '+kind);
+    var formMarkup=html.slice(start,end).replace('class="panel form"','class="form"');
+    html=html.slice(0,start)+html.slice(end);
+    var insertAt=panel==='week'?html.indexOf('</div><div data-evolution-panel="objetivos"'):html.lastIndexOf('</div>');
+    if(insertAt<0)throw new Error('Painel de evolução indisponível: '+panel);
+    var editor='<details class="panel section evolution-editor" data-evolution-editor="'+panel+'"><summary>'+label+'</summary>'+formMarkup+'</details>';
+    html=html.slice(0,insertAt)+editor+html.slice(insertAt);
+  }
+  moveEvolutionEditor('team-week','Campos da nova semana','week');
+  moveEvolutionEditor('team-goal','Campos do novo objetivo','goal');
   setView('Semana e evolução',html,'Planeamento');
 }
 async function viewSeasons(){
@@ -1411,6 +1451,11 @@ app.addEventListener("click",async function(event){
   }
   if(action==="export-season-player"){var seasonPlayer=(await DB.porIndice("jogadores","team_id",DEFAULT_TEAM_ID)).find(x=>String(x.sync_id)===String(target.dataset.player));try{if(seasonPlayer)await ReportExporter.open("player",seasonPlayer.id,{seasonId:target.dataset.season});else{var archiveDocs=(await WorkspaceStore.listDocuments(DEFAULT_TEAM_ID,{includeArchived:true})).filter(function(doc){return doc.type==="player_archive";}),archiveDoc=archiveDocs.find(function(doc){try{return PlayerArchive.state(doc).player?.ref===target.dataset.player;}catch(_){return false;}});if(!archiveDoc)throw new Error("O atleta já não está ativo e não foi encontrado o seu arquivo histórico.");await ReportExporter.open("player",target.dataset.player,{seasonId:target.dataset.season,archivedPlayer:PlayerArchive.state(archiveDoc)});}}catch(error){alert(error.message);}return;}
   if(action==="export-team-report"){try{await ReportExporter.open("team",null,{seasonId:target.dataset.season||null});}catch(error){alert(error.message);}return;}
+  if(action==="open-team-editor"){
+    var newEditor=app.querySelector('[data-evolution-editor="'+(target.dataset.kind==='goal'?'goal':'week')+'"]');
+    if(newEditor){newEditor.open=true;newEditor.scrollIntoView({behavior:'auto',block:'start'});newEditor.querySelector(target.dataset.kind==='goal'?'[name="title"]':'[name="objective"]')?.focus({preventScroll:true});}
+    return;
+  }
   if(action==="edit-team-record"){
     var teamDoc=await WorkspaceStore.getDocument(Number(target.dataset.id));if(!teamDoc)return;var form=app.querySelector('form[data-form="'+(target.dataset.kind==="week"?"team-week":"team-goal")+'"]');if(!form)return;var value=target.dataset.kind==="week"?TeamDevelopment.week(teamDoc):TeamDevelopment.teamGoal(teamDoc);var parsed=JSON.parse(teamDoc.body||"{}");
     var addUnavailableReference=function(name,encoded,label){var group=form.querySelector('[data-reference-group="'+name+'"]'),grid=group?.querySelector(".player-choice-grid");if(!grid||Array.from(grid.querySelectorAll('[name="'+name+'"]')).some(function(input){return input.value===encoded;}))return;var row=document.createElement("label"),input=document.createElement("input"),text=document.createElement("span");row.className="player-choice";input.type="checkbox";input.name=name;input.value=encoded;input.checked=true;input.dataset.unavailableReference="true";text.textContent="Ligação guardada sem origem disponível · "+label+" · "+encoded;row.append(input,text);grid.append(row);};
@@ -1423,7 +1468,8 @@ app.addEventListener("click",async function(event){
     }
     if(target.dataset.kind==="week")form.querySelector('[data-week-evaluation]').open=!!(target.dataset.evaluate||value.evaluation?.summary||value.evaluation?.evidence?.length);
     else form.querySelectorAll('[data-goal-sources], [data-goal-analysis]').forEach(function(section){section.open=true;});
-    form.querySelector('[data-action="cancel-team-edit"]').hidden=false;form.scrollIntoView({behavior:"smooth",block:"center"});return;
+    var editor=form.closest('[data-evolution-editor]');if(editor){editor.open=true;editor.querySelector('summary').textContent=target.dataset.kind==='week'?'Editar semana':'Editar objetivo';}
+    form.querySelector('[data-action="cancel-team-edit"]').hidden=false;(editor||form).scrollIntoView({behavior:"auto",block:"start"});return;
   }
   if(action==="accept-weekly-plan-proposal"||action==="dismiss-weekly-plan-proposal"){
     var weeklyDoc=await WorkspaceStore.getDocument(Number(target.dataset.id));if(!weeklyDoc)return;var weeklyDocUpdatedAt=weeklyDoc.updated_at,weeklyValue=TeamDevelopment.week(weeklyDoc);if(weeklyValue.agent_proposal?.status!=="proposed"){alert("Esta proposta semanal já foi decidida noutro dispositivo.");return router();}if(target.dataset.updatedAt&&weeklyDoc.updated_at!==target.dataset.updatedAt){alert("A proposta mudou desde que a abriste. Atualiza e revê as novas evidências antes de decidir.");return router();}var approvingWeekly=action==="accept-weekly-plan-proposal";if(!confirm(approvingWeekly?"Aprovar esta progressão semanal? A aprovação não cria treinos.":"Rejeitar esta progressão? A proposta e as evidências ficam no histórico."))return;

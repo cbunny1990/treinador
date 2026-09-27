@@ -1382,6 +1382,47 @@ test("sync do Workspace corre em fundo, atualiza a vista uma vez e preserva o sc
   await expect(page.getByText("Human–AI Shared Workspace")).toBeVisible();
 });
 
+test("Workspace espera pelo fim do gesto de scroll antes de redesenhar dados recebidos", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.waitForFunction(() => typeof routerRunning === "boolean" && !routerRunning);
+  await page.evaluate(() => {
+    RemoteWorkspace.scheduleSync = () => {};
+    RemoteWorkspace.status = async () => ({ configured: false, signedIn: false, conflicts: [] });
+    window.__scrollRefreshBuilds = 0;
+    const build = WorkspaceStore.buildSnapshot.bind(WorkspaceStore);
+    WorkspaceStore.buildSnapshot = (...args) => { window.__scrollRefreshBuilds++; return build(...args); };
+    document.getElementById("app").style.minHeight = "2200px";
+    window.scrollTo(0, 640);
+    window.dispatchEvent(new Event("touchmove", { bubbles: true }));
+    window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", {
+      detail: { pulled: 1, pushed: 0, conflicts: [], deleted: 0 },
+    }));
+    window.__scrollGestureProbe = new Promise(resolve => {
+      setTimeout(() => {
+        const beforeSecond = window.__scrollRefreshBuilds;
+        window.dispatchEvent(new Event("touchmove", { bubbles: true }));
+        setTimeout(() => resolve({ beforeSecond, afterSecond: window.__scrollRefreshBuilds }), 260);
+      }, 180);
+    });
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(640);
+  const gestureProbe = await page.evaluate(() => window.__scrollGestureProbe);
+  expect(gestureProbe).toEqual({ beforeSecond: 0, afterSecond: 0 });
+  await expect.poll(() => page.evaluate(() => window.__scrollRefreshBuilds), { timeout: 2000 }).toBe(1);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(640);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("touchmove", { bubbles: true }));
+    window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", {
+      detail: { pulled: 1, pushed: 0, conflicts: [], deleted: 0 },
+    }));
+    go("#/calendario");
+  });
+  await expect(page.getByRole("heading", { name: "Calendário" })).toBeVisible();
+  await page.waitForTimeout(450);
+  expect(await page.evaluate(() => window.__scrollRefreshBuilds)).toBe(1);
+});
+
 test("emblema do Sub-8 de Figueiró aparece na identidade da equipa", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => typeof DB !== "undefined" && typeof router === "function");

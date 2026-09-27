@@ -5,6 +5,7 @@
   --radius:18px;--radius-sm:12px;--shadow:0 12px 30px rgba(15,23,42,.07);
 }
 *{box-sizing:border-box;margin:0;padding:0}
+[hidden]{display:none!important}
 html{background:var(--bg)}
 body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--ink);background:var(--bg);min-height:100vh}
 button,input,select,textarea{font:inherit}
@@ -314,6 +315,10 @@ tr:last-child td{border-bottom:0}
 .pitch-zone-grid{position:absolute;inset:0;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);pointer-events:none}
 .pitch-zone-grid span{border:1px dashed #ffffff24}
 .team-goal-detail,.team-week-detail{margin-top:12px;padding-top:10px;border-top:1px solid #e2e8f0}
+.evolution-open-button{min-height:44px}
+.evolution-editor{scroll-margin-top:90px}
+.evolution-editor summary{min-height:44px;padding:12px 0;font-weight:800;cursor:pointer}
+.evolution-editor .form{margin-top:12px}
 .team-goal-detail h4,.team-week-detail h4{margin:10px 0 4px}
 .team-goal-detail ul,.team-week-detail ul{margin:4px 0;padding-left:22px}
 .pitch-centre{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:28%;aspect-ratio:1;border:2px solid #ffffffb3;border-radius:50%;pointer-events:none}

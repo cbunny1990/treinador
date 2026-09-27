@@ -59,7 +59,7 @@ test("controlos principais têm nomes acessíveis e campos com rótulos", async 
     const unlabeled = await page.evaluate(() => Array.from(document.querySelectorAll(
       'button, a[href], input:not([type="hidden"]), select, textarea'
     )).filter((element) => {
-      if (!element.getClientRects().length || element.closest('[aria-hidden="true"]')) return false;
+      if (!element.checkVisibility() || element.closest('[hidden], [aria-hidden="true"]')) return false;
       const explicit = element.getAttribute("aria-label") || element.getAttribute("aria-labelledby") || element.title;
       if (explicit?.trim()) return false;
       if (element.matches("input, select, textarea")) return !element.labels?.length;
@@ -79,7 +79,7 @@ test("controlos principais têm nomes acessíveis e campos com rótulos", async 
 
     expect(unlabeled, `${routeName}: controlos sem nome acessível`).toEqual([]);
     const oversizedChoices = await page.locator('input[type="checkbox"], input[type="radio"]').evaluateAll((elements) => elements
-      .filter((element) => element.getClientRects().length && element.getBoundingClientRect().width > 40)
+      .filter((element) => element.checkVisibility() && element.getBoundingClientRect().width > 40)
       .map((element) => ({ route: location.hash, name: element.name, width: Math.round(element.getBoundingClientRect().width) })));
     expect(oversizedChoices, `${routeName}: checkbox/radio com largura de campo de texto`).toEqual([]);
   }

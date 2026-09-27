@@ -282,6 +282,8 @@ Auditoria automatizada adicional (24/09/2026): `tests/remote_workspace.test.js` 
 
 Redesenho do Workspace após sincronização (24/09/2026): o painel só volta a consultar e construir o snapshot se a sincronização recebeu/apagou registos ou se o conjunto de conflitos mudou. Envios sem alterações recebidas atualizam o indicador remoto e mantêm o DOM/posição de leitura; uma falha recuperada remove o aviso local sem reconstruir o painel. O estado de conflitos é comparado por identidade, causa e revisões, pelo que uma notificação repetida não provoca novo redesenho. Regressão E2E verifica scroll, pull remoto, conflito novo e estado repetido.
 
+Proteção durante o gesto de scroll (27/09/2026, branch local): quando chegam dados enquanto o treinador está a deslizar no Workspace, a sincronização dos registos termina normalmente e só o redesenho da página espera 400 ms sem novo gesto. Outro gesto reinicia essa espera; sair da rota cancela o redesenho pendente. Antes de atualizar, a app volta a verificar se existe texto por guardar. O teste Chrome e os seis cenários WebKit de scroll passaram em viewport móvel. Isto mitiga a troca do DOM durante um gesto; a queixa no telemóvel físico continua por observar.
+
 ### Deduplicação de atividade imutável
 
 O registo de atividade é imutável e uma repetição da mesma UUID só é considerada sincronizada se o conteúdo corresponder. O timestamp compara-se como instante UTC, não como texto ISO: Postgres pode devolver `Z` ou `+00:00` e precisão decimal diferente para o mesmo instante. Uma diferença real de instante ou de conteúdo continua em conflito e não é sobrescrita. Cache PWA v118; regressão em `tests/remote_workspace.test.js`.
