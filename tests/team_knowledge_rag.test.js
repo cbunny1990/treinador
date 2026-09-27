@@ -35,6 +35,14 @@ test('RAG tool is read-scoped, bounded and has structured filters with stable UU
  const recent=rag.TEAM_KNOWLEDGE_TOOLS.find(x=>x.name==='get_recent_match_context');assert.ok(recent);assert.deepEqual(recent.inputSchema.required,['question']);assert.equal(recent.inputSchema.properties.match_count.maximum,5);
 });
 
+test('activity conflict archives are excluded from semantic indexing',()=>{
+  const archive={id:SOURCE,team_id:TEAM,kind:'document',updated_at:'v1',payload:{
+    type:'sync_conflict_archive',title:'Cópia local de atividade em conflito',
+    body:JSON.stringify({local:{summary:'Informação privada do conflito'}}),
+  }};
+  assert.deepEqual(rag.teamKnowledgeTestAPI.chunkRecord(archive),[]);
+});
+
 test('hybrid training context combines exact structured scope and separate cited RAG results without writing',async()=>{
  const target='50000000-0000-4000-8000-000000000005',training=(id,date,objective,exerciseRef=null)=>({id,team_id:TEAM,kind:'training',updated_at:`${date}T10:00:00.000Z`,payload:{data:date,objetivo:objective,duracao_min:60,blocos:exerciseRef?[{exercise_ref:exerciseRef,exercise_name:'Apoio após passe',duration_min:15}]:[],session:{review:{status:'pending'}}}});
  const matchRows=Array.from({length:7},(_,i)=>({id:`60000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`,team_id:TEAM,kind:'match',updated_at:`2026-09-${String(17-i).padStart(2,'0')}T10:00:00.000Z`,payload:{data:`2026-09-${String(17-i).padStart(2,'0')}`,estado:'concluido',adversario:`Rival ${i+1}`,golos_favor:i,golos_contra:1}}));

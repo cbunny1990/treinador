@@ -2334,6 +2334,106 @@ const RemoteWorkspace = {
     return this.syncNow();
   },
 
+  async readActivityIdentityConflict(syncId, localId) {
+    const config = remoteLoadConfig();
+    const remoteTeamId = config.remoteTeamId;
+    const conflict = (config.conflicts || []).find((item) => item.store === "activity_items"
+      && item.reason === "duplicate_identity" && item.sync_id === syncId
+      && String(item.local_id) === String(localId));
+    if (!conflict || !Number.isSafeInteger(Number(localId)) || Number(localId) < 1
+      || !remoteIsUuid(syncId) || !remoteIsUuid(remoteTeamId)) {
+      throw new Error("O conflito de atividade mudou. Sincroniza novamente antes de comparar.");
+    }
+    const local = await DB.obter("activity_items", conflict.local_id);
+    if (!local?.sync_dirty || local.sync_id !== syncId || !remoteRowBelongsToTeam(local, remoteTeamId)) {
+      throw new Error("A atividade local já mudou ou pertence a outro workspace.");
+    }
+    const client = await this.init();
+    const { data: remote, error } = await client.from("activity_log").select("*")
+      .eq("id", syncId).eq("team_id", remoteTeamId).maybeSingle();
+    if (error) throw error;
+    if (!remote || remote.id !== syncId || remote.team_id !== remoteTeamId) {
+      throw new Error("Não foi possível confirmar a atividade remota nesta equipa.");
+    }
+    const localSnapshot = {
+      actor: local.actor, actor_label: local.actor_label, action: local.action,
+      summary: local.summary, entity_type: local.entity_type, entity_id: local.entity_id,
+      metadata: local.metadata || {}, created_at: local.created_at,
+    };
+    const remoteSnapshot = {
+      id: remote.id, team_id: remote.team_id, actor_type: remote.actor_type,
+      actor_label: remote.actor_label, action: remote.action, summary: remote.summary,
+      entity_type: remote.entity_type, entity_ref: remote.entity_ref,
+      metadata: remote.metadata || {}, created_at: remote.created_at,
+    };
+    return {
+      sync_id: syncId, local_id: local.id, remote_team_id: remoteTeamId,
+      local_updated_at: local.sync_local_updated_at || null,
+      local_snapshot: localSnapshot, remote_snapshot: remoteSnapshot,
+      local: remoteConflictPreview(localSnapshot), remote: remoteConflictPreview(remoteSnapshot),
+    };
+  },
+
+  async resolveActivityIdentityConflict(review) {
+    if (!review || !remoteIsUuid(review.sync_id) || !remoteIsUuid(review.remote_team_id)) {
+      throw new Error("Compara primeiro as duas atividades.");
+    }
+    const current = await this.readActivityIdentityConflict(review.sync_id, review.local_id);
+    if (current.remote_team_id !== review.remote_team_id
+      || current.local_updated_at !== review.local_updated_at
+      || !remoteValueEqual(current.local_snapshot, review.local_snapshot)
+      || !remoteValueEqual(current.remote_snapshot, review.remote_snapshot)) {
+      throw new Error("Uma das atividades mudou desde a comparação. Abre novamente o conflito.");
+    }
+    const local = await DB.obter("activity_items", review.local_id);
+    const stamp = new Date().toISOString();
+    const archiveKey = `activity-conflict:${review.sync_id}:${review.local_updated_at || "sem-revisao"}`;
+    const archives = await DB.listar("workspace_documents");
+    let archive = archives.find((item) => item.external_key === archiveKey
+      && item.remote_team_id === review.remote_team_id);
+    if (archive && !remoteValueEqual(JSON.parse(archive.body || "null")?.local, review.local_snapshot)) {
+      throw new Error("O arquivo deste conflito já existe com conteúdo diferente. A atividade local foi preservada.");
+    }
+    if (!archive) {
+      const archiveId = await DB.criar("workspace_documents", {
+        team_id: DEFAULT_TEAM_ID, remote_team_id: review.remote_team_id,
+        type: "sync_conflict_archive", title: "Cópia local de atividade em conflito",
+        body: JSON.stringify({ schema: "vision-activity-conflict@1", source_sync_id: review.sync_id,
+          source_created_at: review.local_snapshot.created_at || null, resolved_at: stamp,
+          decision: "keep_remote", local: review.local_snapshot }, null, 2),
+        status: "ready", external_key: archiveKey, created_at: stamp, updated_at: stamp,
+        created_by: "human", created_by_label: "Treinador",
+        updated_by: "human", updated_by_label: "Treinador", sync_id: remoteUuid(),
+      });
+      archive = await DB.obter("workspace_documents", archiveId);
+    }
+    const remote = current.remote_snapshot;
+    const localEntityId = remote.entity_type && remote.entity_ref != null
+      ? await this._localIdForRemoteRef(remote.entity_type, String(remote.entity_ref), review.remote_team_id)
+      : null;
+    await DB.modificar("activity_items", local.id, (row) => {
+      const snapshot = {
+        actor: row.actor, actor_label: row.actor_label, action: row.action,
+        summary: row.summary, entity_type: row.entity_type, entity_id: row.entity_id,
+        metadata: row.metadata || {}, created_at: row.created_at,
+      };
+      if (!row.sync_dirty || row.sync_id !== review.sync_id
+        || (row.sync_local_updated_at || null) !== review.local_updated_at
+        || !remoteValueEqual(snapshot, review.local_snapshot)) {
+        throw new Error("A atividade local mudou. O arquivo foi guardado, mas o conflito continua por resolver.");
+      }
+      return {
+        ...row, actor: remote.actor_type, actor_label: remote.actor_label,
+        action: remote.action, summary: remote.summary, entity_type: remote.entity_type,
+        entity_id: localEntityId, metadata: remote.metadata || {}, created_at: remote.created_at,
+        sync_dirty: false, remote_updated_at: remote.created_at,
+        remote_team_id: review.remote_team_id,
+      };
+    }, { remote: true });
+    const result = await this.syncNow();
+    return { ...result, archive_id: archive.id };
+  },
+
   async previewInvalidIdentityRecovery(storeName, localId) {
     const config = remoteLoadConfig();
     const conflict = (config.conflicts || []).find((item) => item.store === storeName

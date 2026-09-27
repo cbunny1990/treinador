@@ -1,8 +1,8 @@
 "use strict";
 
 const WORKSPACE_DEFAULT_TEAM_ID = typeof DEFAULT_TEAM_ID === "undefined" ? "default" : DEFAULT_TEAM_ID;
-const WORKSPACE_DOC_TYPES = ["training_plan", "match_analysis", "weekly_plan", "team_goal", "season_index", "player_archive", "note", "brief"];
-const WORKSPACE_EDITABLE_DOC_TYPES = WORKSPACE_DOC_TYPES.filter((type) => type !== "player_archive");
+const WORKSPACE_DOC_TYPES = ["training_plan", "match_analysis", "weekly_plan", "team_goal", "season_index", "player_archive", "sync_conflict_archive", "note", "brief"];
+const WORKSPACE_EDITABLE_DOC_TYPES = WORKSPACE_DOC_TYPES.filter((type) => !["player_archive", "sync_conflict_archive"].includes(type));
 const WORKSPACE_DOC_LABELS = {
   training_plan: "Plano de treino",
   match_analysis: "Análise de jogo",
@@ -10,6 +10,7 @@ const WORKSPACE_DOC_LABELS = {
   team_goal: "Objetivo da equipa",
   season_index: "Arquivo de épocas",
   player_archive: "Histórico de atleta",
+  sync_conflict_archive: "Arquivo de conflito",
   note: "Nota",
   brief: "Briefing",
 };
