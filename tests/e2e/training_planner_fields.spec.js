@@ -1,5 +1,39 @@
 const { test, expect } = require('@playwright/test');
 
+test('planos passados ficam no histórico sem serem apresentados como treinos realizados', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/#/treinos');
+  const ids = await page.evaluate(async () => {
+    RemoteWorkspace.scheduleSync = () => {};
+    const date = (days) => { const d = new Date(TrainingPlanner.localDate() + 'T12:00:00'); d.setDate(d.getDate() + days); return TrainingPlanner.localDate(d); };
+    const create = (data, objetivo, session) => DB.criar('treinos', { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data, objetivo, status: 'ready', blocos: [], ...(session ? { session: { status: session } } : {}) });
+    const old = await create(date(-3), 'Plano anterior sem sessão');
+    await create(date(-2), 'Treino concluído', 'completed');
+    await create(date(-1), 'Sessão ainda em pausa', 'paused');
+    await create(date(2), 'Próximo treino');
+    await router();
+    return { old };
+  });
+  const history = page.getByRole('heading', { name: 'Histórico' }).locator('..');
+  const upcoming = page.getByRole('heading', { name: 'Em curso e próximos' }).locator('..');
+  await expect(history.getByText('Plano anterior sem sessão')).toBeVisible();
+  const oldCard = history.locator('.training-card').filter({ hasText: 'Plano anterior sem sessão' });
+  await expect(oldCard).toContainText('Plano passado');
+  await expect(oldCard.locator('.badge')).toHaveClass(/system/);
+  expect(await oldCard.evaluate(card => card.querySelector('.meta').getBoundingClientRect().top >= card.querySelector('.title').getBoundingClientRect().bottom)).toBe(true);
+  await expect(history.locator('.training-card').filter({ hasText: 'Treino concluído' })).toContainText('Terminado');
+  await expect(upcoming.locator('.training-card').filter({ hasText: 'Sessão ainda em pausa' })).toContainText('Em pausa');
+  await expect(upcoming.locator('.training-card').filter({ hasText: 'Próximo treino' })).toContainText('Pronto');
+  await history.locator('.training-card').filter({ hasText: 'Plano anterior sem sessão' }).click();
+  await expect(page.getByText('Não há uma sessão em campo terminada')).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('Plano passado')).toBeVisible();
+  const saved = await page.evaluate(async (id) => DB.obter('treinos', id), ids.old);
+  expect(saved.status).toBe('ready');
+  expect(saved.session?.status).toBeFalsy();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
 test('biblioteca guarda montagem e passos para consulta e plano exportado', async ({ page }) => {
   await page.goto('/#/exercicios/novo');
   await page.evaluate(() => { RemoteWorkspace.scheduleSync = () => {}; });

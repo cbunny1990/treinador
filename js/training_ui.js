@@ -269,15 +269,20 @@ async function viewTrainingConsultation(id,step){
 }
 
 async function viewTrainings(){
-  const rows=(await DB.porIndice("treinos","team_id",DEFAULT_TEAM_ID))
-    .sort((a,b)=>String(b.data).localeCompare(String(a.data)));
-  const cards=rows.length?rows.map((raw)=>{
-    const t=TrainingPlanner.normalizeTraining(raw);
-    const status=TrainingPlanner.trainingStatus(t);
-    const statusClass=t.session?.status==="completed"?"ready":(t.status==="ready"?"ready":"draft");
+  const rows=(await DB.porIndice("treinos","team_id",DEFAULT_TEAM_ID)).map((raw)=>TrainingPlanner.normalizeTraining(raw));
+  const currentDate=TrainingPlanner.localDate();
+  const isActive=(t)=>t.session?.status==="running"||t.session?.status==="paused";
+  const upcoming=[],history=[];
+  for(const t of rows)(isActive(t)||(String(t.data||"")>=currentDate&&t.session?.status!=="completed")?upcoming:history).push(t);
+  upcoming.sort((a,b)=>Number(isActive(b))-Number(isActive(a))||String(a.data||"").localeCompare(String(b.data||"")));
+  history.sort((a,b)=>String(b.data||"").localeCompare(String(a.data||"")));
+  const trainingCards=(items)=>items.map((t)=>{
+    const status=TrainingPlanner.trainingStatus(t,currentDate);
+    const statusClass=status==="Plano passado"?"system":["Terminado","Pronto","Em curso","Em pausa"].includes(status)?"ready":"draft";
     return '<a class="card training-card" href="#/treinos/'+t.id+'"><span class="grow"><span class="title">Treino · '+fmtDate(t.data)+'</span><span class="meta">'+tuEsc([t.hora,t.objetivo].filter(Boolean).join(" · "))+'</span><span class="meta">'+t.blocos.length+' bloco(s) · '+t.duracao_min+' min</span></span><span class="badge '+statusClass+'">'+tuEsc(status)+'</span></a>';
-  }).join(""):'<div class="empty">Ainda não existem treinos planeados.</div>';
-  setView("Treinos",'<div class="section-head"><div><h2>Planeador de treino</h2><p>Sessões por blocos reutilizando a biblioteca</p></div><div class="toolbar"><a class="btn secondary" href="#/exercicios">Exercícios</a><a class="btn accent" href="#/treinos/novo">Novo treino</a></div></div><div class="list">'+cards+'</div>',"Planos");
+  }).join("");
+  const cards=rows.length?(upcoming.length?'<section class="section"><h3>Em curso e próximos</h3><div class="list">'+trainingCards(upcoming)+'</div></section>':'')+(history.length?'<section class="section"><h3>Histórico</h3><p class="hint">Os planos passados ficam guardados. A data não confirma que o treino foi realizado.</p><div class="list">'+trainingCards(history)+'</div></section>':''):'<div class="empty">Ainda não existem treinos planeados.</div>';
+  setView("Treinos",'<div class="section-head"><div><h2>Planeador de treino</h2><p>Sessões por blocos reutilizando a biblioteca</p></div><div class="toolbar"><a class="btn secondary" href="#/exercicios">Exercícios</a><a class="btn accent" href="#/treinos/novo">Novo treino</a></div></div>'+cards,"Planos");
 }
 
 async function viewTraining(id){
@@ -285,6 +290,7 @@ async function viewTraining(id){
   const raw=await DB.obter("treinos",id);
   if(!raw) return go("#/treinos");
   const t=TrainingPlanner.normalizeTraining(raw);
+  const status=TrainingPlanner.trainingStatus(t);
   const exercises=await tuExercises();
   const matches=await DB.porIndice("jogos","team_id",DEFAULT_TEAM_ID);
   const linked=matches.find((m)=>tuMatchRef(m)===String(t.source_match_ref||""));
@@ -292,7 +298,7 @@ async function viewTraining(id){
     const e=tuTrainingExercise(b,exercises);
     return '<div class="list-item row"><span class="block-order">'+(b.order+1)+'</span><span class="grow"><span class="title">'+tuEsc(e?.nome||b.exercise_name||"Exercício")+'</span><span class="meta">'+tuEsc(b.phase)+' · '+b.duration_min+' min</span></span></div>';
   }).join(""):'<div class="empty">Sem blocos.</div>';
-  let html='<section class="panel hero-main"><div class="kicker">'+fmtDate(t.data)+(t.hora?' · '+tuEsc(t.hora):'')+'</div><h2 class="display" style="font-size:30px">Treino</h2><p class="lead">'+tuEsc(t.objetivo||"Sem objetivo definido.")+'</p><div class="exercise-facts"><span><strong>'+t.blocos.length+'</strong><small>blocos</small></span><span><strong>'+t.duracao_min+' min</strong><small>duração</small></span><span><strong>'+tuEsc(TrainingPlanner.trainingStatus(t))+'</strong><small>estado</small></span></div>';
+  let html='<section class="panel hero-main"><div class="kicker">'+fmtDate(t.data)+(t.hora?' · '+tuEsc(t.hora):'')+'</div><h2 class="display" style="font-size:30px">Treino</h2><p class="lead">'+tuEsc(t.objetivo||"Sem objetivo definido.")+'</p><div class="exercise-facts"><span><strong>'+t.blocos.length+'</strong><small>blocos</small></span><span><strong>'+t.duracao_min+' min</strong><small>duração</small></span><span><strong>'+tuEsc(status)+'</strong><small>estado</small></span></div>'+(status==="Plano passado"?'<p class="hint">Este plano mantém-se no histórico. Não há uma sessão em campo terminada na app; qualquer avaliação guardada continua disponível.</p>':'');
   if(linked) html+='<div class="notice" style="margin-top:16px">Ligado ao jogo de '+fmtDate(linked.data)+' vs '+tuEsc(linked.adversario||"adversário")+'.</div>';
   html+='<div class="toolbar" style="margin-top:18px"><a class="btn accent" href="#/sessao/'+id+'">Treino em campo / presenças</a><button class="btn secondary" type="button" data-action="export-training-report" data-id="'+id+'">Exportar plano PDF</button><a class="btn secondary" href="#/treinos/'+id+'/duplicar">Duplicar treino</a><a class="btn secondary" href="#/treinos/'+id+'/editar">Editar planeamento</a><a class="btn secondary" href="#/media/novo/training/'+id+'">Adicionar media</a><button class="btn danger" type="button" data-action="delete-training" data-id="'+id+'">Apagar treino</button></div></section>';
   html+='<section class="section"><div class="section-head"><div><h2>Blocos</h2><p>Sequência da sessão</p></div></div><div class="list">'+blocks+'</div></section>';

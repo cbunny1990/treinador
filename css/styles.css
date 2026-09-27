@@ -224,6 +224,9 @@ tr:last-child td{border-bottom:0}
 .exercise-facts strong,.exercise-facts small{display:block}
 .exercise-facts strong{font-size:13px}.exercise-facts small{font-size:10px;color:var(--muted);margin-top:3px}
 .training-card{display:flex;align-items:center;gap:12px;text-decoration:none}
+.training-card .grow{display:grid;gap:2px}
+.training-card .meta{margin-top:0}
+.training-card .badge{flex-shrink:0}
 .training-block-grid{display:grid;gap:10px}
 .training-block-choice{border:1px solid var(--line);border-radius:14px;padding:13px;background:#fff}
 .training-block-choice>label input{width:auto}
