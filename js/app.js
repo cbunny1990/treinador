@@ -15,18 +15,22 @@ var skipNextRemoteSync = false;
 var pendingIndependentConflictPreviews = null;
 var viewRenderSequence = 0;
 var userScrollIntentSequence = 0;
+var lastUserScrollIntentAt = -Infinity;
 var routeScrollIntentSequence = 0;
 var lastSyncConflictSignature = null;
+var workspaceSyncRefreshPromise = null;
 var activeSearchResults = null;
 var SEARCH_RESULT_PAGE_SIZE = 100;
-window.addEventListener("wheel",function(){userScrollIntentSequence++;},{passive:true});
-window.addEventListener("touchmove",function(){userScrollIntentSequence++;},{passive:true});
+var WORKSPACE_SCROLL_IDLE_MS = 400;
+function markUserScrollIntent(){userScrollIntentSequence++;lastUserScrollIntentAt=performance.now();}
+window.addEventListener("wheel",markUserScrollIntent,{passive:true});
+window.addEventListener("touchmove",markUserScrollIntent,{passive:true});
 window.addEventListener("pointerdown",function(event){
   var gutter=Math.max(12,window.innerWidth-document.documentElement.clientWidth);
-  if(event.clientX<=gutter||event.clientX>=window.innerWidth-gutter||event.clientY<=gutter||event.clientY>=window.innerHeight-gutter)userScrollIntentSequence++;
+  if(event.clientX<=gutter||event.clientX>=window.innerWidth-gutter||event.clientY<=gutter||event.clientY>=window.innerHeight-gutter)markUserScrollIntent();
 },{passive:true});
 window.addEventListener("keydown",function(event){
-  if(["ArrowUp","ArrowDown","PageUp","PageDown","Home","End"," "].includes(event.key))userScrollIntentSequence++;
+  if(["ArrowUp","ArrowDown","PageUp","PageDown","Home","End"," "].includes(event.key))markUserScrollIntent();
 });
 
 function esc(v){
@@ -307,6 +311,11 @@ document.addEventListener("reset",function(event){
   if(form instanceof HTMLFormElement&&form.matches("form[data-form], form[data-event-form]"))setTimeout(function(){delete form.dataset.dirty;},0);
 });
 
+function showSyncRefreshNotice(dirtyForm){
+  var notice=app.querySelector('[data-sync-refresh-notice]');
+  if(!notice){notice=document.createElement("p");notice.className="notice section";notice.setAttribute("role","status");notice.dataset.syncRefreshNotice="true";dirtyForm.insertAdjacentElement("beforebegin",notice);}
+  notice.textContent="Chegaram alterações de outro dispositivo. O texto por guardar foi preservado; guarda ou cancela antes de atualizar esta vista.";
+}
 window.addEventListener("visioncoach:sync-complete",async function(syncEvent){
   remoteSyncFailed=false;
   refreshRemoteIndicator();
@@ -321,10 +330,26 @@ window.addEventListener("visioncoach:sync-complete",async function(syncEvent){
   if(!(Number(detail.pulled||0)>0||Number(detail.deleted||0)>0||conflictsChanged))return;
   var dirtyForm=app.querySelector('form[data-form][data-dirty="true"], form[data-event-form][data-dirty="true"]');
   if(dirtyForm){
-    var refreshNotice=app.querySelector('[data-sync-refresh-notice]');
-    if(!refreshNotice){refreshNotice=document.createElement("p");refreshNotice.className="notice section";refreshNotice.setAttribute("role","status");refreshNotice.dataset.syncRefreshNotice="true";dirtyForm.insertAdjacentElement("beforebegin",refreshNotice);}
-    refreshNotice.textContent="Chegaram alterações de outro dispositivo. O texto por guardar foi preservado; guarda ou cancela antes de atualizar esta vista.";
+    showSyncRefreshNotice(dirtyForm);
     return;
+  }
+  if((location.hash||"#/")==="#/"){
+    if(!workspaceSyncRefreshPromise){
+      workspaceSyncRefreshPromise=(async function(){
+        while((location.hash||"#/")==="#/"&&performance.now()-lastUserScrollIntentAt<WORKSPACE_SCROLL_IDLE_MS){
+          await new Promise(function(resolve){setTimeout(resolve,Math.max(1,WORKSPACE_SCROLL_IDLE_MS-(performance.now()-lastUserScrollIntentAt)));});
+        }
+        if((location.hash||"#/")!=="#/")return;
+        var activeForm=app.querySelector('form[data-form][data-dirty="true"], form[data-event-form][data-dirty="true"]');
+        if(activeForm){
+          showSyncRefreshNotice(activeForm);
+          return;
+        }
+        skipNextRemoteSync=true;
+        await router();
+      })().finally(function(){workspaceSyncRefreshPromise=null;});
+    }
+    return workspaceSyncRefreshPromise;
   }
   skipNextRemoteSync=true;
   await router();
