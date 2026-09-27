@@ -5,7 +5,7 @@
  let current=null,players=[],busy=false;
  const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const playerName=ref=>players.find(p=>p.sync_id===ref)?.nome||'Atleta';
- function minute(value){const sec=Math.floor(Math.max(0,value)/1000);return String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');}
+ const minute=value=>E.minuteLabel(value);
  function feedback(text){const p=document.querySelector('[data-event-feedback]');if(p){p.hidden=false;p.textContent=text;}}
  function statsTable(match){
   const t=E.stats(match),c=t.counts,usageEvents=M.state(match).events;
@@ -13,9 +13,9 @@
   const row=(label,count)=>'<tr><td>'+esc(label)+'</td><td><strong>'+count+'</strong></td><td>'+esc(t.provenance.counts)+'</td></tr>';
   let rows=row('Golos a favor',c.goal_for)+row('Golos sofridos',c.goal_against)+row('Remates à baliza · total',t.shots.on)+row('Remates à baliza · nossa equipa',t.shots.own_on)+row('Remates à baliza · adversário',t.shots.against_on)+row('Remates à baliza · lado não indicado',t.shots.unknown_side_on)+row('Remates para fora · total',t.shots.off)+row('Remates para fora · nossa equipa',t.shots.own_off)+row('Remates para fora · adversário',t.shots.against_off)+row('Remates para fora · lado não indicado',t.shots.unknown_side_off)+row('Cantos a favor',c.corner_for)+row('Cantos contra',c.corner_against)+'<tr><td>Substituições realizadas</td><td><strong>'+usageEvents.filter(e=>e.type==='substitute'&&!e.voided_at).length+'</strong></td><td>Registo de utilização</td></tr>'+row('Perdas de bola',t.losses.total)+row('Recuperações de bola',t.recoveries.total)+row('Bolas em profundidade',t.through_balls)+row('Bolas no pé do avançado',t.striker_foots)+row('Notas livres',t.free_notes);
   const join=tally=>Object.entries(tally).map(([k,n])=>esc(k==='none'?'Sem motivo':(E.lossReasons[k]||E.zones[k]||k))+' · '+n).join(' · ');
-  if(Object.keys(t.losses.by_reason).length)rows+='<tr><td>Perdas por motivo</td><td colspan="2">'+join(t.losses.by_reason)+'</td></tr>';
-  if(Object.keys(t.losses.by_zone).length)rows+='<tr><td>Perdas por zona</td><td colspan="2">'+join(t.losses.by_zone)+'</td></tr>';
-  if(Object.keys(t.recoveries.by_zone).length)rows+='<tr><td>Recuperações por zona</td><td colspan="2">'+join(t.recoveries.by_zone)+'</td></tr>';
+  if(Object.keys(t.losses.by_reason).length)rows+='<tr><td>Perdas por motivo</td><td>'+join(t.losses.by_reason)+'</td><td>'+esc(t.provenance.losses)+'</td></tr>';
+  if(Object.keys(t.losses.by_zone).length)rows+='<tr><td>Perdas por zona</td><td>'+join(t.losses.by_zone)+'</td><td>'+esc(t.provenance.losses)+'</td></tr>';
+  if(Object.keys(t.recoveries.by_zone).length)rows+='<tr><td>Recuperações por zona</td><td>'+join(t.recoveries.by_zone)+'</td><td>'+esc(t.provenance.recoveries)+'</td></tr>';
   return '<h3 class="section">Estatísticas do jogo</h3><p class="hint">Contagens derivadas dos lances que registaste. Cada linha indica a origem; nada é inferido.</p><div class="table-wrap section"><table><thead><tr><th>O que</th><th>Contagem</th><th>Origem</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
  }
  function possessionSection(match){
@@ -27,22 +27,23 @@
  }
  function recordSection(match){
   const s=M.state(match);
-  if(!s.started_at)return '<p class="notice">O registo de lances usa o minuto do cronómetro deste jogo. Inicia primeiro a utilização e volta aqui para contar os lances.</p>';
-  const active=['running','paused','completed'].includes(s.status);
-  const clockMinute=Math.round(M.replay(match).total_ms/60000*10)/10;
-  const rosterRows=s.roster;
-  let html='<h3 class="section">Registar lance</h3><p class="hint">Toca no tipo para preparar o registo com o minuto atual, confirma os detalhes e guarda. Registar um lance não altera o resultado nem os minutos.</p><div class="grid quick-grid match-event-quick section">';
+  const retrospective=E.postMatchWithoutClock(match,s);
+  if(!s.started_at&&!retrospective)return '<p class="notice">Antes do jogo, guarda a convocatória e o alinhamento. Depois de o dares como terminado, podes registar lances sem iniciar o cronómetro.</p>';
+  const active=retrospective||['running','paused','completed'].includes(s.status);
+  const clockMinute=retrospective?'':Math.round(M.replay(match).total_ms/60000*10)/10;
+  const rosterRows=s.started_at?s.roster:(match.callup?.player_ids||[]).map(ref=>players.find(p=>p.sync_id===ref)).filter(Boolean).map(p=>({ref:p.sync_id,name:p.nome,number:p.numero}));
+  let html='<h3 class="section">Registar lance</h3><p class="hint">'+(retrospective?'Depois do jogo, indica o minuto apenas se o souberes. Sem cronómetro, os minutos de utilização continuam desconhecidos.':'Toca no tipo para preparar o registo com o minuto atual, confirma os detalhes e guarda.')+' Registar um lance não altera o resultado nem os minutos dos atletas.</p><div class="grid quick-grid match-event-quick section">';
   for(const [t,label] of Object.entries(E.types))html+='<button type="button" class="btn'+' secondary'+' btn-sm" data-event-quick="'+t+'" '+(active?'':'disabled')+'>'+esc(label)+'</button>';
   html+='</div>';
   if(!active)return html+'<p class="notice">Só é possível registar lances com o jogo a correr, em pausa ou terminado.</p>';
-  html+='<form class="form section" data-event-form="record" data-event-edit-id=""><div class="form-grid"><label class="field"><span>Tipo de lance</span><select name="type">'+Object.entries(E.types).map(([k,v])=>'<option value="'+k+'">'+esc(v)+'</option>').join('')+'</select></label><label class="field"><span>Minuto</span><input name="at_min" type="number" min="0" max="240" step="0.1" value="'+esc(clockMinute)+'" required></label></div><div class="form-grid"><label class="field"><span>Lado</span><select name="side"><option value="">Não se aplica</option>'+Object.entries(E.sides).map(([k,v])=>'<option value="'+k+'">'+esc(v)+'</option>').join('')+'</select></label><label class="field"><span>Atleta (nossa equipa)</span><select name="player_ref"><option value="">—</option>'+rosterRows.map(p=>'<option value="'+esc(p.ref)+'">'+esc(p.name)+(p.number!=null?' · #'+esc(p.number):'')+'</option>').join('')+'</select></label></div><label class="field"><span>Atleta adversário (nome, opcional)</span><input name="opponent_player_name" maxlength="100" autocomplete="off"></label><div class="form-grid"><label class="field"><span>Zona do campo</span><select name="zone"><option value="">—</option>'+Object.entries(E.zones).map(([k,v])=>'<option value="'+k+'">'+esc(v)+'</option>').join('')+'</select></label><label class="field"><span>Motivo (perdas)</span><select name="reason"><option value="">—</option>'+Object.entries(E.lossReasons).map(([k,v])=>'<option value="'+k+'">'+esc(v)+'</option>').join('')+'</select></label></div><label class="field"><span>Observação</span><input name="note" maxlength="300"></label><div class="toolbar"><button class="btn accent" type="submit">Registar lance</button><button class="btn secondary" type="button" data-event-action="reset_form">Limpar</button></div></form>';
+  html+='<form class="form section" data-event-form="record" data-event-edit-id=""><div class="form-grid"><label class="field"><span>Tipo de lance</span><select name="type">'+Object.entries(E.types).map(([k,v])=>'<option value="'+k+'">'+esc(v)+'</option>').join('')+'</select></label><label class="field"><span>'+(retrospective?'Minuto, se souberes':'Minuto')+'</span><input name="at_min" type="number" min="0" max="240" step="0.1" value="'+esc(clockMinute)+'" '+(retrospective?'':'required')+'></label></div><div class="form-grid"><label class="field"><span>Lado</span><select name="side"><option value="">Não se aplica</option>'+Object.entries(E.sides).map(([k,v])=>'<option value="'+k+'">'+esc(v)+'</option>').join('')+'</select></label><label class="field"><span>Atleta (nossa equipa)</span><select name="player_ref"><option value="">—</option>'+rosterRows.map(p=>'<option value="'+esc(p.ref)+'">'+esc(p.name)+(p.number!=null?' · #'+esc(p.number):'')+'</option>').join('')+'</select></label></div><label class="field"><span>Atleta adversário (nome, opcional)</span><input name="opponent_player_name" maxlength="100" autocomplete="off"></label><div class="form-grid"><label class="field"><span>Zona do campo</span><select name="zone"><option value="">—</option>'+Object.entries(E.zones).map(([k,v])=>'<option value="'+k+'">'+esc(v)+'</option>').join('')+'</select></label><label class="field"><span>Motivo (perdas)</span><select name="reason"><option value="">—</option>'+Object.entries(E.lossReasons).map(([k,v])=>'<option value="'+k+'">'+esc(v)+'</option>').join('')+'</select></label></div><label class="field"><span>Observação</span><input name="note" maxlength="300"></label><div class="toolbar"><button class="btn accent" type="submit">Registar lance</button><button class="btn secondary" type="button" data-event-action="reset_form">Limpar</button></div></form>';
   return html;
  }
  function eventsSection(match){
-  const s=M.state(match),settled=['paused','completed'].includes(s.status);
+  const s=M.state(match),settled=E.postMatchWithoutClock(match,s)||['paused','completed'].includes(s.status);
   const events=E.state(match).events.map(e=>({...e,source:'match_event'}));
   s.events.filter(e=>e.type==='substitute'&&!e.voided_at).forEach(e=>events.push({...e,source:'usage_movement',type:'substitution'}));
-  events.sort((a,b)=>a.at_ms-b.at_ms||String(a.id).localeCompare(String(b.id)));
+  events.sort((a,b)=>(a.at_ms??Infinity)-(b.at_ms??Infinity)||String(a.id).localeCompare(String(b.id)));
   if(!events.length)return '<h3 class="section">Lances e substituições</h3><p class="empty section">Ainda não há lances ou substituições registados neste jogo.</p>';
   return '<h3 class="section">Lances e substituições</h3><p class="hint">'+(settled?'Podes editar ou apagar lances; corrige substituições no histórico de utilização.':'Pausa ou termina o jogo para corrigir lances ou substituições.')+'</p><div class="list">'+events.map(e=>{
    const bits=[minute(e.at_ms),e.source==='usage_movement'?'Substituição realizada':esc(E.types[e.type])];
@@ -53,6 +54,7 @@
    if(e.zone&&E.zones[e.zone])bits.push(esc(E.zones[e.zone]));
    if(e.reason&&E.lossReasons[e.reason])bits.push(esc(E.lossReasons[e.reason]));
    if(e.note)bits.push(esc(e.note));
+   if(e.recorded_post_match)bits.push('Registado depois do jogo');
    let html='<article class="list-item"><strong>'+bits.join(' · ')+'</strong><p class="meta">'+esc((e.actor||e.created_by||'Treinador')+' · '+String(e.created_at||'').slice(0,16).replace('T',' '))+'</p><div class="toolbar">';
    if(e.source==='usage_movement')html+='<small class="meta">Registada no modo de jogo · corrigir no histórico de utilização.</small>';
    else if(settled)html+='<button type="button" class="btn secondary btn-sm" data-event-action="edit" data-event-id="'+esc(e.id)+'">Editar lance</button><button type="button" class="btn danger btn-sm" data-event-action="delete" data-event-id="'+esc(e.id)+'">Apagar lance</button>';
@@ -69,7 +71,7 @@
  }
  function html(match,roster){
   if(roster&&roster.length)players=roster;
-  let out='<section class="panel hero-main section" data-match-events="'+match.id+'"><h2>Lances e estatísticas</h2><p class="lead">Registo rápido dos acontecimentos do jogo, no minuto em que acontecem.</p><p class="notice" data-event-feedback role="status" hidden></p>';
+  let out='<section class="panel hero-main section" data-match-events="'+match.id+'"><h2>Lances e estatísticas</h2><p class="lead">'+(E.postMatchWithoutClock(match,M.state(match))?'Regista apenas o que observaste depois do jogo. O minuto é opcional.':'Registo dos acontecimentos do jogo com o cronómetro, quando utilizado.')+'</p><p class="notice" data-event-feedback role="status" hidden></p>';
   out+=resultNotice(match);
   out+=recordSection(match);
   out+=eventsSection(match);
@@ -87,7 +89,7 @@
    const saved=await DB.modificar('jogos',id,row=>E.apply(row,{...command,expected_revision:rev},{players:players}));
    try{await logHuman('match_events_'+command.type,'Atualizou lances do jogo · '+(saved.adversario||''),'match',saved.sync_id||id);}catch(_){}
    if(location.hash.startsWith('#/jogo-visual/'))await root.MatchVisualUI.view(id);
-   else current=saved;
+   else {current=saved;const section=document.querySelector('[data-match-events]');if(section)section.outerHTML=html(saved,players);}
    feedback(command.type==='delete'?'Lance apagado neste dispositivo.':'Lance guardado neste dispositivo.');
   }catch(error){feedback(error.message)}
   finally{busy=false;}
@@ -96,7 +98,7 @@
   if(!current)return;
   const quick=event.target.closest('[data-event-quick]');
   if(quick){
-   const type=quick.dataset.eventQuick,v=Math.round(M.replay(current).total_ms/60000*10)/10;
+   const type=quick.dataset.eventQuick,v=E.postMatchWithoutClock(current,M.state(current))?'':Math.round(M.replay(current).total_ms/60000*10)/10;
    const form=document.querySelector('[data-event-form="record"]');
    if(form){if(form.dataset.eventEditId){if(!confirm('Abandonar as alterações a este lance e preparar um novo?'))return;form.reset();delete form.dataset.dirty;delete form.dataset.eventEditId;form.elements.type.disabled=false;}form.elements.type.value=type;form.elements.at_min.value=String(v);form.elements.type.disabled=false;if(!E.sidedTypes.includes(type))form.elements.side.value='';if(type!=='loss')form.elements.reason.value='';form.dataset.dirty='true';form.scrollIntoView({block:'center',behavior:'smooth'});}
    return;
@@ -107,7 +109,7 @@
   if(type==='edit'){
    const e=E.state(current).events.find(x=>x.id===target.dataset.eventId);if(!e)return feedback('Lance não encontrado neste dispositivo.');
    const form=document.querySelector('[data-event-form="record"]');
-   if(form){form.reset();delete form.dataset.dirty;form.dataset.eventEditId=e.id;form.elements.type.value=e.type;form.elements.type.disabled=true;form.elements.at_min.value=String(Math.round(e.at_ms/60000*10)/10);form.elements.side.value=e.side||'';form.elements.player_ref.value=e.player_ref||'';form.elements.opponent_player_name.value=e.opponent_player_name||'';form.elements.zone.value=e.zone||'';form.elements.reason.value=e.reason||'';form.elements.note.value=e.note||'';form.dataset.dirty='true';form.scrollIntoView({block:'center',behavior:'smooth'});}
+   if(form){form.reset();delete form.dataset.dirty;form.dataset.eventEditId=e.id;form.elements.type.value=e.type;form.elements.type.disabled=true;form.elements.at_min.value=e.at_ms==null?'':String(Math.round(e.at_ms/60000*10)/10);form.elements.side.value=e.side||'';form.elements.player_ref.value=e.player_ref||'';form.elements.opponent_player_name.value=e.opponent_player_name||'';form.elements.zone.value=e.zone||'';form.elements.reason.value=e.reason||'';form.elements.note.value=e.note||'';form.dataset.dirty='true';form.scrollIntoView({block:'center',behavior:'smooth'});}
    feedback('A editar um lance existente: muda os teus dados e guarda.');
    return;
   }
@@ -130,14 +132,15 @@
   const editId=form.dataset.eventEditId,type=fd.get('type');
   const minute=String(fd.get('at_min')||'');
   if(editId&&!confirm('Guardar as alterações a este lance?'))return;
-  const atNumber=editId?Number(minute.replace(',','.')):Math.round(M.replay(current,Date.now()).total_ms/60000*10)/10;
-  const payload={type:editId?'edit':'record',id:editId||crypto.randomUUID(),at_ms:Math.round(atNumber*10)/10*60000,...(!editId?{event_type:type}:{})};
+  const retrospective=E.postMatchWithoutClock(current,M.state(current));
+  const atNumber=retrospective?(minute===''?null:Number(minute.replace(',','.'))):editId?Number(minute.replace(',','.')):Math.round(M.replay(current,Date.now()).total_ms/60000*10)/10;
+  const payload={type:editId?'edit':'record',id:editId||crypto.randomUUID(),at_ms:atNumber==null?null:Math.round(atNumber*10)/10*60000,...(!editId?{event_type:type}:{})};
   const sided=editId?(E.state(current).events.find(e=>e.id===editId)?.type||''):type;
   const side=E.sidedTypes.includes(sided)?(fd.get('side')||null):null;
   if(!editId){if(side)payload.side=side;}else payload.side=side;
   payload.player_ref=fd.get('player_ref')||null;payload.opponent_player_name=fd.get('opponent_player_name')||null;payload.zone=fd.get('zone')||null;payload.reason=fd.get('reason')||null;payload.note=fd.get('note')||'';
   return void commit(payload);
  });
- window.addEventListener('hashchange',()=>{if(!location.hash.startsWith('#/jogo-visual/'))reset();});
+ window.addEventListener('hashchange',()=>{if(!location.hash.startsWith('#/jogo-visual/')&&!location.hash.startsWith('#/equipa/jogo/'))reset();});
  root.MatchEventsUI={html,attach,reset};
 })(globalThis);

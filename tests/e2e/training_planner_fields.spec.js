@@ -58,6 +58,7 @@ test('biblioteca guarda montagem e passos para consulta e plano exportado', asyn
   await page.goto(`/#/treinos/${training.id}/editar`);
   await expect(page.getByRole('checkbox', { name: /Circuito montagem E2E/ })).toBeChecked();
   await page.getByRole('button', { name: 'Guardar treino' }).click();
+  await expect(page).toHaveURL(new RegExp(`#\\/treinos\\/${training.id}$`));
   let savedTraining = await page.evaluate(async id => DB.obter('treinos', id), training.id);
   expect(savedTraining.blocos[0].exercise_snapshot.montagem).toBe('Quatro cones num quadrado de 12 metros.');
 

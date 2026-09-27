@@ -2,12 +2,17 @@ const test=require('node:test'),assert=require('node:assert/strict');let api;
 test.before(async()=>{api=await import('../supabase/functions/vision-coach-mcp/match_analysis.mjs');});
 const c={id:'connector',team_id:'team',scopes:['read','write']};
 const MATCH='99999999-9999-4999-8999-999999999999';
-function fixture(){const match={id:MATCH,team_id:'team',kind:'match',updated_at:'v0',deleted_at:null,payload:{adversario:'Teste',post_game:{analysis:{revision:0,fields:{observations:'Facto escrito pelo treinador'}}}}},rows=[match],calls=[];const admin={from(){const filters=[];let max=Infinity;return{select(){return this;},eq(k,v){filters.push(r=>(k==='payload->>external_key'?r.payload.external_key:r[k])===v);return this;},is(k,v){return this.eq(k,v);},order(){return this;},limit(n){max=n;return this;},then(resolve){return Promise.resolve({data:rows.filter(r=>filters.every(f=>f(r))).slice(0,max).map(r=>structuredClone(r))}).then(resolve);}}},async rpc(n,args){calls.push(args);match.payload=structuredClone(args.p_payload);match.updated_at='v1';return{data:{ok:true}};}};return{match,rows,calls,admin,call:(name,args={})=>api.executeMatchAnalysisTool(admin,c,name,{id:MATCH,expected_updated_at:match.updated_at,expected_revision:0,...args})};}
-test('read returns unknown score and event counts as null without inferred data or photos',async()=>{const f=fixture(),out=await f.call('get_match_analysis');assert.equal(out.result,null);assert.equal(out.statistics.events_available,false);assert.equal(out.statistics.event_count,null);assert.equal(out.statistics.counts,null);assert.equal(f.calls.length,0);});
-test('proposal requires explicit confirmation/current revision and remains separate from coach text',async()=>{const f=fixture();const proposal={summary:'Possível melhoria',hypotheses:['Hipótese'],next_priority:'Apoio',evidence_ids:[]};await assert.rejects(f.call('prepare_match_analysis',{confirmed:false,proposal}),/schema|confirmation/i);await f.call('prepare_match_analysis',{confirmed:true,proposal});assert.equal(f.match.payload.post_game.analysis.fields.observations,'Facto escrito pelo treinador');assert.equal(f.match.payload.post_game.analysis.agent_proposal.prepared_by,'Head Coach');assert.equal(f.match.payload.post_game.analysis.agent_proposal.source_analysis_revision,0);assert.equal(f.match.payload.post_game.analysis.agent_proposal.source_events_revision,0);assert.equal(f.calls.length,1);});
+function fixture(){const match={id:MATCH,team_id:'team',kind:'match',updated_at:'v0',deleted_at:null,payload:{adversario:'Teste',post_game:{analysis:{revision:0,fields:{observations:'Facto escrito pelo treinador'}}}}},rows=[match],calls=[],orderCalls=[];const admin={from(){const filters=[],orders=[];let max=Infinity,start=0;return{select(){return this;},eq(k,v){filters.push(r=>(k==='payload->>external_key'?r.payload.external_key:r[k])===v);return this;},is(k,v){return this.eq(k,v);},order(k,options={}){orders.push([k,options]);orderCalls.push([k,options]);return this;},limit(n){max=n;return this;},range(from,to){start=from;max=to-from+1;return this;},then(resolve){const selected=rows.filter(r=>filters.every(f=>f(r)));selected.sort((a,b)=>{for(const [key,options] of orders){const val=r=>key==='payload->>data'?r.payload?.data:r[key],left=val(a),right=val(b);if(left==null||right==null){if(left===right)continue;return left==null?(options.nullsFirst?-1:1):(options.nullsFirst?1:-1);}const cmp=String(left).localeCompare(String(right));if(cmp)return options.ascending===false?-cmp:cmp;}return 0;});return Promise.resolve({data:selected.slice(start,start+max).map(r=>structuredClone(r))}).then(resolve);}}},async rpc(n,args){calls.push(args);match.payload=structuredClone(args.p_payload);match.updated_at='v1';return{data:{ok:true}};}};return{match,rows,calls,orderCalls,admin,call:(name,args={})=>api.executeMatchAnalysisTool(admin,c,name,{id:MATCH,expected_updated_at:match.updated_at,expected_revision:0,...args})};}
+test('read returns unknown score and event counts as null without inferred data or photos',async()=>{const f=fixture(),out=await f.call('get_match_analysis');assert.equal(out.result,null);assert.deepEqual(out.recorded_result,{for:null,against:null,provenance:'desconhecida'});assert.equal(out.statistics.recorded_result,out.recorded_result);assert.equal(out.statistics.events_available,false);assert.equal(out.statistics.event_count,null);assert.equal(out.statistics.counts,null);assert.equal(f.calls.length,0);});
+test('read preserves a partially entered score and marks its provenance unknown',async()=>{const f=fixture();f.match.payload.golos_favor=2;const out=await f.call('get_match_analysis');assert.equal(out.result,null);assert.deepEqual(out.recorded_result,{for:2,against:null,provenance:'desconhecida'});assert.equal(out.statistics.provenance.result,'desconhecida');assert.equal(f.calls.length,0);});
+test('proposal requires confirmation, summary and a current cited event while staying separate from coach text',async()=>{const f=fixture(),eventId='loss-1',proposal={summary:'Possível melhoria',hypotheses:['Hipótese'],next_priority:'Apoio',evidence_ids:[eventId]};await assert.rejects(f.call('prepare_match_analysis',{confirmed:false,proposal}),/schema|confirmation/i);await assert.rejects(f.call('prepare_match_analysis',{confirmed:true,proposal:{...proposal,evidence_ids:[]}}),/proposal_evidence_required/);assert.equal(f.calls.length,0);f.match.payload.match_events={schema:'vision-match-events@1',revision:1,events:[{id:eventId,type:'loss',at_ms:60000,reason:'pass',zone:'def_c',note:'Passe intercetado'}]};await f.call('prepare_match_analysis',{confirmed:true,proposal});assert.equal(f.match.payload.post_game.analysis.fields.observations,'Facto escrito pelo treinador');assert.equal(f.match.payload.post_game.analysis.agent_proposal.prepared_by,'Head Coach');assert.equal(f.match.payload.post_game.analysis.agent_proposal.source_analysis_revision,0);assert.equal(f.match.payload.post_game.analysis.agent_proposal.source_events_revision,1);assert.deepEqual(f.match.payload.post_game.analysis.agent_proposal.evidence_ids,[eventId]);assert.equal(f.calls.length,1);});
+test('match-analysis proposal schema requires a nonempty summary and unique event citations',()=>{const tool=api.MATCH_ANALYSIS_TOOLS.find(item=>item.name==='prepare_match_analysis');assert.deepEqual(tool.inputSchema.properties.proposal.required,['summary','evidence_ids']);assert.equal(tool.inputSchema.properties.proposal.properties.evidence_ids.minItems,1);assert.equal(tool.inputSchema.properties.proposal.properties.evidence_ids.uniqueItems,true);});
 test('MCP enforces write scope, team, exact match and current revision',async()=>{const f=fixture(),proposal={summary:'',hypotheses:[],next_priority:'',evidence_ids:[]};await assert.rejects(api.executeMatchAnalysisTool(f.admin,{...c,scopes:['read']},'prepare_match_analysis',{id:MATCH,confirmed:true,expected_updated_at:'v0',expected_revision:0,proposal}),/scope_write/);await assert.rejects(api.executeMatchAnalysisTool(f.admin,{...c,team_id:'other'},'get_match_analysis',{id:MATCH}),/not_found/);await assert.rejects(f.call('prepare_match_analysis',{confirmed:true,expected_revision:4,proposal}),/revision_conflict/);assert.equal(f.calls.length,0);});
 test('MCP analysis selector requires stable match UUID',async()=>{const f=fixture();assert.equal(api.MATCH_ANALYSIS_TOOLS[0].inputSchema.properties.id.format,'uuid');await assert.rejects(api.executeMatchAnalysisTool(f.admin,c,'get_match_analysis',{id:'local-17'}),/invalid_match_uuid/);});
-test('recurring patterns count exact recorded reason and zone across distinct matches only',async()=>{const f=fixture(),ids=['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','cccccccc-cccc-4ccc-8ccc-cccccccccccc'];f.rows.splice(0,1,...ids.map((id,i)=>({id,team_id:'team',kind:'match',updated_at:'v0',deleted_at:null,payload:{external_key:'m'+i,data:'2026-09-0'+(i+1),adversario:'Adversário '+i,match_events:{events:[{id:'loss-'+i,type:'loss',at_ms:60000,reason:'pass',zone:'def_c'},{id:'missing-'+i,type:'loss',at_ms:120000,reason:'',zone:'def_c'},{id:'different-'+i,type:'loss',at_ms:180000,reason:'duel',zone:'med_c'}]}}})));const out=await f.call('get_recurring_match_patterns',{limit:10});assert.equal(out.matches_examined,3);assert.equal(out.patterns.length,2);const passes=out.patterns.find(x=>x.reason==='pass'&&x.zone==='def_c');assert.equal(passes.event_count,3);assert.equal(passes.matches.length,3);assert.deepEqual(passes.matches.map(x=>x.event_ids),[['loss-0'],['loss-1'],['loss-2']]);assert.equal(out.patterns.some(x=>x.reason===''),false);assert.match(out.origin,/Contagem exata/);assert.equal(f.calls.length,0);});
+test('MCP pattern judgment schema requires at least two bounded match sources and training evidence',()=>{const tool=api.MATCH_ANALYSIS_TOOLS.find(item=>item.name==='evaluate_cross_session_pattern');assert.ok(tool);assert.equal(tool.inputSchema.properties.match_sources.minItems,2);assert.equal(tool.inputSchema.properties.match_sources.maxItems,5);assert.equal(tool.inputSchema.properties.training_sources.minItems,1);assert.equal(tool.annotations.readOnlyHint,true);});
+test('multi-source Jev judgment with no provider key performs no source reads or network calls',async()=>{const f=fixture(),originalFrom=f.admin.from.bind(f.admin),originalFetch=globalThis.fetch,originalDeno=globalThis.Deno;let reads=0,fetches=0;f.admin.from=(...args)=>{reads++;return originalFrom(...args);};globalThis.Deno={env:{get:()=>undefined}};globalThis.fetch=async()=>{fetches++;throw new Error('unexpected_provider_call');};try{await assert.rejects(api.executeMatchAnalysisTool(f.admin,c,'evaluate_cross_session_pattern',{claim:'Validar padrão.',match_sources:[{ref:MATCH,field:'analysis.observations',expected_updated_at:'v0'},{ref:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',field:'analysis.observations',expected_updated_at:'m2'}],training_sources:[{ref:'88888888-8888-4888-8888-888888888888',field:'review.continua',expected_updated_at:'t1'}]}),/typesafe_api_not_configured/);assert.equal(reads,0);assert.equal(fetches,0);}finally{globalThis.fetch=originalFetch;if(originalDeno===undefined)delete globalThis.Deno;else globalThis.Deno=originalDeno;}});
+test('recurring patterns count exact recorded reason and zone across distinct matches only',async()=>{const f=fixture(),ids=['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','cccccccc-cccc-4ccc-8ccc-cccccccccccc'];f.rows.splice(0,1,...ids.map((id,i)=>({id,team_id:'team',kind:'match',updated_at:'v0',deleted_at:null,payload:{external_key:'m'+i,data:'2026-09-0'+(i+1),adversario:'Adversário '+i,match_events:{events:[{id:'loss-'+i,type:'loss',at_ms:60000,reason:'pass',zone:'def_c'},{id:'missing-'+i,type:'loss',at_ms:120000,reason:'',zone:'def_c'},{id:'different-'+i,type:'loss',at_ms:180000,reason:'duel',zone:'med_c'}]}}})));const out=await f.call('get_recurring_match_patterns',{limit:10});assert.equal(out.matches_examined,3);assert.equal(out.match_limit,10);assert.equal(out.additional_match_records_unexamined,false);assert.equal(out.patterns.length,2);const passes=out.patterns.find(x=>x.reason==='pass'&&x.zone==='def_c');assert.equal(passes.event_count,3);assert.equal(passes.matches.length,3);assert.deepEqual(passes.matches.map(x=>x.event_ids),[['loss-2'],['loss-1'],['loss-0']]);assert.equal(out.patterns.some(x=>x.reason===''),false);assert.match(out.origin,/Contagem exata/);assert.deepEqual(f.orderCalls.slice(0,2),[['payload->>data',{ascending:false,nullsFirst:false}],['id',{ascending:true}]]);assert.equal(f.calls.length,0);});
+test('recurring patterns select by match date and explicitly mark a truncated match history',async()=>{const f=fixture(),ids=['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb','cccccccc-cccc-4ccc-8ccc-cccccccccccc','dddddddd-dddd-4ddd-8ddd-dddddddddddd'];f.rows.splice(0,1,...ids.map((id,i)=>({id,team_id:'team',kind:'match',updated_at:'edit-'+(4-i),deleted_at:null,payload:{data:['2026-09-01','2026-09-03','2026-09-04','2026-09-02'][i],adversario:'Jogo '+i,match_events:{events:[{id:'loss-'+i,type:'loss',at_ms:60000,reason:'pass',zone:'def_c'}]}}})));const out=await f.call('get_recurring_match_patterns',{limit:2});assert.equal(out.matches_examined,2);assert.equal(out.match_limit,2);assert.equal(out.additional_match_records_unexamined,true);assert.match(out.coverage,/Resultado parcial/);assert.deepEqual(out.patterns[0].matches.map(x=>x.opponent),['Jogo 2','Jogo 1']);assert.equal(out.patterns[0].event_count,2);assert.equal(f.calls.length,0);});
 test('cross-session evidence preserves source UUIDs and separates coach fields without writing',async()=>{const f=fixture(),trainingId='88888888-8888-4888-8888-888888888888';f.match.payload.data='2026-09-20';f.match.payload.post_game.analysis.fields={observations:'Vimos perda na saída',interpretation:'O apoio pode estar distante',hypotheses:'Confirmar em mais jogos',decisions:'Treinar apoio curto'};f.match.payload.match_events={events:[{id:'ev-1',type:'loss',at_ms:120000,reason:'pass',zone:'def_c',note:'Passe interceptado'}]};f.rows.push({id:trainingId,team_id:'team',kind:'training',updated_at:'t1',deleted_at:null,payload:{data:'2026-09-22',review:{},session:{review:{status:'done',continua:'Apoio após passe irregular',focus_outcome:'continues'},blocks:[{key:'b1',exercise_name:'Rondo',notes:[{id:'n1',text:'Apoio tardio'}]}]}}});const out=await api.executeMatchAnalysisTool(f.admin,c,'get_cross_session_evidence',{match_limit:10,training_limit:10});assert.equal(out.schema,'cross-session-evidence@1');assert.equal(out.source_records.matches,1);assert.equal(out.source_records.trainings,1);assert.equal(out.evidence.find(x=>x.field==='analysis.observations').evidence_type,'coach_observation');assert.equal(out.evidence.find(x=>x.field==='analysis.interpretation').evidence_type,'interpretation');assert.equal(out.evidence.find(x=>x.field==='analysis.hypotheses').evidence_type,'hypothesis');assert.equal(out.evidence.find(x=>x.field==='analysis.decisions').evidence_type,'coach_decision');assert.equal(out.evidence.find(x=>x.field==='review.continua').source_ref,trainingId);assert.equal(out.evidence.find(x=>x.field==='review.continua').quote,'Apoio após passe irregular');assert.equal(out.evidence.find(x=>x.field==='review.focus_outcome').evidence_type,'coach_evaluation');const event=out.evidence.find(x=>x.event_ref==='ev-1');assert.equal(event.evidence_type,'registered_fact');assert.equal(event.zone,'def_c');assert.equal(f.calls.length,0);});
 
 test('cross-session evidence omits a cause whose conceded-goal event was removed',async()=>{const f=fixture();f.match.payload.post_game.analysis.goals_conceded={'goal-removed':'Possível falta de cobertura'};f.match.payload.match_events={events:[{id:'goal-kept',type:'goal_against',at_ms:120000},{id:'goal-removed',type:'loss',at_ms:240000}]};const out=await api.executeMatchAnalysisTool(f.admin,c,'get_cross_session_evidence',{match_limit:10,training_limit:10});assert.equal(out.evidence.some(item=>item.field==='analysis.goals_conceded.goal-removed'),false);});
@@ -66,6 +71,221 @@ test('Jev relation judgment rereads exact current citations and never writes a p
     assert.equal(result.coach_review_required, true);
     assert.equal(result.writes_performed, false);
     assert.equal(f.calls.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDeno === undefined) delete globalThis.Deno;
+    else globalThis.Deno = originalDeno;
+  }
+});
+
+test('Jev receives athlete-name-redacted citations and claim from the authorized team roster', async () => {
+  const f = fixture(), trainingId = '88888888-8888-4888-8888-888888888888';
+  f.match.payload.adversario = 'Pedro United';
+  f.match.payload.post_game.analysis.fields = { observations: 'Pedro perdeu bola na saída.' };
+  f.rows.push({ id: trainingId, team_id: 'team', kind: 'training', updated_at: 't1', deleted_at: null,
+    payload: { review: { status: 'done', continua: 'Pedro ainda precisa de apoio após o passe.' } } });
+  f.rows.push({ id: '77777777-7777-4777-8777-777777777777', team_id: 'team', kind: 'player', updated_at: 'p1', deleted_at: null,
+    payload: { nome: 'Pedro Silva', plantel_ativo: true } });
+  const originalFetch = globalThis.fetch, originalDeno = globalThis.Deno;
+  let request;
+  globalThis.Deno = { env: { get: () => 'test-secret' } };
+  globalThis.fetch = async (_url, options) => {
+    request = JSON.parse(options.body);
+    return { ok: true, async json() { return { model: 'jev-test', answers: { support: { type: 'noul', noul: 0.81 } } }; } };
+  };
+  try {
+    const result = await api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_relation', {
+      claim: 'Pedro perdeu a bola e o treino trabalhou o apoio após o passe.',
+      match_ref: MATCH, match_field: 'analysis.observations', match_expected_updated_at: 'v0',
+      training_ref: trainingId, training_field: 'review.continua', training_expected_updated_at: 't1',
+    });
+    const sent = JSON.stringify(request.state);
+    assert.doesNotMatch(sent, /Pedro|Silva/);
+    assert.match(sent, /atleta/);
+    assert.equal(result.evidence[0].quote, 'Pedro perdeu bola na saída.', 'the authenticated MCP result retains the exact source citation');
+    assert.equal(request.state.match_evidence.quote, 'atleta perdeu bola na saída.');
+    assert.equal(request.state.training_evidence.quote, 'atleta ainda precisa de apoio após o passe.');
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDeno === undefined) delete globalThis.Deno;
+    else globalThis.Deno = originalDeno;
+  }
+});
+
+test('Jev relation judgment suppresses sensitive health claims or citations without echoing them', async () => {
+  const f = fixture(), trainingId = '88888888-8888-4888-8888-888888888888';
+  f.match.payload.post_game.analysis.fields = { observations: 'O atleta sofreu fratura e está em tratamento.' };
+  f.rows.push({ id: trainingId, team_id: 'team', kind: 'training', updated_at: 't1', deleted_at: null,
+    payload: { review: { status: 'done', continua: 'Apoio após passe' } } });
+  const originalFetch = globalThis.fetch, originalDeno = globalThis.Deno;
+  let calls = 0;
+  globalThis.Deno = { env: { get: () => 'test-secret' } };
+  globalThis.fetch = async () => { calls++; throw new Error('sensitive citation must not reach Jev'); };
+  try {
+    await assert.rejects(api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_relation', {
+      claim: 'Há um tema comum.', match_ref: MATCH, match_field: 'analysis.observations', match_expected_updated_at: 'v0',
+      training_ref: trainingId, training_field: 'review.continua', training_expected_updated_at: 't1',
+    }), /typesafe_sensitive_content_not_sent/);
+    assert.equal(calls, 0);
+    f.match.payload.post_game.analysis.fields.observations = 'Perda na construção';
+    await assert.rejects(api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_relation', {
+      claim: 'O jogador tem uma lesão e continuou a perder a bola.', match_ref: MATCH, match_field: 'analysis.observations', match_expected_updated_at: 'v0',
+      training_ref: trainingId, training_field: 'review.continua', training_expected_updated_at: 't1',
+    }), /typesafe_sensitive_content_not_sent/);
+    assert.equal(calls, 0);
+    f.match.payload.adversario = 'Atleta lesionado';
+    await assert.rejects(api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_relation', {
+      claim: 'Há um tema comum.', match_ref: MATCH, match_field: 'analysis.observations', match_expected_updated_at: 'v0',
+      training_ref: trainingId, training_field: 'review.continua', training_expected_updated_at: 't1',
+    }), /typesafe_sensitive_content_not_sent/);
+    await assert.rejects(api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_relation', {
+      claim: ' ', match_ref: MATCH, match_field: 'analysis.observations', match_expected_updated_at: 'v0',
+      training_ref: trainingId, training_field: 'review.continua', training_expected_updated_at: 't1',
+    }), /invalid_cross_session_claim/);
+    assert.equal(calls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDeno === undefined) delete globalThis.Deno;
+    else globalThis.Deno = originalDeno;
+  }
+});
+
+test('Jev relation judgment fails closed if the team roster cannot be read for name redaction', async () => {
+  const f = fixture(), trainingId = '88888888-8888-4888-8888-888888888888';
+  f.match.payload.post_game.analysis.fields = { observations: 'Perda na construção' };
+  f.rows.push({ id: trainingId, team_id: 'team', kind: 'training', updated_at: 't1', deleted_at: null,
+    payload: { review: { status: 'done', continua: 'Apoio após passe' } } });
+  const originalFrom = f.admin.from.bind(f.admin), originalFetch = globalThis.fetch, originalDeno = globalThis.Deno;
+  f.admin.from = (table) => {
+    const query = originalFrom(table), originalEq = query.eq.bind(query);
+    query.eq = (key, value) => {
+      if (key === 'kind' && value === 'player') throw new Error('roster unavailable');
+      return originalEq(key, value);
+    };
+    return query;
+  };
+  let calls = 0;
+  globalThis.Deno = { env: { get: () => 'test-secret' } };
+  globalThis.fetch = async () => { calls++; throw new Error('must fail before provider call'); };
+  try {
+    await assert.rejects(api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_relation', {
+      claim: 'Há um tema comum.', match_ref: MATCH, match_field: 'analysis.observations', match_expected_updated_at: 'v0',
+      training_ref: trainingId, training_field: 'review.continua', training_expected_updated_at: 't1',
+    }), /typesafe_privacy_metadata_unavailable/);
+    assert.equal(calls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDeno === undefined) delete globalThis.Deno;
+    else globalThis.Deno = originalDeno;
+  }
+});
+
+test('Jev can judge a recurring match relation against exact evidence from multiple games and training', async () => {
+  const f = fixture(), matchTwoId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', trainingId = '88888888-8888-4888-8888-888888888888';
+  f.match.payload.data = '2026-09-20';
+  f.match.payload.adversario = 'Rivais A';
+  f.match.payload.post_game.analysis.fields = { observations: 'Perda repetida na saída sob pressão.' };
+  const matchTwo = { id: matchTwoId, team_id: 'team', kind: 'match', updated_at: 'm2', deleted_at: null,
+    payload: { data: '2026-09-15', adversario: 'Rivais B', post_game: { analysis: { fields: { observations: 'Outra perda na construção sob pressão.' } } } } };
+  const training = { id: trainingId, team_id: 'team', kind: 'training', updated_at: 't1', deleted_at: null,
+    payload: { data: '2026-09-22', session: { status: 'completed', blocks: [{ key: 'b1', exercise_name: 'Tomás Pereira', notes: [{ id: 'note-1', text: 'Repetir apoio após passe.' }] }] }, review: { status: 'done', continua: 'O apoio após passe continua irregular.' } } };
+  f.rows.push(matchTwo, training, { id: '77777777-7777-4777-8777-777777777777', team_id: 'team', kind: 'player', updated_at: 'p1', deleted_at: null,
+    payload: { nome: 'Tomás Pereira', plantel_ativo: true } });
+  const originalFetch = globalThis.fetch, originalDeno = globalThis.Deno;
+  let request;
+  globalThis.Deno = { env: { get: () => 'test-secret' } };
+  globalThis.fetch = async (_url, options) => {
+    request = JSON.parse(options.body);
+    return { ok: true, async json() { return { model: 'jev-test', answers: { support: { type: 'noul', noul: 0.77 } } }; } };
+  };
+  try {
+    const result = await api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_pattern', {
+      claim: 'As perdas na construção sob pressão repetiram-se em dois jogos; o último treino avaliou o apoio após passe como irregular.',
+      match_sources: [
+        { ref: MATCH, field: 'analysis.observations', expected_updated_at: 'v0' },
+        { ref: matchTwoId, field: 'analysis.observations', expected_updated_at: 'm2' },
+      ],
+      training_sources: [{ ref: trainingId, field: 'review.continua', expected_updated_at: 't1' }],
+    });
+    assert.equal(request.model, 'jev-latest');
+    assert.equal(request.state.match_evidence.length, 2);
+    assert.equal(request.state.match_evidence[0].quote, 'Perda repetida na saída sob pressão.');
+    assert.equal(request.state.match_evidence[1].quote, 'Outra perda na construção sob pressão.');
+    assert.equal(request.state.training_evidence[0].quote, 'O apoio após passe continua irregular.');
+    assert.equal(request.state.training_evidence[0].session_status, 'completed');
+    assert.equal(request.state.training_evidence[0].review_status, 'done');
+    assert.equal(request.state.training_evidence[0].source_ref, undefined);
+    assert.equal(request.state.training_evidence[0].record_updated_at, undefined);
+    assert.doesNotMatch(JSON.stringify(request.state), /Tomás|Pereira/);
+    assert.equal(result.probability, 0.77);
+    assert.equal(result.distinct_match_count, 2);
+    assert.equal(result.training_record_count, 1);
+    assert.equal(result.evidence.length, 3);
+    assert.equal(result.coach_review_required, true);
+    assert.equal(result.writes_performed, false);
+    assert.equal(f.calls.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDeno === undefined) delete globalThis.Deno;
+    else globalThis.Deno = originalDeno;
+  }
+});
+
+test('multi-source Jev judgment checks and redacts free-text exercise labels before transmission', async () => {
+  const f = fixture(), matchTwoId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', trainingId = '88888888-8888-4888-8888-888888888888';
+  f.match.payload.post_game.analysis.fields = { observations: 'Perda na saída sob pressão' };
+  f.rows.push({ id: matchTwoId, team_id: 'team', kind: 'match', updated_at: 'm2', deleted_at: null,
+    payload: { post_game: { analysis: { fields: { observations: 'Outra perda na construção' } } } },
+  }, { id: trainingId, team_id: 'team', kind: 'training', updated_at: 't1', deleted_at: null,
+    payload: { session: { blocks: [{ key: 'b1', exercise_name: 'Tomás Pereira', notes: [{ id: 'note-1', text: 'Apoio irregular.' }] }] } } },
+  { id: '77777777-7777-4777-8777-777777777777', team_id: 'team', kind: 'player', updated_at: 'p1', deleted_at: null,
+    payload: { nome: 'Tomás Pereira', plantel_ativo: true } });
+  const originalFetch = globalThis.fetch, originalDeno = globalThis.Deno;
+  let request;
+  globalThis.Deno = { env: { get: () => 'test-secret' } };
+  globalThis.fetch = async (_url, options) => { request = JSON.parse(options.body); return { ok: true, async json() { return { answers: { support: { type: 'noul', noul: 0.6 } } }; } }; };
+  const args = { claim: 'O tema repete-se nos jogos e treino.', match_sources: [
+    { ref: MATCH, field: 'analysis.observations', expected_updated_at: 'v0' },
+    { ref: matchTwoId, field: 'analysis.observations', expected_updated_at: 'm2' },
+  ], training_sources: [{ ref: trainingId, field: 'session.note:note-1', expected_updated_at: 't1' }] };
+  try {
+    await api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_pattern', args);
+    assert.equal(request.state.training_evidence[0].label, 'Observação · atleta');
+    assert.doesNotMatch(JSON.stringify(request.state), /Tomás|Pereira|88888888-8888/);
+    const training = f.rows.find(row => row.id === trainingId);
+    training.payload.session.blocks[0].exercise_name = 'Alergia';
+    await assert.rejects(api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_pattern', args), /typesafe_sensitive_content_not_sent/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDeno === undefined) delete globalThis.Deno;
+    else globalThis.Deno = originalDeno;
+  }
+});
+
+test('multi-match Jev judgment requires distinct current sources within the authorized team', async () => {
+  const f = fixture(), matchTwoId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', trainingId = '88888888-8888-4888-8888-888888888888';
+  f.match.payload.post_game.analysis.fields = { observations: 'Perda na saída sob pressão' };
+  f.rows.push({ id: matchTwoId, team_id: 'team', kind: 'match', updated_at: 'm2', deleted_at: null,
+    payload: { post_game: { analysis: { fields: { observations: 'Outra perda na construção' } } } },
+  }, { id: trainingId, team_id: 'team', kind: 'training', updated_at: 't1', deleted_at: null,
+    payload: { review: { status: 'done', continua: 'Apoio após passe' } } });
+  const originalFetch = globalThis.fetch, originalDeno = globalThis.Deno;
+  let calls = 0;
+  globalThis.Deno = { env: { get: () => 'test-secret' } };
+  globalThis.fetch = async () => { calls++; return { ok: true, async json() { return { answers: { support: { type: 'noul', noul: 0.8 } } }; } }; };
+  const args = { claim: 'Tema comum.', match_sources: [
+    { ref: MATCH, field: 'analysis.observations', expected_updated_at: 'v0' },
+    { ref: matchTwoId, field: 'analysis.observations', expected_updated_at: 'm2' },
+  ], training_sources: [{ ref: trainingId, field: 'review.continua', expected_updated_at: 't1' }] };
+  try {
+    await assert.rejects(api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_pattern', { ...args, match_sources: [args.match_sources[0], args.match_sources[0]] }), /cross_session_matches_must_be_distinct/);
+    await assert.rejects(api.executeMatchAnalysisTool(f.admin, { ...c, team_id: 'other' }, 'evaluate_cross_session_pattern', args), /cross_session_source_not_found/);
+    await assert.rejects(api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_pattern', {
+      ...args, match_sources: [args.match_sources[0], { ...args.match_sources[1], expected_updated_at: 'stale' }],
+    }), /cross_session_evidence_source_changed/);
+    f.match.payload.post_game.analysis.fields.observations = 'Atleta sofreu fratura na construção.';
+    await assert.rejects(api.executeMatchAnalysisTool(f.admin, c, 'evaluate_cross_session_pattern', args), /typesafe_sensitive_content_not_sent/);
+    assert.equal(calls, 0);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalDeno === undefined) delete globalThis.Deno;

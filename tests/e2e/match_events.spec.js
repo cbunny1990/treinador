@@ -8,12 +8,22 @@ async function seed(page){await page.goto('/#/calendario');await page.waitForFun
 });}
 async function start(page){page.on('dialog',d=>d.accept());await page.evaluate(()=>{window._matchTime=Date.now();Date.now=()=>window._matchTime;});await page.getByRole('button',{name:'Iniciar jogo e contar minutos',exact:true}).click();await expect(page.getByRole('button',{name:'Pausar / intervalo',exact:true})).toBeVisible();}
 async function saved(page){await expect(page.locator('[data-event-feedback]')).toHaveText('Lance guardado neste dispositivo.');}
+test('clean match report refreshes remote events while unsaved analysis stays visible',async({page})=>{
+ await page.goto('/#/calendario');await page.waitForFunction(()=>typeof VisionMatchEvents!=='undefined'&&typeof go==='function');
+ const id=await page.evaluate(()=>{RemoteWorkspace.scheduleSync=()=>{};return DB.criar('jogos',{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:'2026-09-26',adversario:'Refresh remoto',estado:'concluido'});});
+ await page.evaluate(async id=>{go('#/equipa/jogo/'+id);await viewMatch(id);},id);const after=page.locator('#match-after');await expect(after).toContainText('Lances: não registados');
+ await page.evaluate(async id=>{await DB.modificar('jogos',id,row=>({...row,match_events:{schema:'vision-match-events@1',revision:1,events:[{id:crypto.randomUUID(),type:'goal_for',at_ms:60000}],possession:{kind:'unknown',value:null,updated_at:null}}}));window.dispatchEvent(new CustomEvent('visioncoach:sync-complete',{detail:{pulled:1,conflicts:[]}}));},id);
+ await expect(after).toContainText('1:00 · Golo a favor');await expect(after).toContainText('Lances registados: 1');
+ const draft=after.locator('[name="field_summary"]');await draft.fill('Leitura ainda não guardada');
+ await page.evaluate(async id=>{await DB.modificar('jogos',id,row=>({...row,match_events:{...row.match_events,revision:2,events:[...row.match_events.events,{id:crypto.randomUUID(),type:'goal_against',at_ms:120000}]}}));window.dispatchEvent(new CustomEvent('visioncoach:sync-complete',{detail:{pulled:1,conflicts:[]}}));},id);
+ await expect(draft).toHaveValue('Leitura ainda não guardada');await expect(page.locator('[data-sync-refresh-notice]')).toBeVisible();await expect(after).not.toContainText('02:00 · Golo sofrido');
+});
 test('events blocked before start, quick record, counted stats and result notice',async({page})=>{
  await page.setViewportSize({width:390,height:844});const f=await seed(page);const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await expect(page.locator('[data-match-events]')).toBeVisible();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
  await expect(page.locator('[data-match-events]')).not.toContainText('Resultado registado na ficha');
- await expect(page.getByText('Inicia primeiro a utilização e volta aqui',{exact:false})).toBeVisible();
+ await expect(page.getByText('Depois de o dares como terminado, podes registar lances',{exact:false})).toBeVisible();
  await page.evaluate(async id=>{await DB.modificar('jogos',id,row=>({...row,golos_favor:0,golos_contra:0}));await MatchVisualUI.view(id);},f.id);
  await start(page);const quick=page.locator('.match-event-quick');expect(await quick.evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(2);expect(await quick.locator('button').first().evaluate(el=>el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(48);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.evaluate(()=>window._matchTime+=420000);
  await page.getByRole('button',{name:'Perda de bola',exact:true}).click();
@@ -54,6 +64,23 @@ test('match without a saved event registry shows unknown statistics, not zeros',
  await page.evaluate(async id=>{await DB.modificar('jogos',id,row=>({...row,match_events:{schema:'vision-match-events@1',revision:0,events:[],possession:{kind:'unknown',value:null,updated_at:null}}}));await MatchVisualUI.view(id);},f.id);
  await expect(stats.locator('table')).toContainText('Golos a favor');
  await expect(stats.locator('tbody')).toContainText('0');
+});
+test('reason and zone breakdown rows show their counted provenance',async({page})=>{
+ const f=await seed(page);await start(page);
+ const form=page.locator('[data-event-form="record"]');
+ await page.evaluate(()=>window._matchTime+=60000);
+ await page.getByRole('button',{name:'Perda de bola',exact:true}).click();
+ await form.locator('[name="reason"]').selectOption('pass');await form.locator('[name="zone"]').selectOption('def_c');
+ await form.getByRole('button',{name:'Registar lance',exact:true}).click();await saved(page);
+ await page.evaluate(()=>window._matchTime+=60000);
+ await page.getByRole('button',{name:'Recuperação de bola',exact:true}).click();
+ await form.locator('[name="zone"]').selectOption('med_c');
+ await form.getByRole('button',{name:'Registar lance',exact:true}).click();await saved(page);
+ const table=page.locator('[data-match-events] table');
+ for(const label of ['Perdas por motivo','Perdas por zona','Recuperações por zona']){
+  const row=table.locator('tbody tr').filter({hasText:label});
+  await expect(row.locator('td')).toHaveCount(3);await expect(row.locator('td').nth(2)).toHaveText('contada');
+ }
 });
 test('offline recording, pause-gated edit and delete, possession provenance',async({page,context})=>{
  const f=await seed(page);await start(page);

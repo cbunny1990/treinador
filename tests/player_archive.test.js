@@ -12,3 +12,8 @@ test('player archive refuses unstable athlete identity and malformed objectives'
  assert.throws(()=>Archive.snapshot({nome:'Atleta',development_goals:{items:[]}},{teamId:team}),/UUID partilhado/);
  assert.throws(()=>Archive.snapshot({sync_id:playerRef,development_goals:{items:null}},{teamId:team}),/inválidos/);
 });
+test('player without development goals still has a stable historical archive without profile media',async()=>{
+ const archive=Archive.snapshot({sync_id:playerRef,nome:'Atleta sem objetivos',foto:'data:image/png;base64,PRIVATE',profile_media_ref:'private-media-uuid'} ,{teamId:team,archivedAt:'2026-09-25T12:00:00.000Z'});
+ assert.equal(archive.player.ref,playerRef);assert.deepEqual(archive.development_goals.items,[]);assert.doesNotMatch(JSON.stringify(archive),/data:image|private-media-uuid|profile_media_ref|"foto"/);
+ assert.deepEqual(Archive.state({type:'player_archive',body:JSON.stringify(archive)}),archive);
+});

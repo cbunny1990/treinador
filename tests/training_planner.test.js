@@ -58,6 +58,14 @@ test("normalização usa a avaliação da sessão quando a do plano está vazia,
   assert.equal(planPending.review.status, "pending");
 });
 
+test("estado visível do treino acompanha a sessão realizada, mesmo com plano ainda ready", () => {
+  assert.equal(TrainingPlanner.trainingStatus({ status: "ready" }), "Pronto");
+  assert.equal(TrainingPlanner.trainingStatus({ status: "ready", session: { status: "running" } }), "Em curso");
+  assert.equal(TrainingPlanner.trainingStatus({ status: "ready", session: { status: "paused" } }), "Em pausa");
+  assert.equal(TrainingPlanner.trainingStatus({ status: "ready", session: { status: "completed" } }), "Terminado");
+  assert.equal(TrainingPlanner.trainingStatus({ status: "draft", session: { status: "not_started" } }), "Por iniciar");
+});
+
 test("snapshot do exercício congela conteúdo e só guarda referência segura da imagem", () => {
   const exercise = {
     sync_id: "exercise-uuid",

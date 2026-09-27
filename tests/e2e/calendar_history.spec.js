@@ -56,3 +56,24 @@ test("agenda percorre o histórico sem materializar registos fora das seis seman
   expect(counts.treinos).toBe(2);
   expect(fixture.beyond > fixture.from).toBeTruthy();
 });
+
+test("calendário permite voltar a um treino guardado sem criar horários passados", async ({ page }) => {
+  await page.goto("/");
+  const fixture = await page.evaluate(async () => {
+    RemoteWorkspace.scheduleSync = () => {};
+    const day = new Date();
+    day.setUTCDate(day.getUTCDate() - 7);
+    const date = day.toISOString().slice(0, 10);
+    const weekday = new Date(date + "T12:00:00Z").getUTCDay();
+    await HeadCoachMemory.saveTeam({ horarios: { estruturado: { treinos: [{ dia_semana: weekday, inicio: "18:00", fim: "19:00" }] } } });
+    const id = await DB.criar("treinos", { team_id: DEFAULT_TEAM_ID, data: date, hora: "18:00", escalao: "sub-8", objetivo: "Treino anterior guardado" });
+    return { id, dateLabel: date.slice(8, 10) + "/" + date.slice(5, 7) + "/" + date.slice(0, 4) };
+  });
+  await page.goto("/#/calendario");
+  await expect(page.locator('.calendar-day a[href="' + '#/consulta/' + fixture.id + '"]')).toHaveCount(0);
+  await page.getByRole("link", { name: "6 semanas anteriores" }).click();
+  const day = page.locator(".calendar-day").filter({ hasText: fixture.dateLabel });
+  await expect(day.locator('a[href="#/consulta/' + fixture.id + '"]')).toBeVisible();
+  await expect(page.getByText("Treino previsto")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Ir para hoje" })).toBeVisible();
+});

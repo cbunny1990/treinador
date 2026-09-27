@@ -1,0 +1,23 @@
+{
+  "version": "5",
+  "specifiers": {
+    "jsr:@supabase/functions-js@*": "2.117.1"
+  },
+  "jsr": {
+    "@supabase/functions-js@2.117.1": {
+      "integrity": "48a2feec0c1217ac1762b73b91b75c3c9439625ca56d4a20257aa2abe5259c77"
+    }
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:@electric-sql/pglite-pgvector@^0.0.9",
+        "npm:@electric-sql/pglite@~0.5.8",
+        "npm:@playwright/test@^1.62.0",
+        "npm:@supabase/supabase-js@2.116.0",
+        "npm:esbuild@0.25.10",
+        "npm:tus-js-client@4.3.1"
+      ]
+    }
+  }
+}

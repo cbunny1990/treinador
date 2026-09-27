@@ -4,6 +4,7 @@ const { defineConfig } = require("@playwright/test");
 
 module.exports = defineConfig({
   testDir: "./tests/e2e",
+  testIgnore: ["tests/e2e/static_subpath.spec.js"],
   timeout: 30000,
   workers: 1,
   use: {

@@ -18,6 +18,8 @@
  const clone=x=>JSON.parse(JSON.stringify(x)),text=(x,n=300)=>String(x??'').trim().slice(0,n);
  const isUid=x=>typeof x==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(x);
  const MAX_MS=240*60000;
+ const postMatchWithoutClock=(match,usage)=>match?.estado==='concluido'&&!usage.started_at&&usage.status==='not_started';
+ const minuteLabel=value=>value==null?'Minuto não indicado':`${String(Math.floor(value/60000)).padStart(2,'0')}:${String(Math.floor(value/1000)%60).padStart(2,'0')}`;
  function state(match){
   const old=match?.match_events;if(old?.schema&&old.schema!==SCHEMA)throw new Error('Atualiza a app antes de abrir os lances deste jogo.');
   const s={schema:SCHEMA,revision:0,events:[],possession:{kind:'unknown',value:null,updated_at:null},...(old?clone(old):{})};
@@ -29,7 +31,8 @@
  }
  function validEvent(e){
   if(!e||typeof e.id!=='string'||!TYPES[e.type]||!text(e.id,100)||e.id.length>100)throw new Error('Acontecimento inválido.');
-  if(!Number.isFinite(e.at_ms)||e.at_ms<0||e.at_ms>MAX_MS)throw new Error('Minuto fora do intervalo possível.');
+  if(e.at_ms===null){if(e.recorded_post_match!==true)throw new Error('Minuto fora do intervalo possível.');}
+  else if(!Number.isFinite(e.at_ms)||e.at_ms<0||e.at_ms>MAX_MS)throw new Error('Minuto fora do intervalo possível.');
   if(e.reason&&!Object.hasOwn(LOSS_REASONS,e.reason))throw new Error('Motivo de perda desconhecido.');
   if(e.reason&&e.type!=='loss')throw new Error('Motivo só se aplica a perdas de bola.');
   if(e.zone&&!Object.hasOwn(ZONES,e.zone))throw new Error('Zona do campo desconhecida.');
@@ -41,15 +44,15 @@
   if(typeof e.note==='string'&&e.note.length===0)delete e.note;
   }
   function validateAgainstClock(usage,match,at_ms,now){
-  const M=root.VisionMatchVisual;if(usage.status==='running'||usage.status==='paused'){const total=M.replay(match,usage.status==='running'?now:undefined).total_ms;if(at_ms>total)throw new Error('O lance fica no futuro do cronómetro; usa o minuto real.');}
+  const M=root.VisionMatchVisual;if(at_ms>MAX_MS)throw new Error('Minuto fora do intervalo possível.');if(['running','paused','completed'].includes(usage.status)){const total=M.replay(match,usage.status==='running'?now:undefined).total_ms;if(at_ms>total)throw new Error('O lance fica no futuro do cronómetro; usa o minuto real.');}
  }
  function normalized(command,s){
   const out={};
   for(const k of ['at_ms','player_ref','opponent_player_name','zone','reason','side']){
-   const value=command[k];
-   if(value!=null&&value!=='')out[k]=k==='at_ms'?Number(value):text(value,100);
+   if(!Object.hasOwn(command,k))continue;
+   const value=command[k];out[k]=value==null||value===''?null:k==='at_ms'?Number(value):text(value,100);
   }
-  out.note=command.note==null?'':text(command.note);
+  if(Object.hasOwn(command,'note'))out.note=command.note==null||command.note===''?null:text(command.note);
   if(!s)delete out.player_ref;
   return out;
  }
@@ -57,8 +60,9 @@
   const row=clone(match),s=state(row),M=root.VisionMatchVisual,at=Number.isFinite(Number(options.now))?Number(options.now):Date.now(),iso=new Date(at).toISOString(),actor=text(options.actor||'Treinador',160);
   const usage=M.state(row);
   if(command.expected_revision!==s.revision)throw new Error('Os lances mudaram noutro separador ou dispositivo. Atualiza antes de guardar.');
-  function live(){if(!['running','paused','completed'].includes(usage.status))throw new Error('Regista lances depois de iniciar o cronómetro do jogo.');}
-  function settled(){if(!['paused','completed'].includes(usage.status))throw new Error('Pausa ou termina o jogo antes de corrigir lances.');}
+  const retrospective=postMatchWithoutClock(row,usage);
+  function live(){if(!retrospective&&!['running','paused','completed'].includes(usage.status))throw new Error('Regista lances depois de iniciar o cronómetro do jogo ou de concluir o jogo sem cronómetro.');}
+  function settled(){if(!retrospective&&!['paused','completed'].includes(usage.status))throw new Error('Pausa ou termina o jogo antes de corrigir lances.');}
   function playerOk(ref){if(ref&&!((options.players||[]).some(p=>p.sync_id===ref)))throw new Error('Atleta não pertence a esta equipa. Usa o identificador estável.');}
   const type=command.type;
   if(type==='save_possession'){
@@ -70,9 +74,10 @@
   }else if(type==='record'){
    live();
    const base=normalized(command,s);
-   if(base.at_ms==null)base.at_ms=M.replay(row,at).total_ms;
-   validateAgainstClock(usage,row,base.at_ms,at);
-   const event={id:text(command.id,100),type:command.event_type,...base,created_at:iso,created_by:actor};
+   if(base.at_ms==null)base.at_ms=retrospective?null:M.replay(row,at).total_ms;
+   if(base.at_ms!==null)validateAgainstClock(usage,row,base.at_ms,at);
+   for(const key of Object.keys(base))if(base[key]===null&&key!=='at_ms')delete base[key];
+   const event={id:text(command.id,100),type:command.event_type,...base,...(retrospective?{recorded_post_match:true}:{}),created_at:iso,created_by:actor};
    if(!event.id||event.id.length>100)throw new Error('Identificador do lance em falta.');
    if(s.events.some(e=>e.id===event.id))throw new Error('Identificador de lance repetido.');
    if(command.event_type==='loss'&&!event.reason)event.reason='';
@@ -83,10 +88,10 @@
    settled();
    const event=s.events.find(e=>e.id===command.id);if(!event)throw new Error('Lance inexistente ou já apagado.');
    const base=normalized(command,s);
-    if(base.at_ms!=null)validateAgainstClock(usage,row,base.at_ms,at);else delete base.at_ms;
-   if(Object.hasOwn(base,'at_ms'))event.at_ms=base.at_ms;
-   for(const k of ['player_ref','opponent_player_name','zone','reason','side']){const value=base[k];if(value)event[k]=value;else delete event[k];}
-   if(base.note)event.note=base.note;else delete event.note;
+   if(base.at_ms!=null)validateAgainstClock(usage,row,base.at_ms,at);
+   if(Object.hasOwn(base,'at_ms')&&(base.at_ms!==null||retrospective))event.at_ms=base.at_ms;
+   for(const k of ['player_ref','opponent_player_name','zone','reason','side'])if(Object.hasOwn(base,k)){const value=base[k];if(value)event[k]=value;else delete event[k];}
+   if(Object.hasOwn(base,'note')){if(base.note)event.note=base.note;else delete event.note;}
    if(event.type==='loss'&&!Object.hasOwn(event,'reason'))event.reason='';
    Object.assign(event,{updated_at:iso,edited_by:actor});
    validEvent(event);playerOk(event.player_ref);
@@ -96,7 +101,7 @@
    s.events.splice(index,1);
   }else throw new Error('Operação de lances desconhecida.');
   s.revision++;s.updated_at=iso;
-  s.events.sort((a,b)=>a.at_ms-b.at_ms||String(a.id).localeCompare(String(b.id)));
+  s.events.sort((a,b)=>(a.at_ms??Infinity)-(b.at_ms??Infinity)||String(a.id).localeCompare(String(b.id)));
   row.match_events=s;return row;
  }
  function stats(match){
@@ -123,9 +128,9 @@
    through_balls:count('through_ball'),striker_foots:count('striker_foot'),
    free_notes:s.events.filter(e=>e.type==='note').length,
    possession:s.possession,
-   provenance:{counts:'contada',losses:'contada',recoveries:'contada',minutes:'registada',result:match?.golos_favor!=null&&match?.golos_contra!=null?'introduzida_manual':'desconhecida',possession:{measured:'medida',estimated:'estimada',unknown:'desconhecida'}}
+   provenance:{counts:'contada',losses:'contada',recoveries:'contada',minutes:match?.visual_match?.started_at?'registada':'desconhecida',result:match?.golos_favor!=null&&match?.golos_contra!=null?'introduzida_manual':'desconhecida',possession:{measured:'medida',estimated:'estimada',unknown:'desconhecida'}}
   };
  }
- root.VisionMatchEvents={schema:SCHEMA,types:TYPES,lossReasons:LOSS_REASONS,zones:ZONES,zoneFromPoint,sides:SIDES,possessionKinds:POSESSION_KINDS,sidedTypes:SIDED,state,apply,stats,sideOf:()=>null};
+ root.VisionMatchEvents={schema:SCHEMA,types:TYPES,lossReasons:LOSS_REASONS,zones:ZONES,zoneFromPoint,sides:SIDES,possessionKinds:POSESSION_KINDS,sidedTypes:SIDED,state,apply,stats,minuteLabel,postMatchWithoutClock,sideOf:()=>null};
  if(typeof module!=='undefined'&&module.exports)module.exports=root.VisionMatchEvents;
 })(globalThis);

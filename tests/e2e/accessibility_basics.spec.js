@@ -78,7 +78,17 @@ test("controlos principais têm nomes acessíveis e campos com rótulos", async 
     })));
 
     expect(unlabeled, `${routeName}: controlos sem nome acessível`).toEqual([]);
+    const oversizedChoices = await page.locator('input[type="checkbox"], input[type="radio"]').evaluateAll((elements) => elements
+      .filter((element) => element.getClientRects().length && element.getBoundingClientRect().width > 40)
+      .map((element) => ({ route: location.hash, name: element.name, width: Math.round(element.getBoundingClientRect().width) })));
+    expect(oversizedChoices, `${routeName}: checkbox/radio com largura de campo de texto`).toEqual([]);
   }
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/#/equipa/jogo/" + fixture.match);
+  const rosterCheck = page.locator('form[data-form="match-callup"] input[name="player_ids"]').first();
+  await rosterCheck.focus();
+  expect(await rosterCheck.evaluate((element) => getComputedStyle(element.nextElementSibling).outlineStyle)).toBe("solid");
 });
 
 test("teclado alcança os campos e a ação principal da ficha de jogador", async ({ page }) => {

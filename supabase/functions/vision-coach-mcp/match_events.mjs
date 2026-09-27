@@ -7,23 +7,24 @@ const selector={id:{type:'string',format:'uuid'},external_key:{type:'string'}};
 const choose={oneOf:[{required:['id'],not:{required:['external_key']}},{required:['external_key'],not:{required:['id']}}]};
 const revision={expected_updated_at:{type:'string'},expected_revision:{type:'integer',minimum:0}};
 function tool(name,description,properties,required,readOnly=false,destructive=false){return {name,description,inputSchema:{type:'object',properties:{...selector,...properties},required,additionalProperties:false,...choose},annotations:{readOnlyHint:readOnly,destructiveHint:destructive}};}
+const optionalText=options=>({anyOf:[{type:'string',...options},{type:'null'}]});
 const detailProperties={
  event_type:{type:'string',enum:Object.keys(E.types)},
  event_id:{type:'string',minLength:1,maxLength:100},
- zone:{type:'string',enum:Object.keys(E.zones)},
- player_ref:{type:'string'},
- opponent_player_name:{type:'string',minLength:1,maxLength:100},
- reason:{type:'string',enum:Object.keys(E.lossReasons)},
- side:{type:'string',enum:Object.keys(E.sides)},
- note:{type:'string',maxLength:300},
+ zone:optionalText({enum:Object.keys(E.zones)}),
+ player_ref:optionalText({format:'uuid'}),
+ opponent_player_name:optionalText({minLength:1,maxLength:100}),
+ reason:optionalText({enum:Object.keys(E.lossReasons)}),
+ side:optionalText({enum:Object.keys(E.sides)}),
+ note:optionalText({maxLength:300}),
  minute:{type:'number',minimum:0,maximum:240},
  confirmed:{type:'boolean',const:true}
 };
 const editableProperties={...detailProperties};delete editableProperties.event_type;delete editableProperties.event_id;delete editableProperties.confirmed;
 export const MATCH_EVENTS_TOOLS=[
  tool('get_match_events','Read match events, counted statistics and possession provenance. Read-only; never records events or infers counts.',{},[],true),
- tool('record_match_event','Record one explicitly confirmed match event described by the coach. Never records events the coach did not report. minute uses the match clock (0..240); omit it in running/paused usage to use the current clock.',{...detailProperties},['expected_updated_at','expected_revision','event_type','event_id','confirmed']),
- tool('update_match_event','Update an existing event. Allowed with usage paused or completed. Event type and fields left out keep the recorded value.',{...revision,...editableProperties,event_id:detailProperties.event_id,confirmed:detailProperties.confirmed},['expected_updated_at','expected_revision','event_id','confirmed']),
+ tool('record_match_event','Record one explicitly confirmed match event described by the coach. Never records events the coach did not report. During live usage, minute uses the match clock (0..240) and omission uses the current clock. For a completed match without clock, minute is optional and remains unknown if omitted; no player usage minutes are inferred.',{...detailProperties},['expected_updated_at','expected_revision','event_type','event_id','confirmed']),
+ tool('update_match_event','Update an existing event. Allowed with usage paused or completed. Event type and fields left out keep the recorded value; send null to explicitly clear an optional player, opponent name, zone, reason, side or note.',{...revision,...editableProperties,event_id:detailProperties.event_id,confirmed:detailProperties.confirmed},['expected_updated_at','expected_revision','event_id','confirmed']),
  tool('delete_match_event','Delete an explicitly confirmed event. Allowed with usage paused or completed.',{...revision,event_id:{type:'string',minLength:1,maxLength:100},confirmed:{type:'boolean',const:true}},['expected_updated_at','expected_revision','event_id','confirmed'],false,true),
  tool('save_match_possession','Store possession provenance: measured (counted by the coach), estimated, or unknown. Never presents an estimate as a measurement.',{...revision,kind:{type:'string',enum:['measured','estimated','unknown']},value:{type:'number',minimum:0,maximum:100},confirmed:{type:'boolean',const:true}},['expected_updated_at','expected_revision','kind','confirmed'])
 ];
@@ -56,8 +57,7 @@ export async function executeMatchEventsTool(admin,c,name,args){
   cmd={type:'edit',id:String(args.event_id).slice(0,100),confirmed:true};
   if(args.event_type!=null)throw new Error('event_type_is_immutable');
   if(args.minute!=null)cmd.at_ms=Math.round(Number(args.minute)*10)/10*60000;
-  for(const key of ['zone','player_ref','opponent_player_name','note','reason'])if(args[key]!=null)cmd[key]=args[key];
-  if(args.side!=null)cmd.side=args.side;
+  for(const key of ['zone','player_ref','opponent_player_name','note','reason','side'])if(Object.hasOwn(args,key))cmd[key]=args[key];
  }else if(name==='delete_match_event')cmd={type:'delete',id:String(args.event_id).slice(0,100),confirmed:args.confirmed};
  else if(name==='save_match_possession')cmd={type:'save_possession',kind:args.kind,value:args.value??null,confirmed:true};
  else throw new Error('unknown_match_events_tool');

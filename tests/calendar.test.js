@@ -90,6 +90,24 @@ test("calendário limita jogos e treinos registados ao horizonte pedido", () => 
   assert.deepEqual(rows.map((row) => row.id), [1, 3]);
 });
 
+test("intervalo histórico mantém treinos guardados sem criar horários recorrentes retroativos", () => {
+  const rows = VisionCalendar.events({
+    team: { horarios: { estruturado: { treinos: [
+      { dia_semana: 1, inicio: "18:00", fim: "19:00" },
+    ] } } },
+    trainings: [
+      { id: 31, data: "2026-09-14", hora: "18:00", escalao: "sub-8" },
+      { id: 32, data: "2026-09-15", hora: "18:00", escalao: "sub-8" },
+    ],
+    matches: [],
+  }, { from: "2026-09-14", weeks: 1, includePlanned: false });
+
+  assert.deepEqual(rows.map((row) => [row.type, row.id, row.date]), [
+    ["training", 31, "2026-09-14"],
+    ["training", 32, "2026-09-15"],
+  ]);
+});
+
 test("não oculta jogos distintos com a mesma data, hora e adversário", () => {
   const rows = VisionCalendar.events({
     matches: [

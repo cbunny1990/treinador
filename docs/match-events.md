@@ -6,14 +6,14 @@
 ## Registo de lances
 
 No telemóvel, os botões de registo rápido ficam em duas colunas com altura mínima de 48 px; em ecrãs largos ficam em quatro colunas. Escolher um tipo prepara o formulário com o minuto atual, mas o treinador confirma detalhes e grava explicitamente.
-O registo usa o minuto do **cronómetro do jogo**: só é possível registar lances depois de iniciar a utilização (jogo a correr, em pausa ou terminado). Toca no tipo de lance na grelha rápida — o formulário fica preenchido com o minuto atual — confirma atleta, zona, motivo e observação quando se aplicam, e guarda.
+Quando o cronómetro foi usado, o registo usa o minuto desse cronómetro. Depois de dar um jogo como terminado sem usar cronómetro, o treinador pode registar lances retrospetivos com minuto indicado por si ou deixá-lo como desconhecido. Nenhum minuto nem evento é inventado. Toca no tipo de lance, confirma os detalhes e guarda.
 
 Tipos: golo a favor, golo sofrido, remate à baliza, remate para fora, canto a favor, canto contra, recuperação de bola, perda de bola, bola em profundidade, bola no pé do avançado, acontecimento livre. O toque no botão “Registar lance” grava a ação explicitamente; não aparece uma confirmação adicional em cada lance.
 
 Cada lance pode guardar: minuto, atleta da nossa equipa por UUID, nome escrito pelo treinador para um atleta adversário quando relevante, lado (remates e notas livres), zona do campo, motivo (apenas perdas) e observação. O nome adversário é texto manual ligado apenas ao lance; não cria um atleta no plantel nem pressupõe que a identidade foi reconhecida automaticamente. Motivos de perda: passe errado, receção, condução, decisão, pressão adversária, duelo, outro. Registar um lance nunca altera o resultado, o alinhamento nem os minutos.
 
 ## Correções
-Editar e apagar lances exige **pausa ou jogo terminado** — o mesmo critério das correções de utilização. Apagar pede confirmação e não pode ser recuperado depois da sincronização. Enquanto o jogo corre, o treinador acrescenta lances; correções cronológicas ficam para a pausa.
+Editar e apagar lances exige **pausa ou jogo terminado** — o mesmo critério das correções de utilização. Apagar pede confirmação e não pode ser recuperado depois da sincronização. Enquanto o jogo corre, o treinador acrescenta lances; correções cronológicas ficam para a pausa. Um jogo terminado sem cronómetro também permite corrigir os lances retrospetivos.
 
 ## Zonas do campo
 Modelo único partilhado: três terços (defesa, meio-campo, ataque) × três corredores (esquerda, centro, direita), definidos em `VisionMatchEvents.zones`. A função `zoneFromPoint` classifica também as coordenadas normalizadas dos marcadores no campo visual; as linhas do campo mostram as mesmas nove células e cada posição expõe a sua zona. A metade superior representa ataque (`ATACAR ↑`), e o cálculo é partilhado com a consulta MCP `get_match_visual`. O mesmo modelo serve perdas, recuperações, remates, golos e análises seguintes.
@@ -39,7 +39,8 @@ Cinco operações no servidor existente (mesma autenticação, `expected_updated
 O tipo de lance não muda em edições: para representar outra coisa, apaga-se e regista-se o correto. Um pedido de desenvolvimento da app não autoriza registar lances de um jogo real sem relato do treinador.
 
 ## Limites desta entrega
-Os atletas da nossa equipa usam UUID estável; adversários podem ser identificados manualmente pelo nome em cada lance, sem criar registos de plantel. A preparação pode guardar sistema, estilo, pontos fortes e vulnerabilidades observados do adversário. Vídeo/evidências, análise pós-jogo e exportação PDF estão documentados em `match-video-evidence.md`, `match-analysis.md` e `reports.md`. Jogos sem cronómetro iniciado não têm lances.
+Os atletas da nossa equipa usam UUID estável; adversários podem ser identificados manualmente pelo nome em cada lance, sem criar registos de plantel. A preparação pode guardar sistema, estilo, pontos fortes e vulnerabilidades observados do adversário. Vídeo/evidências, análise pós-jogo e exportação PDF estão documentados em `match-video-evidence.md`, `match-analysis.md` e `reports.md`.
 
 ## Verificação
 `npm run check`, `npm test` e `npx playwright test tests/e2e/match_events.spec.js`. A app passa para v69; imagens aprovadas e workflows anteriores permanecem intactos.
+Pela operação MCP `update_match_event`, campos omitidos preservam o valor registado; enviar `null` limpa explicitamente jogador, adversário, zona, motivo, lado ou nota. O minuto é alterado apenas quando enviado, e o tipo do lance continua imutável.

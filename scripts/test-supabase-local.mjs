@@ -60,7 +60,7 @@ if (!values.ANON_KEY || !values.SERVICE_ROLE_KEY) {
   process.exit(1);
 }
 
-const result = spawnSync(process.execPath, ["--test", "--test-concurrency=1", "tests/remote_workspace_supabase.local.test.js", "tests/realtime_supabase_local.test.js", "tests/team_knowledge_supabase_local.test.js"], {
+const result = spawnSync(process.execPath, ["--test", "--test-concurrency=1", "tests/remote_workspace_supabase.local.test.js", "tests/realtime_supabase_local.test.js", "tests/team_knowledge_supabase_local.test.js", "tests/match_analysis_supabase.local.test.js"], {
   cwd: root,
   stdio: "inherit",
   windowsHide: true,

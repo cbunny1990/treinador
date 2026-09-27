@@ -5,7 +5,7 @@ const { defineConfig } = require("@playwright/test");
 module.exports = defineConfig({
   testDir: "./tests/e2e",
   testMatch: "report_export.spec.js",
-  grep: /post-match PDF sheet fits a mobile viewport without horizontal scrolling/,
+  grep: /post-match PDF sheet fits a mobile viewport without horizontal scrolling|training report waits for the approved original image before printing/,
   timeout: 30000,
   workers: 1,
   use: {
