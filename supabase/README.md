@@ -4,7 +4,7 @@ A aplicação continua a funcionar offline com IndexedDB, mas o deployment ofici
 
 ## 1. Estado do projeto oficial
 
-O projeto Supabase de produção já existe e as migrations em `supabase/migrations/` foram aplicadas. Para criar outro ambiente do zero, aplicar as migrations pela ordem do nome do ficheiro.
+O projeto Supabase de produção está ativo. A CLI compara apenas timestamps; nove migrations foram aplicadas remotamente com versões atribuídas no momento da aplicação, enquanto os nove ficheiros locais mantinham os timestamps originais. Renumerei localmente esses ficheiros para refletir as versões registadas no remoto e preservei cada nome original como sufixo. A auditoria read-only `npm run audit:supabase-migrations` agora confirma que as 27 versões locais/remotas coincidem. Isto não aplica SQL nem altera o projeto; não executar `db push` sem rever primeiro as alterações e o branch. Para criar um ambiente do zero, aplicar todas as migrations pela ordem dos nomes atuais dos ficheiros.
 
 As migrations criam e protegem:
 - equipas e membros;

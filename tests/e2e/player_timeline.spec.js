@@ -35,15 +35,16 @@ test("ficha do atleta reúne participação e evolução numa cronologia com lig
     const memory = await HeadCoachMemory.create({
       team_id: DEFAULT_TEAM_ID, kind: "observation", title: "Observação cronológica", content: "Apoio após passe observado.", occurred_at: "2026-09-17",
       source: { type: "player", label: "Ficha do atleta", ref_type: "player", ref_id: refs[0] },
-      subject_refs: [{ type: "player", id: String(playerId), relation: "about" }],
+      subject_refs: [{ type: "player", id: refs[0], relation: "about" }],
     });
+    const savedMemory = await HeadCoachMemory.get(memory);
     let player = await DB.obter("jogadores", playerId);
     const goalId = crypto.randomUUID();
     const training = await DB.obter("treinos", trainingId), matchRow = await DB.obter("jogos", matchId), exercise = await DB.obter("exercicios", exerciseId);
     player = PlayerGoals.apply(player, { type: "save", expected_revision: 0, goal: { id: goalId, title: "Apoio depois do passe", started_at: "2026-09-10", status: "active", evidence_refs: [{ type: "training", id: training.sync_id }], exercise_refs: [exercise.sync_id], notes: "Criar apoio próximo." } }, { now: "2026-09-10T12:00:00.000Z" });
     player = PlayerGoals.apply(player, { type: "save", expected_revision: 1, goal: { id: goalId, title: "Apoio depois do passe", started_at: "2026-09-10", status: "improved", evidence_refs: [{ type: "match", id: matchRow.sync_id }], exercise_refs: [exercise.sync_id], notes: "O apoio foi observado no jogo." } }, { now: "2026-09-19T12:00:00.000Z" });
     await DB.atualizar("jogadores", player);
-    return { playerId, matchId, trainingId, memoryId: memory.id, goalId };
+    return { playerId, matchId, trainingId, memoryId: savedMemory.sync_id, goalId };
   });
 
   await page.evaluate(async id => { go("#/equipa/jogador/" + id); await router(); }, fixture.playerId);
@@ -52,6 +53,8 @@ test("ficha do atleta reúne participação e evolução numa cronologia com lig
   await expect(timeline.getByRole("heading", { name: "Histórico cronológico" })).toBeVisible();
   await expect(timeline).toContainText("Estado atual · Apoio depois do passe");
   await expect(timeline).toContainText("Observação cronológica");
+  await expect(page.locator("#app")).toContainText("Observação cronológica");
+  await expect(page.locator('#player-goals input[name="evidence_refs"][value="observation:' + fixture.memoryId + '"]')).toHaveCount(1);
   await expect(timeline).toContainText("Presença: Presente");
   await expect(timeline).toContainText("Jogo · Jogo cronológico");
   await expect(timeline).toContainText("Evidência ligada · Treino · Apoio após passe");

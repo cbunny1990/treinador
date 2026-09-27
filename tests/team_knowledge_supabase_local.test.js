@@ -67,7 +67,7 @@ test("RAG real no Supabase mantém indexação, consultas e referências isolada
         payload: {
           data: "2026-09-20", estado: "concluido", adversario: `Adversário ${team.label}`,
           post_game: { analysis: { fields: {
-            problems: `Equipa ${team.label}: pressão alta na construção e perda de bola no corredor central.`,
+            problems: `Equipa ${team.label}: pressão alta na construção e perda de bola no corredor central${team.label === "A" ? "; RAG Removido Teste atrasou o apoio" : ""}.`,
             observations: team.label === "A" ? "The player has hypertension and should avoid intense exercise." : "",
           } } },
           match_events: team.label === "A" ? {
@@ -81,6 +81,14 @@ test("RAG real no Supabase mantém indexação, consultas e referências isolada
       assert.ifError(saved.error);
       sources.push({ team, sourceId });
     }
+    const archivedIdentity = await admin.from("workspace_records").insert({
+      id: uuid(), team_id: teamRows[0].id, kind: "document", actor_type: "system",
+      payload: { type: "player_archive", title: "Arquivo histórico", body: JSON.stringify({
+        schema: "vision-player-archive@1", player: { ref: uuid(), name: "RAG Removido Teste", number: 8, age_group: "Sub-8" },
+        development_goals: { items: [] },
+      }) },
+    });
+    assert.ifError(archivedIdentity.error);
     const secondMatchId = uuid();
     const secondMatch = await admin.from("workspace_records").insert({
       id: secondMatchId, team_id: teamRows[0].id, kind: "match", actor_type: "human",
@@ -108,7 +116,7 @@ test("RAG real no Supabase mantém indexação, consultas e referências isolada
           ok: true,
           status: 200,
           async json() {
-            return { data: body.input.map(() => ({ embedding: [1, ...Array(1535).fill(0)] })) };
+            return { data: body.input.map((_, index) => ({ index, embedding: [1, ...Array(1535).fill(0)] })) };
           },
         };
       },
@@ -126,6 +134,13 @@ test("RAG real no Supabase mantém indexação, consultas e referências isolada
       assert.ok(output.results.every((item) => expectedRefs.includes(item.source.ref)));
       assert.ok(output.results.every((item) => item.metadata.age_group === (i === 0 ? "Sub-8" : "Sub-10")));
     }
+
+    const archivedNameQuery = await executeTeamKnowledgeTool(admin, connectors[0], "search_team_knowledge", {
+      query: "O que aconteceu com RAG Removido Teste?", source_kinds: ["match"], limit: 8,
+    }, { provider });
+    assert.doesNotMatch(archivedNameQuery.query, /RAG Removido Teste/i);
+    assert.doesNotMatch(providerInputs.join("\n"), /RAG Removido Teste/i, "nem texto retido nem a pergunta podem enviar o nome arquivado ao provider");
+    assert.ok(archivedNameQuery.results.some((item) => item.excerpt.includes("atleta atrasou o apoio")));
 
     const multiMatch = await executeTeamKnowledgeTool(admin, connectors[0], "search_team_knowledge", {
       query: "pressão alta construção", source_kinds: ["match"],
@@ -149,7 +164,7 @@ test("RAG real no Supabase mantém indexação, consultas e referências isolada
 
     const ownChunks = providerInputs.filter((input) => input.includes("Problemas identificados: Equipa"));
     assert.deepEqual(ownChunks.sort(), [
-      "Problemas identificados: Equipa A: pressão alta na construção e perda de bola no corredor central.",
+      "Problemas identificados: Equipa A: pressão alta na construção e perda de bola no corredor central; atleta atrasou o apoio.",
       "Problemas identificados: Equipa B: pressão alta na construção e perda de bola no corredor central.",
       "Problemas identificados: Equipa A: pressão alta na construção e perda de bola no corredor central voltou a surgir.",
     ].sort());

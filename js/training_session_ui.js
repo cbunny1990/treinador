@@ -31,15 +31,17 @@
   async function view(id){
     const turn=++generation,raw=await DB.obter('treinos',id);
     if(!raw){root.VisionAppReloadGuard?.setSession('training',id,false);state=null;return setView('Treino indisponível','<div class="notice">Este treino foi apagado ou não está neste dispositivo.</div>','Treino');}
+    root.VisionAppReloadGuard?.setSession('training',id,['running','paused'].includes(M.normalize(raw.session).status));
     const rosterRows=await players(),all=await tuExercises();
     if(turn!==generation||!location.hash.startsWith('#/sessao/'))return;
     state=raw;const t=TrainingPlanner.normalizeTraining(raw),s=M.normalize(raw.session),sum=M.summary(s),roster=M.roster(rosterRows,s),mine=owns(s);
-    root.VisionAppReloadGuard?.setSession('training',id,['running','paused'].includes(s.status));
     const b=s.blocks[s.active_index],exercise=b?tuExerciseByRef(all,b.exercise_ref):null;
     const statusText=!navigator.onLine?'Guardado neste dispositivo · envio pendente até regressar a Internet':raw.sync_dirty?'Guardado neste dispositivo · sincronização pendente':'Sem alterações locais pendentes';
     let html='<div data-training-session="'+id+'"><section class="panel hero-main"><div class="kicker">'+fmtDate(t.data)+' · '+e(t.hora||'')+'</div><h2>Treino em campo</h2><p class="lead">'+e(t.objetivo)+'</p><div class="toolbar section"><span class="badge '+(s.status==='running'?'ready':'')+'">'+M.states[s.status]+'</span><a class="btn secondary" href="#/consulta/'+id+'">Consultar exercícios</a><a class="btn secondary" href="#/treinos/'+id+'">Ficha do treino</a></div><p class="hint" data-session-sync>'+statusText+'</p><p class="notice" data-session-feedback role="status" hidden></p><div class="notice" data-session-remote hidden>Existem alterações recebidas. Guarda ou copia as notas antes de atualizar. '+button('refresh','Atualizar sessão')+'</div></section>';
     html+=attendanceHTML(roster,s);
-    if(s.status==='not_started'){
+    if(s.status==='not_started'&&t.status==='completed'){
+      html+='<section class="panel hero-main section"><h3>Treino registado sem cronómetro</h3><p class="hint">A realização foi confirmada na ficha. Não foram atribuídos minutos ou exercícios concluídos. Podes registar presenças reais acima e preencher a avaliação na ficha.</p></section>';
+    }else if(s.status==='not_started'){
       html+='<section class="panel hero-main section"><h3>Pronto para começar</h3><p class="lead">'+t.blocos.length+' exercícios · '+t.duracao_min+' min previstos. Iniciar não altera o planeamento.</p>'+button('start','Iniciar treino',!t.blocos.length)+'</section>';
     }else if(s.status!=='completed'){
       html+='<section class="panel hero-main section session-active"><div class="kicker">Exercício '+(s.active_index+1)+' de '+s.blocks.length+'</div><h2>'+e(b?.exercise_name)+'</h2><div class="session-clock" data-session-clock aria-label="Tempo do exercício">'+M.format(b?.elapsed_ms)+'</div><p>'+e(b?.planned_min)+' min previstos · total ativo <strong data-session-total>'+M.format(sum.actual_ms)+'</strong></p><p class="notice" data-session-over hidden>Tempo previsto ultrapassado. Decide quando passar ao exercício seguinte.</p><div class="toolbar section">';

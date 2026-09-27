@@ -1,6 +1,6 @@
 // Camada de dados offline (IndexedDB). Sem servidor: tudo vive no telemóvel.
 const DB_NOME = "treinador";
-const DB_VERSAO = 15;
+const DB_VERSAO = 16;
 const DEFAULT_TEAM_ID = "default";
 const STORES = [
   "jogadores", "exercicios", "treinos", "treino_itens", "presencas", "avaliacoes", "jogos",
@@ -96,6 +96,9 @@ function abrirDB() {
         memoryItems.createIndex("team_kind", ["team_id", "kind"], { unique: false });
         memoryItems.createIndex("external_key", "external_key", { unique: false });
       } else memoryItems = e.target.transaction.objectStore("memory_items");
+      if ((e.newVersion || DB_VERSAO) >= 16 && !memoryItems.indexNames.contains("sync_id")) {
+        memoryItems.createIndex("sync_id", "sync_id", { unique: false });
+      }
 
       if (!db.objectStoreNames.contains("head_coach_conversations")) {
         const conversations = db.createObjectStore("head_coach_conversations", { keyPath: "id", autoIncrement: true });
@@ -154,6 +157,8 @@ function abrirDB() {
         if (nome === "workspace_documents" && !os.indexNames.contains("team_timeline_status")) {
           os.createIndex("team_timeline_status", ["team_id", "operational_timeline_status", "operational_timeline_date"], { unique: false });
         }
+        // A v15 já normalizou estes campos. A v16 só acrescenta o índice UUID da memória.
+        if (e.oldVersion >= 15) continue;
         os.openCursor().onsuccess = (ev) => {
           const cursor = ev.target.result;
           if (!cursor) return;
@@ -195,6 +200,9 @@ function _visibleInSelectedRemoteWorkspace(row) {
   const selected = _selectedRemoteTeamId();
   return !selected || !row?.remote_team_id || row.remote_team_id === selected;
 }
+function _visibleMatchTeam(store, row) {
+  return store !== "jogos" || !row || row.team_id === DEFAULT_TEAM_ID;
+}
 function _prepareSyncRecord(store, obj, options = {}) {
   const indexed = _operationalIndexFields(store, obj);
   if (!SYNCABLE_STORES.has(store) || options.remote) return indexed;
@@ -232,7 +240,7 @@ const DB = {
   async obter(store, id) {
     const os = await _tx(store, "readonly");
     const row = await _prom(os.get(store === "teams" ? String(id) : Number(id)));
-    return store === "teams" || _visibleInSelectedRemoteWorkspace(row) ? row : undefined;
+    return store === "teams" || (_visibleInSelectedRemoteWorkspace(row) && _visibleMatchTeam(store, row)) ? row : undefined;
   },
   async criar(store, obj, options = {}) {
     const os = await _tx(store, "readwrite");
@@ -282,6 +290,7 @@ const DB = {
         try{
           if(!req.result) throw new Error("O registo foi apagado ou já não existe.");
           if(store!=="teams"&&!options.remote&&!_visibleInSelectedRemoteWorkspace(req.result)) throw new Error("O registo pertence a outro workspace remoto.");
+          if(!options.remote&&!_visibleMatchTeam(store,req.result)) throw new Error("O jogo pertence a outra equipa.");
           result=_prepareSyncRecord(store,transform(req.result),options);
           if(!result||result.id!==req.result.id||result.then) throw new Error("Alteração local inválida.");
           os.put(result);
@@ -311,6 +320,11 @@ const DB = {
           }
           if (anterior && store !== "teams" && !options.remote && !_visibleInSelectedRemoteWorkspace(anterior)) {
             failure = new Error("O registo pertence a outro workspace remoto.");
+            tx.abort();
+            return;
+          }
+          if (anterior && !options.remote && !_visibleMatchTeam(store, anterior)) {
+            failure = new Error("O jogo pertence a outra equipa.");
             tx.abort();
             return;
           }

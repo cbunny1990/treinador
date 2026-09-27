@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const port = Number(process.env.VISION_TEST_PORT || 18765);
+const basePath = String(process.env.VISION_TEST_BASE_PATH || "").replace(/\/+$/, "");
+if (basePath && (!basePath.startsWith("/") || basePath.includes(".."))) throw new Error("VISION_TEST_BASE_PATH must be a safe absolute URL path");
 const contentTypes = new Map([
   [".css", "text/css; charset=utf-8"],
   [".html", "text/html; charset=utf-8"],
@@ -32,6 +34,13 @@ const server = http.createServer(async (request, response) => {
   } catch (_) {
     response.writeHead(400).end("Bad request");
     return;
+  }
+  if (basePath) {
+    if (pathname !== basePath && !pathname.startsWith(basePath + "/")) {
+      response.writeHead(404).end("Not found");
+      return;
+    }
+    pathname = pathname.slice(basePath.length) || "/";
   }
   const relative = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const file = path.resolve(root, relative);

@@ -8,17 +8,18 @@ Abrir a ficha do treino pelo Planeador ou pelo fim da Consulta do treino. No mod
 1. **Guardar avaliação**: o que melhorou, o que continua por corrigir, conclusão e próxima ação. É necessário pelo menos um campo com conteúdo.
 2. A avaliação atualiza **um único registo de memória** desse treino. Editar não cria cópias em cada clique ou dispositivo.
 3. Abrir **Avaliação → próximo treino**. São mostradas as citações exatas da avaliação e das observações dos blocos, com data e origem.
-4. **Gerar proposta de continuidade**: o rascunho usa a próxima ação registada; na sua ausência, o que continua por corrigir. Os exercícios iniciais são os do plano anterior que ainda estão disponíveis na biblioteca.
+4. **Preparar continuidade**: no fluxo local, o rascunho usa a próxima ação registada ou o que continua por corrigir e os exercícios do plano anterior que ainda estão disponíveis. Pelo Head Coach/MCP, indicar também a data exata do próximo treino acrescenta contexto híbrido: até cinco jogos anteriores, até três treinos concluídos, uso registado de exercícios, escalão, modelo de jogo, disponibilidade e excertos semânticos citados. Os dados em falta e o estado da pesquisa ficam visíveis; nada é inferido a partir da ausência.
 5. Ajustar foco, justificação, critério observável de melhoria, data, hora, exercícios e tempos. **Guardar ajustes da proposta** antes de aprovar.
 6. **Aprovar e criar treino** pede confirmação. Gerar, consultar ou editar a proposta NÃO cria um treino.
 7. O novo treino mantém a ligação à sessão anterior e as evidências usadas na decisão. Não copia presenças, tempos realizados nem avaliação.
 8. Na avaliação seguinte, assinalar **Por avaliar, Melhorou, Continua por corrigir ou Sem conclusão**. A origem acompanha proposta → treino criado → realizado → avaliado.
 
 ## O que é automático e o que não é
-O rascunho inicial é um **modelo local baseado nos registos**, identificado como tal. Não é uma chamada a um modelo de IA nem análise automática dos vídeos, do adversário ou da época inteira.
+O rascunho local inicial é um **modelo baseado nos registos**, identificado como tal. A preparação do Head Coach/MCP pode anexar contexto híbrido atual e citado para a data indicada; essa recolha é contexto para interpretação, não uma aprovação nem uma conclusão gerada automaticamente.
 Não inventa problemas, métricas ou melhorias. O critério de avaliação começa vazio, para ser definido pelo treinador ou proposto pela IA autorizada.
 O Head Coach externo pode consultar as evidências e rever o rascunho pelo MCP. Essa revisão fica marcada como **Proposta da IA autorizada**; as evidências permanecem as do registo de origem.
-Esta fase usa a avaliação e notas da sessão de origem. Tendências automáticas entre vários jogos/treinos e adaptação ao plantel disponível ficam para aprofundamento posterior.
+O contexto híbrido preserva referências e datas dos jogos, treinos e excertos usados. O treinador ou Head Coach autorizado ainda tem de editar e justificar a proposta; a app não declara que um princípio melhorou só porque foi trabalhado.
+Um treino passado confirmado pelo treinador sem cronómetro conta como realizado para a etapa de avaliação, mas não como prova de minutos, presenças ou exercícios executados. O uso de exercícios só deriva de blocos efetivamente registados como realizados.
 Não cria exercícios ou imagens, não inicia cronómetros e não marca presenças.
 
 ## Preservação, edição e remoção
@@ -47,12 +48,12 @@ Escritas exigem `read` + `write`, `expected_updated_at` e `expected_revision` at
 - `get_training_continuity`: leitura, sem criar propostas.
 - `save_training_review`: campos fornecidos pelo treinador; requer `confirmed: true`, mantém campos não enviados e atualiza a memória ligada.
 - `clear_training_review`: remover a avaliação com confirmação explícita.
-- `prepare_training_continuity`: rascunho identificado como modelo local. Devolve um rascunho inalterado sem o substituir, salvo `replace_existing: true` explicitamente solicitado.
+- `prepare_training_continuity`: requer `target_date` exata e prepara um rascunho com contexto híbrido de leitura. Devolve um rascunho existente sem o substituir, salvo `replace_existing: true` explicitamente solicitado. Recuperar contexto não cria um treino.
 - `update_training_continuity`: revisão da IA, com foco, justificação, critério observável, data, hora e exercícios existentes.
 - `dismiss_training_continuity`: retirar rascunho com confirmação.
 - `approve_training_continuity`: apenas depois de o treinador aprovar o conteúdo apresentado, com `confirmed: true`.
 
-Exemplo: “Lê a avaliação de segunda, prepara a continuidade para quinta e mostra a proposta antes de criar o treino.” Depois da revisão: “Aprovo esta proposta. Cria o treino.”
+Exemplo: “Lê a avaliação de segunda, resolve a data exata do treino de quinta, prepara a continuidade com esse contexto e mostra fontes e dados em falta.” Depois de rever/editar a proposta: “Aprovo esta proposta. Cria o treino.”
 Um pedido de desenvolvimento da app não autoriza aprovar uma sessão real. Nunca assinalar melhoria por inferência.
 O guia de imagens continua em `docs/ai-image-workflow.md`; originais e carregamento não são alterados por esta fase.
 

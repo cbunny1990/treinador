@@ -58,6 +58,21 @@ test("normalização usa a avaliação da sessão quando a do plano está vazia,
   assert.equal(planPending.review.status, "pending");
 });
 
+test("estado visível do treino acompanha a sessão realizada, mesmo com plano ainda ready", () => {
+  assert.equal(TrainingPlanner.trainingStatus({ status: "ready" }), "Pronto");
+  assert.equal(TrainingPlanner.trainingStatus({ status: "ready", session: { status: "running" } }), "Em curso");
+  assert.equal(TrainingPlanner.trainingStatus({ status: "ready", session: { status: "paused" } }), "Em pausa");
+  assert.equal(TrainingPlanner.trainingStatus({ status: "ready", session: { status: "completed" } }), "Terminado");
+  assert.equal(TrainingPlanner.trainingStatus({ status: "draft", session: { status: "not_started" } }), "Por iniciar");
+  assert.equal(TrainingPlanner.trainingStatus({ data: "2026-09-20", status: "ready" }, "2026-09-27"), "Plano passado");
+  assert.equal(TrainingPlanner.trainingStatus({ data: "2026-09-20", status: "ready", session: { status: "not_started" } }, "2026-09-27"), "Plano passado");
+  assert.equal(TrainingPlanner.trainingStatus({ data: "2026-09-20", status: "ready", session: { status: "completed" } }, "2026-09-27"), "Terminado");
+  assert.equal(TrainingPlanner.trainingStatus({ data: "2026-09-28", status: "ready" }, "2026-09-27"), "Pronto");
+  assert.equal(TrainingPlanner.trainingStatus({ data: "2026-09-20", status: "completed", manual_completion: { status: "confirmed" } }, "2026-09-27"), "Realizado sem cronómetro");
+  assert.equal(TrainingPlanner.trainingStatus({ data: "2026-09-20", status: "completed" }, "2026-09-27"), "Realização registada");
+  assert.equal(TrainingPlanner.localDate(new Date(2026, 8, 27, 12)), "2026-09-27");
+});
+
 test("snapshot do exercício congela conteúdo e só guarda referência segura da imagem", () => {
   const exercise = {
     sync_id: "exercise-uuid",

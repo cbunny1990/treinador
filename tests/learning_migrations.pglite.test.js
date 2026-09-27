@@ -17,10 +17,13 @@ async function withDb(fn) {
       create function auth.role() returns text language sql stable as
         $$ select current_setting('request.jwt.claim.role', true) $$;
       select set_config('request.jwt.claim.role','service_role',false);`);
-    const migration = path.join(__dirname, "..", "supabase", "migrations", "20260926120000_learning_tables.sql");
-    if (fs.existsSync(migration)) await db.exec(fs.readFileSync(migration, "utf8"));
-    const seasonMigration = path.join(__dirname, "..", "supabase", "migrations", "20260927100000_learning_season_plan.sql");
+    const migration = path.join(__dirname, "..", "supabase", "migrations", "20260926223649_learning_tables.sql");
+    assert.ok(fs.existsSync(migration), "migração learning_tables tem de existir com a versão remota");
+    await db.exec(fs.readFileSync(migration, "utf8"));
+    const seasonMigration = path.join(__dirname, "..", "supabase", "migrations", "20260926233609_learning_season_plan.sql");
     if (fs.existsSync(seasonMigration)) await db.exec(fs.readFileSync(seasonMigration, "utf8"));
+    const ownerLinksMigration = path.join(__dirname, "..", "supabase", "migrations", "20260927013751_learning_plan_owner_links.sql");
+    if (fs.existsSync(ownerLinksMigration)) await db.exec(fs.readFileSync(ownerLinksMigration, "utf8"));
     await fn(db);
   } finally { await db.close(); }
 }
@@ -84,4 +87,25 @@ test("plano: semanas únicas, cascade e RLS", async () => withDb(async db => {
   await asUser(db, A);
   await db.query("delete from public.learning_season_plans where id=$1", [p]);
   assert.equal((await db.query("select * from public.learning_plan_weeks")).rows.length, 0);
+}));
+
+test("semanas não associam planos ou treinos de outro dono", async () => withDb(async db => {
+  const mod = (await db.query("select id from public.learning_modules where slug='treinos-exemplo'")).rows[0].id;
+  const makePlan = "insert into public.learning_season_plans(age_group_code,season_label,title,start_date,end_date,status) values('sub8','2026/27','Época','2026-09-07','2027-07-30','aprovado') returning id";
+  const makeSession = "insert into public.learning_sessions(module_id,title,objective,status) values($1,'Treino','Objetivo','aprovado') returning id";
+  await asUser(db, A);
+  const planA = (await db.query(makePlan)).rows[0].id;
+  const sessionA = (await db.query(makeSession, [mod])).rows[0].id;
+  await db.query("reset role");
+  await asUser(db, B);
+  const planB = (await db.query(makePlan)).rows[0].id;
+  const sessionB = (await db.query(makeSession, [mod])).rows[0].id;
+  const makeWeek = "insert into public.learning_plan_weeks(plan_id,week_no,starts_on,block_no,block_title,objective,session_a_id,session_b_id) values($1,1,'2026-09-07',1,'Bloco','Foco',$2,$3) returning id";
+  await assert.rejects(() => db.query(makeWeek, [planA, sessionB, null]), /foreign key/i);
+  await assert.rejects(() => db.query(makeWeek, [planB, sessionA, null]), /foreign key/i);
+  await assert.rejects(() => db.query(makeWeek, [planB, sessionB, sessionA]), /foreign key/i);
+  const weekB = (await db.query(makeWeek, [planB, sessionB, null])).rows[0].id;
+  await assert.rejects(() => db.query("update public.learning_plan_weeks set plan_id=$1 where id=$2", [planA, weekB]), /foreign key/i);
+  await assert.rejects(() => db.query("update public.learning_plan_weeks set session_b_id=$1 where id=$2", [sessionA, weekB]), /foreign key/i);
+  assert.equal((await db.query("select count(*)::int n from public.learning_plan_weeks")).rows[0].n, 1);
 }));

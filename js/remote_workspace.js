@@ -2,6 +2,10 @@
 
 const REMOTE_CONFIG_KEY = "treinador.remote.supabase.v1";
 const REMOTE_TUS_THRESHOLD = 6 * 1024 * 1024;
+const REMOTE_SYNC_PAGE_SIZE = 500;
+const REMOTE_CONSOLIDATION_ID_BATCH = 100;
+const REMOTE_SYNC_OVERLAP_MS = 5 * 60 * 1000;
+const REMOTE_SYNC_FULL_REFRESH_MS = 24 * 60 * 60 * 1000;
 const REMOTE_DEFAULT_CONFIG = {
   url: "https://rsydvhbsxzdoprekefij.supabase.co",
   publishableKey: "sb_publishable_0DwyNhlIJijcAr3u3cG51w_3VP_2vmC",
@@ -63,6 +67,36 @@ function remoteSaveConfig(config) {
   localStorage.setItem(REMOTE_CONFIG_KEY, JSON.stringify(config || {}));
   return config;
 }
+function remoteCachedTeams(config, userId) {
+  if (!userId || config?.cachedRemoteTeamsUserId !== userId || config?.cachedRemoteTeamsUrl !== config?.url) return [];
+  return (Array.isArray(config.cachedRemoteTeams) ? config.cachedRemoteTeams : [])
+    .filter((team) => remoteIsUuid(team?.id))
+    .map((team) => ({
+      id: team.id,
+      name: remoteText(team.name, 160) || "Equipa sem nome",
+      metadata: team.metadata && typeof team.metadata === "object" && !Array.isArray(team.metadata) ? team.metadata : {},
+      updated_at: remoteText(team.updated_at, 80) || null,
+      cached: true,
+    }));
+}
+function remoteRememberTeams(teams, userId, config = remoteLoadConfig()) {
+  if (!userId) return;
+  const cachedRemoteTeams = (Array.isArray(teams) ? teams : [])
+    .filter((team) => remoteIsUuid(team?.id))
+    .map((team) => ({
+      id: team.id,
+      name: remoteText(team.name, 160) || "Equipa sem nome",
+      metadata: remotePayload(team.metadata && typeof team.metadata === "object" ? team.metadata : {}),
+      updated_at: remoteText(team.updated_at, 80) || null,
+    }));
+  remoteSaveConfig({
+    ...config,
+    cachedRemoteTeams,
+    cachedRemoteTeamsUserId: userId,
+    cachedRemoteTeamsUrl: config.url,
+    cachedRemoteTeamsAt: new Date().toISOString(),
+  });
+}
 function remoteConfigValid(config) {
   const url = remoteText(config?.url, 500);
   const key = remoteText(config?.publishableKey, 1000);
@@ -111,6 +145,58 @@ function remoteFreshLocalRecord(row) {
   return fresh;
 }
 
+async function remoteReadTeamRows(client, table, teamId, { since = null, timestampColumn = "updated_at" } = {}) {
+  const rows = [];
+  let afterId = null;
+  while (true) {
+    let query = client.from(table).select("*").eq("team_id", teamId);
+    if (since && typeof query.gte === "function") query = query.gte(timestampColumn, since);
+    const canPage = typeof query.gt === "function" && typeof query.order === "function" && typeof query.limit === "function";
+    if (canPage) {
+      if (afterId) query = query.gt("id", afterId);
+      query = query.order("id", { ascending: true }).limit(REMOTE_SYNC_PAGE_SIZE);
+    }
+    const result = await query;
+    if (result.error) throw result.error;
+    const page = Array.isArray(result.data) ? result.data : [];
+    if (!page.length) return rows;
+    rows.push(...page);
+    if (!canPage) return rows;
+    const nextId = page[page.length - 1]?.id;
+    if (nextId == null || String(nextId) === String(afterId || "")) {
+      throw new Error("A paginação da sincronização não avançou para o próximo registo.");
+    }
+    afterId = String(nextId);
+  }
+}
+
+async function remoteReadTeamIds(client, table, teamId, ids) {
+  const uniqueIds = [...new Set((Array.isArray(ids) ? ids : []).filter(remoteIsUuid))];
+  const found = new Set();
+  for (let start = 0; start < uniqueIds.length; start += REMOTE_CONSOLIDATION_ID_BATCH) {
+    const batch = uniqueIds.slice(start, start + REMOTE_CONSOLIDATION_ID_BATCH);
+    let afterId = null;
+    while (true) {
+      let query = client.from(table).select("id")
+        .eq("team_id", teamId).in("id", batch);
+      if (afterId) query = query.gt("id", afterId);
+      const { data, error } = await query.order("id", { ascending: true }).limit(REMOTE_CONSOLIDATION_ID_BATCH);
+      if (error) throw error;
+      const page = Array.isArray(data) ? data : [];
+      if (!page.length) break;
+      for (const row of page) {
+        if (remoteIsUuid(row?.id)) found.add(row.id);
+      }
+      const nextId = page[page.length - 1]?.id;
+      if (!remoteIsUuid(nextId) || (afterId && String(nextId) <= afterId)) {
+        throw new Error("A paginação dos IDs da consolidação não avançou para o próximo registo.");
+      }
+      afterId = String(nextId);
+    }
+  }
+  return found;
+}
+
 function remoteIdentityKey(kind, payload) {
   const externalKey = remoteText(payload?.external_key, 500).toLocaleLowerCase();
   return externalKey ? kind + "|" + externalKey : null;
@@ -157,14 +243,21 @@ function remoteConflictPreview(value) {
   const temporaryUrl = /\/storage\/v1\/object\/sign\/|[?&](?:token|access_token|signature|sig|x-amz-(?:signature|credential|security-token)|x-goog-(?:signature|credential|security-token))=/i;
   const clean = (item, key = "") => {
     if (privateKeys.test(key)) return undefined;
-    if (Array.isArray(item)) return item.slice(0, 100).map((entry) => clean(entry)).filter((entry) => entry !== undefined);
-    if (item && typeof item === "object") return Object.fromEntries(Object.entries(item)
-      .filter(([name]) => !privateKeys.test(name))
-      .slice(0, 150)
-      .map(([name, child]) => [name, clean(child, name)]));
+    if (Array.isArray(item)) {
+      const cleaned = item.slice(0, 100).map((entry) => clean(entry)).filter((entry) => entry !== undefined);
+      if (item.length > 100) cleaned.push(`[conteúdo omitido: mais ${item.length - 100} itens]`);
+      return cleaned;
+    }
+    if (item && typeof item === "object") {
+      const visible = Object.entries(item).filter(([name]) => !privateKeys.test(name));
+      const cleaned = Object.fromEntries(visible.slice(0, 150).map(([name, child]) => [name, clean(child, name)]));
+      if (visible.length > 150) cleaned["[conteúdo omitido]"] = `${visible.length - 150} campos`;
+      return cleaned;
+    }
     if (typeof item === "string" && /^data:/i.test(item)) return "[conteúdo local oculto]";
     if (typeof item === "string" && temporaryUrl.test(item)) return "[ligação temporária ocultada]";
-    return typeof item === "string" && item.length > 4000 ? item.slice(0, 4000) + "…" : item;
+    return typeof item === "string" && item.length > 4000
+      ? item.slice(0, 4000) + `… [conteúdo omitido: ${item.length - 4000} caracteres]` : item;
   };
   return clean(value);
 }
@@ -260,6 +353,11 @@ function remoteStoragePathBelongsToTeam(path, remoteTeamId) {
 }
 function remoteIsUniqueViolation(error) {
   return error?.code === "23505" || /duplicate key|unique constraint/i.test(error?.message || "");
+}
+function remoteLatestTimestamp(values) {
+  const valid = values.map((value) => String(value || "")).filter((value) => Number.isFinite(Date.parse(value)));
+  if (!valid.length) return null;
+  return valid.reduce((latest, value) => Date.parse(value) > Date.parse(latest) ? value : latest);
 }
 function remoteProjectRef(url) {
   try {
@@ -569,22 +667,44 @@ const RemoteWorkspace = {
     await this.stopRealtime();
     const client = await this.init();
     if (client) await client.auth.signOut();
+    const config = remoteLoadConfig();
+    delete config.cachedRemoteTeams;
+    delete config.cachedRemoteTeamsUserId;
+    delete config.cachedRemoteTeamsUrl;
+    delete config.cachedRemoteTeamsAt;
+    remoteSaveConfig(config);
   },
   async listTeams() {
-    const client = await this.init();
     const session = await this.getSession();
-    if (!client || !session) return [];
+    if (!session) return [];
+    const config = remoteLoadConfig();
+    if (!navigator.onLine) return remoteCachedTeams(config, session.user?.id);
+    const client = await this.init();
+    if (!client) return [];
     const { data, error } = await client.from("teams")
       .select("id,name,metadata,updated_at")
       .order("created_at", { ascending: true });
     if (error) throw error;
-    return data || [];
+    const teams = data || [];
+    remoteRememberTeams(teams, session.user?.id, config);
+    return teams;
   },
   async ensureSelectedTeam() {
     const session = await this.getSession();
     if (!session) return null;
-    const teams = await this.listTeams();
-    const config = remoteLoadConfig();
+    let config = remoteLoadConfig();
+    const knownTeams = remoteCachedTeams(config, session.user?.id);
+    // The selected team's current row is read through RLS in syncTeam; reuse
+    // this same-user/project list only to avoid fetching every team per sync.
+    const selectedKnownTeam = config.remoteTeamId
+      && knownTeams.some((team) => team.id === config.remoteTeamId);
+    const teams = !navigator.onLine || selectedKnownTeam
+      ? knownTeams
+      : await this.listTeams();
+    config = remoteLoadConfig();
+    if (!navigator.onLine) {
+      return teams.some((team) => team.id === config.remoteTeamId) ? config.remoteTeamId : null;
+    }
     const selected = remoteChooseTeamId(config.remoteTeamId, teams);
     if ((config.remoteTeamId || null) !== selected) {
       remoteSaveConfig({ ...config, remoteTeamId: selected });
@@ -606,7 +726,9 @@ const RemoteWorkspace = {
     }).select("id,name,metadata,updated_at").single();
     if (error) throw error;
     const config = remoteLoadConfig();
-    remoteSaveConfig({ ...config, remoteTeamId: data.id });
+    const sessionTeams = remoteCachedTeams(config, session.user?.id).filter((team) => team.id !== data.id);
+    remoteRememberTeams([...sessionTeams, data], session.user?.id, config);
+    remoteSaveConfig({ ...remoteLoadConfig(), remoteTeamId: data.id });
     await DB.atualizar("teams", {
       ...local,
       sync_id: data.id,
@@ -625,7 +747,46 @@ const RemoteWorkspace = {
       config = remoteLoadConfig();
     }
     if (config.remoteTeamId !== id) {
-      if (!navigator.onLine) throw new Error("Liga à Internet antes de trocar de workspace para separar os dados locais com segurança.");
+      if (!navigator.onLine) {
+        const session = await this.getSession();
+        const target = remoteCachedTeams(config, session?.user?.id).find((team) => team.id === id);
+        if (!target) throw new Error("Só podes abrir offline um workspace confirmado anteriormente nesta conta e neste projeto.");
+        const localTeam = await DB.obter("teams", DEFAULT_TEAM_ID);
+        if (localTeam?.sync_dirty) throw new Error("Sincroniza ou resolve primeiro as alterações pendentes do perfil da equipa.");
+        const unassignedStores = [...Object.keys(REMOTE_STORE_KINDS), "media_items", "activity_items"];
+        for (const store of unassignedStores) {
+          const rows = await DB.listar(store);
+          if (rows.some((row) => (row.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID && !row.remote_team_id &&
+            (store !== "exercicios" || row.workspace_v2 || row.sync_id || row.sync_dirty))) {
+            throw new Error("Há registos locais sem equipa remota confirmada. Liga à Internet e consolida-os antes de trocar de workspace.");
+          }
+        }
+        const tombstones = await DB.listar("sync_tombstones");
+        if (tombstones.some((row) => !row.remote_team_id)) {
+          throw new Error("Há eliminações locais sem equipa remota confirmada. Liga à Internet e sincroniza-as antes de trocar de workspace.");
+        }
+        await this.stopRealtime();
+        const teamProfile = {
+          id: localTeam?.id || DEFAULT_TEAM_ID,
+          nome: target.name,
+          clube: target.metadata.clube || null,
+          escalao: target.metadata.escalao || null,
+          epoca: target.metadata.epoca || null,
+          competicao: target.metadata.competicao || null,
+          formato: target.metadata.formato || null,
+          horarios: target.metadata.horarios && typeof target.metadata.horarios === "object" ? target.metadata.horarios : null,
+          staff: target.metadata.staff && typeof target.metadata.staff === "object" ? target.metadata.staff : null,
+          created_at: localTeam?.created_at || new Date().toISOString(),
+          updated_at: target.updated_at || new Date().toISOString(),
+          sync_id: target.id,
+          sync_dirty: false,
+          remote_updated_at: target.updated_at,
+        };
+        await DB.atualizar("teams", teamProfile, { remote: true });
+        remoteSaveConfig({ ...config, remoteTeamId: id });
+        this.scheduleSync(0);
+        return id;
+      }
       const client = await this.init();
       const assignmentTeamId = config.remoteTeamId || id;
       for (const store of [...Object.keys(REMOTE_STORE_KINDS), "media_items", "activity_items"]) {
@@ -771,6 +932,18 @@ const RemoteWorkspace = {
     const ref = String(subjectId ?? "").trim();
     if (!ref) throw remoteReferenceError("missing_subject_id");
     if (remoteIsUuid(ref)) {
+      const knownRows = options.knownRemoteRows;
+      if (knownRows) {
+        const row = knownRows.get(ref);
+        if (row) {
+          const valid = row.team_id === remoteTeamId
+            && (subjectType === "media" || row.kind === subjectType)
+            && (options.allowDeleted || !row.deleted_at);
+          if (!valid) throw remoteReferenceError("subject_uuid_not_in_team");
+          return ref;
+        }
+        if (!options.allowRemoteLookup) throw remoteReferenceError("subject_uuid_not_in_team");
+      }
       const client = await this.init();
       const table = subjectType === "media" ? "media_assets" : "workspace_records";
       let query = client.from(table).select("id")
@@ -812,31 +985,50 @@ const RemoteWorkspace = {
     return withId.sync_id;
   },
 
-  async _localIdForRemoteRef(subjectType, remoteRef, remoteTeamId = remoteLoadConfig().remoteTeamId) {
+  async _localIdForRemoteRef(subjectType, remoteRef, remoteTeamId = remoteLoadConfig().remoteTeamId, lookupCache = null) {
     if (subjectType === "team") return DEFAULT_TEAM_ID;
     const store = REMOTE_SUBJECT_STORES[subjectType];
     if (!store) return remoteRef;
     if (!remoteTeamId) return String(remoteRef);
+    let cached = lookupCache?.get(store);
+    if (lookupCache && !cached) {
+      cached = new Map();
+      for (const row of await DB.listar(store)) {
+        if (row.sync_id && row.remote_team_id === remoteTeamId && !cached.has(row.sync_id)) {
+          cached.set(row.sync_id, String(row.id));
+        }
+      }
+      lookupCache.set(store, cached);
+    }
+    if (cached) return cached.get(String(remoteRef)) || String(remoteRef);
     const rows = await DB.listar(store);
     const found = rows.find((x) => x.sync_id === remoteRef && x.remote_team_id === remoteTeamId);
     return found ? String(found.id) : remoteRef;
   },
-  async _refsForRemote(refs, remoteTeamId) {
+  async _refsForRemote(refs, remoteTeamId, referenceContext = {}) {
     const out = [];
     for (const ref of (Array.isArray(refs) ? refs : [])) {
       out.push({
         ...ref,
-        id: await this._subjectRemoteRef(ref.type, ref.id, remoteTeamId),
+        id: await this._subjectRemoteRef(ref.type, ref.id, remoteTeamId, {
+          knownRemoteRows: ref.type === "media" ? referenceContext.mediaRows : referenceContext.recordRows,
+          allowRemoteLookup: referenceContext.allowRemoteLookup,
+        }),
       });
     }
     return out;
   },
-  async _payloadForRemote(store, local, remoteTeamId) {
+  async _payloadForRemote(store, local, remoteTeamId, referenceContext = {}) {
     const payload = remotePayload(local);
+    const knownRowsFor = (subjectType) => subjectType === "media"
+      ? referenceContext.mediaRows
+      : referenceContext.recordRows;
     if (store === "jogos") {
       const mapPlayers = async (refs) => {
         const out = [];
-        for (const ref of refs) out.push(await this._subjectRemoteRef("player", ref, remoteTeamId, { allowDeleted: true }));
+        for (const ref of refs) out.push(await this._subjectRemoteRef("player", ref, remoteTeamId, {
+          allowDeleted: true, knownRemoteRows: knownRowsFor("player"), allowRemoteLookup: referenceContext.allowRemoteLookup,
+        }));
         return out;
       };
       if (Array.isArray(payload.callup?.player_ids)) {
@@ -844,7 +1036,9 @@ const RemoteWorkspace = {
       }
       if (payload.lineup) {
         const lineup = { ...payload.lineup };
-        if (lineup.goalkeeper_id) lineup.goalkeeper_id = await this._subjectRemoteRef("player", lineup.goalkeeper_id, remoteTeamId, { allowDeleted: true });
+        if (lineup.goalkeeper_id) lineup.goalkeeper_id = await this._subjectRemoteRef("player", lineup.goalkeeper_id, remoteTeamId, {
+          allowDeleted: true, knownRemoteRows: knownRowsFor("player"), allowRemoteLookup: referenceContext.allowRemoteLookup,
+        });
         if (Array.isArray(lineup.starters)) lineup.starters = await mapPlayers(lineup.starters);
         if (Array.isArray(lineup.substitutes)) lineup.substitutes = await mapPlayers(lineup.substitutes);
         payload.lineup = lineup;
@@ -856,7 +1050,11 @@ const RemoteWorkspace = {
         if (!block?.exercise_ref) { blocks.push(block); continue; }
         blocks.push({
           ...block,
-          exercise_ref: await this._subjectRemoteRef("exercise", block.exercise_ref, remoteTeamId),
+          exercise_ref: await this._subjectRemoteRef("exercise", block.exercise_ref, remoteTeamId, {
+            // A plan or completed session keeps its exercise UUID after the library entry is removed.
+            // The UUID must still resolve to an exercise in this same team; this never restores it.
+            allowDeleted: true, knownRemoteRows: knownRowsFor("exercise"), allowRemoteLookup: referenceContext.allowRemoteLookup,
+          }),
         });
       }
       return blocks;
@@ -868,38 +1066,38 @@ const RemoteWorkspace = {
       }
     }
     if (Array.isArray(payload.subject_refs)) {
-      payload.subject_refs = await this._refsForRemote(payload.subject_refs, remoteTeamId);
+      payload.subject_refs = await this._refsForRemote(payload.subject_refs, remoteTeamId, referenceContext);
     }
     if (Array.isArray(payload.refs)) {
-      payload.refs = await this._refsForRemote(payload.refs, remoteTeamId);
+      payload.refs = await this._refsForRemote(payload.refs, remoteTeamId, referenceContext);
     }
     if (store === "memory_items") {
       const mapIds = async (ids) => {
         const out = [];
         for (const id of (Array.isArray(ids) ? ids : [])) {
-          out.push(await this._subjectRemoteRef("memory", id, remoteTeamId));
+          out.push(await this._subjectRemoteRef("memory", id, remoteTeamId, { knownRemoteRows: knownRowsFor("memory"), allowRemoteLookup: referenceContext.allowRemoteLookup }));
         }
         return out;
       };
       payload.evidence_ids = await mapIds(payload.evidence_ids);
       payload.related_ids = await mapIds(payload.related_ids);
       if (payload.supersedes_id) {
-        payload.supersedes_id = await this._subjectRemoteRef("memory", payload.supersedes_id, remoteTeamId);
+        payload.supersedes_id = await this._subjectRemoteRef("memory", payload.supersedes_id, remoteTeamId, { knownRemoteRows: knownRowsFor("memory"), allowRemoteLookup: referenceContext.allowRemoteLookup });
       }
     }
     if (store === "game_models" && payload.supersedes_id) {
-      payload.supersedes_id = await this._subjectRemoteRef("game_model", payload.supersedes_id, remoteTeamId);
+      payload.supersedes_id = await this._subjectRemoteRef("game_model", payload.supersedes_id, remoteTeamId, { knownRemoteRows: knownRowsFor("game_model"), allowRemoteLookup: referenceContext.allowRemoteLookup });
     }
     return payload;
   },
-  async _hydratePayload(kind, payload, remoteTeamId) {
+  async _hydratePayload(kind, payload, remoteTeamId, lookupCache = null) {
     const out = { ...(payload || {}) };
     if (Array.isArray(out.subject_refs)) {
       const refs = [];
       for (const ref of out.subject_refs) {
         refs.push({
           ...ref,
-          id: await this._localIdForRemoteRef(ref.type, String(ref.id), remoteTeamId),
+          id: await this._localIdForRemoteRef(ref.type, String(ref.id), remoteTeamId, lookupCache),
         });
       }
       out.subject_refs = refs;
@@ -909,7 +1107,7 @@ const RemoteWorkspace = {
       for (const ref of out.refs) {
         refs.push({
           ...ref,
-          id: await this._localIdForRemoteRef(ref.type, String(ref.id), remoteTeamId),
+          id: await this._localIdForRemoteRef(ref.type, String(ref.id), remoteTeamId, lookupCache),
         });
       }
       out.refs = refs;
@@ -918,19 +1116,19 @@ const RemoteWorkspace = {
       const mapIds = async (ids) => {
         const mapped = [];
         for (const id of (Array.isArray(ids) ? ids : [])) {
-          mapped.push(Number(await this._localIdForRemoteRef("memory", String(id), remoteTeamId)) || id);
+          mapped.push(Number(await this._localIdForRemoteRef("memory", String(id), remoteTeamId, lookupCache)) || id);
         }
         return mapped;
       };
       out.evidence_ids = await mapIds(out.evidence_ids);
       out.related_ids = await mapIds(out.related_ids);
       if (out.supersedes_id) {
-        const localId = await this._localIdForRemoteRef("memory", String(out.supersedes_id), remoteTeamId);
+        const localId = await this._localIdForRemoteRef("memory", String(out.supersedes_id), remoteTeamId, lookupCache);
         out.supersedes_id = Number(localId) || out.supersedes_id;
       }
     }
     if (kind === "game_model" && out.supersedes_id) {
-      const localId = await this._localIdForRemoteRef("game_model", String(out.supersedes_id), remoteTeamId);
+      const localId = await this._localIdForRemoteRef("game_model", String(out.supersedes_id), remoteTeamId, lookupCache);
       out.supersedes_id = Number(localId) || out.supersedes_id;
     }
     return out;
@@ -1018,12 +1216,121 @@ const RemoteWorkspace = {
       return false;
     }
   },
-  async _syncRecords(remoteTeamId, userId) {
+  async _readSyncTable(table, remoteTeamId, options = {}) {
     const client = await this.init();
-    const first = await client.from("workspace_records")
-      .select("*").eq("team_id", remoteTeamId);
-    if (first.error) throw first.error;
-    let remoteMap = new Map((first.data || []).map((x) => [x.id, x]));
+    return remoteReadTeamRows(client, table, remoteTeamId, options);
+  },
+  async _readSyncSnapshots(remoteTeamId) {
+    const config = remoteLoadConfig();
+    const cursors = config.syncCursors && typeof config.syncCursors === "object" ? config.syncCursors : {};
+    const teamCursor = cursors[remoteTeamId] && typeof cursors[remoteTeamId] === "object" ? cursors[remoteTeamId] : null;
+    let localTeam = null;
+    try { localTeam = await DB.obter("teams", DEFAULT_TEAM_ID); } catch (_) {}
+    const stores = Object.keys(REMOTE_STORE_KINDS);
+    const localRows = await Promise.all(stores.map((store) => DB.listar(store)));
+    const [localActivityRows, localMediaRows] = await Promise.all([
+      DB.listar("activity_items"), DB.listar("media_items"),
+    ]);
+    let cacheComplete = true;
+    for (const rows of localRows) {
+      for (const row of rows) {
+        if (!remoteIsUuid(row?.sync_id) || !row.remote_updated_at || !remoteRowBelongsToTeam(row, remoteTeamId)) continue;
+        if (row.remote_team_id !== remoteTeamId || !row._sync_base || typeof row._sync_base !== "object" || Array.isArray(row._sync_base)) cacheComplete = false;
+      }
+    }
+    for (const row of localActivityRows) {
+      if (!remoteIsUuid(row?.sync_id) || !row.remote_updated_at || !remoteRowBelongsToTeam(row, remoteTeamId)) continue;
+      if (row.remote_team_id !== remoteTeamId || row.sync_dirty) cacheComplete = false;
+    }
+    for (const row of localMediaRows) {
+      if (!remoteIsUuid(row?.sync_id) || !row.remote_updated_at || !remoteRowBelongsToTeam(row, remoteTeamId)) continue;
+      if (row.remote_team_id !== remoteTeamId) cacheComplete = false;
+    }
+    const localTeamCreatedAt = localTeam?.created_at || null;
+    const cursorTeamMatches = teamCursor && teamCursor.localTeamCreatedAt === localTeamCreatedAt;
+    const fullRefreshDue = !Number.isFinite(Date.parse(teamCursor?.recordsWatermark || ""))
+      || !Number.isFinite(Date.parse(teamCursor?.activityWatermark || ""))
+      || !Number.isFinite(Date.parse(teamCursor?.mediaWatermark || ""))
+      || !cursorTeamMatches
+      || !cacheComplete
+      || !Number.isFinite(Date.parse(teamCursor.fullRefreshAt || ""))
+      || Date.now() - Date.parse(teamCursor.fullRefreshAt) >= REMOTE_SYNC_FULL_REFRESH_MS;
+    const recordsSince = !fullRefreshDue && Number.isFinite(Date.parse(teamCursor.recordsWatermark))
+      ? new Date(Math.max(0, Date.parse(teamCursor.recordsWatermark) - REMOTE_SYNC_OVERLAP_MS)).toISOString()
+      : null;
+    const activitySince = !fullRefreshDue && Number.isFinite(Date.parse(teamCursor.activityWatermark))
+      ? new Date(Math.max(0, Date.parse(teamCursor.activityWatermark) - REMOTE_SYNC_OVERLAP_MS)).toISOString()
+      : null;
+    const mediaSince = !fullRefreshDue && Number.isFinite(Date.parse(teamCursor.mediaWatermark))
+      ? new Date(Math.max(0, Date.parse(teamCursor.mediaWatermark) - REMOTE_SYNC_OVERLAP_MS)).toISOString()
+      : null;
+    const [records, activity, media] = await Promise.all([
+      this._readSyncTable("workspace_records", remoteTeamId, recordsSince ? { since: recordsSince } : {}),
+      this._readSyncTable("activity_log", remoteTeamId, activitySince ? { since: activitySince, timestampColumn: "created_at" } : {}),
+      this._readSyncTable("media_assets", remoteTeamId, mediaSince ? { since: mediaSince } : {}),
+    ]);
+    if (recordsSince && activitySince && mediaSince) {
+      const cached = [];
+      for (let index = 0; index < localRows.length; index++) {
+        const kind = REMOTE_STORE_KINDS[stores[index]];
+        for (const row of localRows[index]) {
+          if (!remoteIsUuid(row?.sync_id) || !row.remote_updated_at || row.remote_team_id !== remoteTeamId
+            || !remoteRowBelongsToTeam(row, remoteTeamId)
+            || !row._sync_base || typeof row._sync_base !== "object" || Array.isArray(row._sync_base)) continue;
+          cached.push({
+            id: row.sync_id, team_id: remoteTeamId, kind, payload: row._sync_base,
+            actor_type: row.sync_actor_type || "human", actor_label: row.sync_actor_label || "Treinador",
+            updated_at: row.remote_updated_at, deleted_at: null, _sync_cache: true,
+          });
+        }
+      }
+      const changedIds = new Set(records.map((row) => row.id));
+      records.push(...cached.filter((row) => !changedIds.has(row.id)));
+
+      const activityChangedIds = new Set(activity.map((row) => row.id));
+      activity.push(...localActivityRows.filter((row) => remoteIsUuid(row?.sync_id)
+        && row.remote_team_id === remoteTeamId && row.remote_updated_at && !row.sync_dirty
+        && !activityChangedIds.has(row.sync_id)).map((row) => ({
+        id: row.sync_id, team_id: remoteTeamId, created_at: row.remote_updated_at,
+        actor_type: row.actor || "human", actor_label: row.actor_label || "Treinador",
+        action: row.action, summary: row.summary, entity_type: row.entity_type,
+        entity_ref: null, metadata: row.metadata || {}, _sync_cache: true,
+      })));
+
+      const mediaChangedIds = new Set(media.map((row) => row.id));
+      media.push(...localMediaRows.filter((row) => remoteIsUuid(row?.sync_id)
+        && row.remote_team_id === remoteTeamId && row.remote_updated_at
+        && !mediaChangedIds.has(row.sync_id)).map((row) => ({
+        id: row.sync_id, team_id: remoteTeamId, updated_at: row.remote_updated_at,
+        created_at: row.created_at || row.remote_updated_at, deleted_at: null,
+        subject_type: row.subject_type, subject_ref: String(row.subject_id || ""),
+        media_type: row.type, title: row.title, note: row.note || null,
+        external_url: row.storage_path ? null : row.url || null, storage_path: row.storage_path || null,
+        file_name: row.file_name || null, mime_type: row.mime_type || null, size_bytes: row.size || null,
+        actor_type: row.sync_actor_type || "human", actor_label: row.sync_actor_label || "Treinador",
+        _sync_cache: true,
+      })));
+    }
+    return {
+      records, activity, media, recordsSince, activitySince, mediaSince,
+      recordsWatermark: teamCursor?.recordsWatermark || null,
+      activityWatermark: teamCursor?.activityWatermark || null,
+      mediaWatermark: teamCursor?.mediaWatermark || null,
+      fullRefreshAt: fullRefreshDue ? new Date().toISOString() : teamCursor?.fullRefreshAt || null,
+      localTeamCreatedAt,
+    };
+  },
+  async _syncRecords(remoteTeamId, userId, initialRows, initialMediaRows, options = {}) {
+    const client = await this.init();
+    const first = initialRows || await remoteReadTeamRows(client, "workspace_records", remoteTeamId);
+    let remoteMap = new Map(first.map((x) => [x.id, x]));
+    const referenceContext = {
+      recordRows: remoteMap,
+      allowRemoteLookup: options.allowRemoteLookup === true || first.some((row) => row._sync_cache === true),
+      mediaRows: Array.isArray(initialMediaRows)
+        ? new Map(initialMediaRows.map((row) => [row.id, row]))
+        : null,
+    };
     const result = { pushed: 0, pulled: 0, deleted: 0, conflicts: [] };
     const conflictKeys = new Set();
     const addConflict = (conflict) => {
@@ -1049,7 +1356,8 @@ const RemoteWorkspace = {
       for (const row of boundRows.conflicts) addConflict(remoteConflict(store, row, null, remoteIdentityConflictReason(row)));
       let localBySyncId = new Map(rows.filter((x) => x.sync_id).map((x) => [x.sync_id, x]));
 
-      for (const remote of remoteRows.filter((row) => row.deleted_at)) {
+        for (const remote of remoteRows.filter((row) => row.deleted_at)) {
+        if (remote._sync_cache) continue;
         const local = localBySyncId.get(remote.id);
         if (!local) continue;
         if (remoteDeletionConflictsWithLocalEdit(local, remote)) {
@@ -1094,7 +1402,7 @@ const RemoteWorkspace = {
         }
 
         let payload;
-        try { payload = await this._payloadForRemote(store, local, remoteTeamId); }
+        try { payload = await this._payloadForRemote(store, local, remoteTeamId, referenceContext); }
         catch (error) {
           if (error.code !== "LOCAL_REFERENCE_CONFLICT") throw error;
           addConflict(remoteConflict(store, local, remote, error.reason));
@@ -1137,36 +1445,99 @@ const RemoteWorkspace = {
         }
         await this._ackPushedRecord(store, local, saved, payload, remoteTeamId);
         remoteMap.set(saved.id, saved);
+        options.referenceContext?.recordRows?.set(saved.id, saved);
         result.pushed++;
       }
     }
 
-    const refreshed = await client.from("workspace_records")
-      .select("*").eq("team_id", remoteTeamId);
-    if (refreshed.error) throw refreshed.error;
-    remoteMap = new Map((refreshed.data || []).map((x) => [x.id, x]));
+    // The initial snapshot plus acknowledged local writes is authoritative when
+    // there was no conflict. Keep the extra read only when a concurrent version
+    // needs a fresh remote state for the conflict review.
+    if (result.conflicts.length) {
+      const refreshed = await remoteReadTeamRows(client, "workspace_records", remoteTeamId);
+      remoteMap = new Map(refreshed.map((x) => [x.id, x]));
+    }
 
     const pendingDeletes = new Set((await DB.listar("sync_tombstones"))
       .filter((item) => !item.remote_team_id || item.remote_team_id === remoteTeamId)
       .map((item) => `${item.store}|${item.sync_id}`));
+    const localIndexes = new Map();
+    const localReferenceCache = new Map();
+    const rememberLocalReference = (store, row) => {
+      const references = localReferenceCache.get(store);
+      if (!references || !row?.sync_id) return;
+      if (row.remote_team_id === remoteTeamId && row.id != null) references.set(row.sync_id, String(row.id));
+      else references.delete(row.sync_id);
+    };
+    const localIndexFor = async (store, kind) => {
+      if (localIndexes.has(store)) return localIndexes.get(store);
+      const rows = (await DB.listar(store)).filter((row) => remoteRowBelongsToTeam(row, remoteTeamId));
+      const bySyncId = new Map();
+      const byIdentity = new Map();
+      const identityKey = (row) => remoteIdentityKey(kind, row);
+      const add = (row) => {
+        if (row.sync_id) {
+          const matches = bySyncId.get(row.sync_id) || [];
+          matches.push(row);
+          bySyncId.set(row.sync_id, matches);
+        }
+        const key = identityKey(row);
+        if (key) {
+          const matches = byIdentity.get(key) || [];
+          matches.push(row);
+          byIdentity.set(key, matches);
+        }
+      };
+      const remove = (row) => {
+        if (!row) return;
+        const syncMatches = row.sync_id ? bySyncId.get(row.sync_id) : null;
+        if (syncMatches) {
+          const index = syncMatches.findIndex((candidate) => candidate.id === row.id);
+          if (index >= 0) syncMatches.splice(index, 1);
+          if (!syncMatches.length) bySyncId.delete(row.sync_id);
+        }
+        const key = identityKey(row);
+        const identityMatches = key ? byIdentity.get(key) : null;
+        if (identityMatches) {
+          const index = identityMatches.findIndex((candidate) => candidate.id === row.id);
+          if (index >= 0) identityMatches.splice(index, 1);
+          if (!identityMatches.length) byIdentity.delete(key);
+        }
+      };
+      for (const row of rows) add(row);
+      const index = {
+        getBySyncId: (id) => bySyncId.get(id)?.at(-1) || null,
+        getByIdentity: (key) => byIdentity.get(key)?.[0] || null,
+        replace(oldRow, newRow) { remove(oldRow); if (newRow && remoteRowBelongsToTeam(newRow, remoteTeamId)) add(newRow); },
+        remove,
+        add,
+      };
+      localIndexes.set(store, index);
+      return index;
+    };
     for (const remote of remoteMap.values()) {
+      if (remote._sync_cache) continue;
       const store = REMOTE_KIND_STORES[remote.kind];
       if (!store) continue;
       if (pendingDeletes.has(`${store}|${remote.id}`)) continue;
-      const locals = await DB.listar(store);
-      const localMap = new Map(locals.filter((x) => x.sync_id && remoteRowBelongsToTeam(x, remoteTeamId)).map((x) => [x.sync_id, x]));
+      const localIndex = await localIndexFor(store, remote.kind);
       const identity = remoteIdentityKey(remote.kind, remote.payload);
-      const identityLocal = identity
-        ? locals.find((row) => remoteRowBelongsToTeam(row, remoteTeamId) && remoteIdentityKey(remote.kind, row) === identity)
-        : null;
-      let local = localMap.get(remote.id) || identityLocal;
+      let local = localIndex.getBySyncId(remote.id) || localIndex.getByIdentity(identity);
       if (remote.deleted_at) {
         if (!local) continue;
         if (remoteDeletionConflictsWithLocalEdit(local, remote)) {
           addConflict(remoteConflict(store, local, remote, "remote_deleted_local_dirty"));
           continue;
         }
-        if (await this._applyRemoteDeletion(store, local, remote, addConflict)) result.deleted++;
+        if (await this._applyRemoteDeletion(store, local, remote, addConflict)) {
+          localIndex.remove(local);
+          const references = localReferenceCache.get(store);
+          if (references) {
+            if (local.sync_id) references.delete(local.sync_id);
+            references.delete(remote.id);
+          }
+          result.deleted++;
+        }
         continue;
       }
       if (local?.sync_dirty) {
@@ -1179,7 +1550,7 @@ const RemoteWorkspace = {
         ));
         continue;
       }
-      const payload = await this._hydratePayload(remote.kind, remote.payload, remoteTeamId);
+      const payload = await this._hydratePayload(remote.kind, remote.payload, remoteTeamId, localReferenceCache);
       const merged = {
         ...(local || {}),
         ...payload,
@@ -1209,33 +1580,51 @@ const RemoteWorkspace = {
       if (local) {
         merged.id = local.id;
         if (local.remote_updated_at === remote.updated_at) {
-          if (!local._sync_base) await DB.modificar(store, local.id, (current) => {
-            if (current.sync_dirty || current.remote_updated_at !== remote.updated_at) return current;
-            return { ...current, _sync_base: remote.payload || {} };
-          }, { remote: true });
+          if (!local._sync_base) {
+            let refreshedLocal = local;
+            await DB.modificar(store, local.id, (current) => {
+              if (current.sync_dirty || current.remote_updated_at !== remote.updated_at) {
+                refreshedLocal = current;
+                return current;
+              }
+              refreshedLocal = { ...current, _sync_base: remote.payload || {} };
+              return refreshedLocal;
+            }, { remote: true });
+            localIndex.replace(local, refreshedLocal);
+          }
           continue;
         }
         const applied = await this._applyPulledRecord(store, local, merged);
         if (!applied.applied) {
+          localIndex.replace(local, applied.current);
+          rememberLocalReference(store, applied.current);
           if (applied.current?.sync_dirty && applied.current.remote_updated_at !== remote.updated_at) {
             addConflict(remoteConflict(store, applied.current, remote));
           }
           continue;
         }
+        localIndex.replace(local, merged);
+        rememberLocalReference(store, merged);
       } else {
-        await DB.criar(store, remoteFreshLocalRecord(merged), { remote: true });
+        const created = remoteFreshLocalRecord(merged);
+        const createdId = await DB.criar(store, created, { remote: true });
+        localIndex.add({ ...created, id: created.id || createdId });
+        rememberLocalReference(store, { ...created, id: created.id || createdId });
       }
       result.pulled++;
     }
     return result;
   },
 
-  async _activityRemoteRow(local, remoteTeamId, userId) {
+  async _activityRemoteRow(local, remoteTeamId, userId, referenceContext = {}) {
     const row = remoteActivityRow(local, remoteTeamId, userId);
     if (local.entity_type && local.entity_id != null) {
       try {
         row.entity_ref = String(await this._subjectRemoteRef(
-          local.entity_type, local.entity_id, remoteTeamId
+          local.entity_type, local.entity_id, remoteTeamId, {
+            knownRemoteRows: local.entity_type === "media" ? referenceContext.mediaRows : referenceContext.recordRows,
+            allowRemoteLookup: referenceContext.allowRemoteLookup === true,
+          }
         ));
       } catch (error) {
         const detachedReferenceReasons = new Set([
@@ -1257,12 +1646,11 @@ const RemoteWorkspace = {
     return row;
   },
 
-  async _syncActivity(remoteTeamId, userId) {
+  async _syncActivity(remoteTeamId, userId, initialRows, referenceContext = {}) {
     const client = await this.init();
-    const remoteRes = await client.from("activity_log")
-      .select("*").eq("team_id", remoteTeamId).order("created_at", { ascending: true });
-    if (remoteRes.error) throw remoteRes.error;
-    const remoteMap = new Map((remoteRes.data || []).map((x) => [x.id, x]));
+    const localReferenceCache = new Map();
+    const remoteRows = initialRows || await remoteReadTeamRows(client, "activity_log", remoteTeamId);
+    const remoteMap = new Map(remoteRows.map((x) => [x.id, x]));
     const result = { pushed: 0, pulled: 0, conflicts: [] };
     const localCandidates = (await DB.listar("activity_items"))
       .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID);
@@ -1274,7 +1662,7 @@ const RemoteWorkspace = {
       const local = await this._ensureSyncId("activity_items", original);
       if (!remoteMap.has(local.sync_id)) {
         let remoteRow;
-        try { remoteRow = await this._activityRemoteRow(local, remoteTeamId, userId); }
+        try { remoteRow = await this._activityRemoteRow(local, remoteTeamId, userId, referenceContext); }
         catch (error) {
           if (error.code !== "LOCAL_REFERENCE_CONFLICT") throw error;
           result.conflicts.push(remoteConflict("activity_items", local, null, error.reason));
@@ -1302,10 +1690,11 @@ const RemoteWorkspace = {
           remote_team_id: remoteTeamId,
         }, { remote: true });
         remoteMap.set(saved.id, saved);
+        referenceContext.mediaRows?.set(saved.id, saved);
         result.pushed++;
       } else if (local.sync_dirty) {
         let expected;
-        try { expected = await this._activityRemoteRow(local, remoteTeamId, userId); }
+        try { expected = await this._activityRemoteRow(local, remoteTeamId, userId, referenceContext); }
         catch (error) {
           if (error.code !== "LOCAL_REFERENCE_CONFLICT") throw error;
           result.conflicts.push(remoteConflict("activity_items", local, null, error.reason));
@@ -1331,9 +1720,10 @@ const RemoteWorkspace = {
 
     const localMap = new Map([...await this._localBySyncId("activity_items")].filter(([, row]) => remoteRowBelongsToTeam(row, remoteTeamId)));
     for (const remote of remoteMap.values()) {
+      if (remote._sync_cache) continue;
       if (localMap.has(remote.id)) continue;
       const localEntityId = remote.entity_type && remote.entity_ref != null
-        ? await this._localIdForRemoteRef(remote.entity_type, String(remote.entity_ref), remoteTeamId)
+        ? await this._localIdForRemoteRef(remote.entity_type, String(remote.entity_ref), remoteTeamId, localReferenceCache)
         : null;
       const row = {
         team_id: DEFAULT_TEAM_ID,
@@ -1382,9 +1772,12 @@ const RemoteWorkspace = {
     return path;
   },
 
-  async _mediaRemoteRow(local, remoteTeamId, userId) {
+  async _mediaRemoteRow(local, remoteTeamId, userId, referenceContext = {}) {
     const subjectRef = await this._subjectRemoteRef(
-      local.subject_type, local.subject_id, remoteTeamId
+      local.subject_type, local.subject_id, remoteTeamId, {
+        knownRemoteRows: local.subject_type === "media" ? referenceContext.mediaRows : referenceContext.recordRows,
+        allowRemoteLookup: referenceContext.allowRemoteLookup === true,
+      }
     );
     const storagePath = await this._uploadLocalMedia(local, remoteTeamId);
     return {
@@ -1406,12 +1799,11 @@ const RemoteWorkspace = {
     };
   },
 
-  async _syncMedia(remoteTeamId, userId) {
+  async _syncMedia(remoteTeamId, userId, initialRows, referenceContext = {}) {
     const client = await this.init();
-    const remoteRes = await client.from("media_assets")
-      .select("*").eq("team_id", remoteTeamId);
-    if (remoteRes.error) throw remoteRes.error;
-    let remoteMap = new Map((remoteRes.data || []).map((x) => [x.id, x]));
+    const localReferenceCache = new Map();
+    const remoteRows = initialRows || await remoteReadTeamRows(client, "media_assets", remoteTeamId);
+    let remoteMap = new Map(remoteRows.map((x) => [x.id, x]));
     const result = { pushed: 0, pulled: 0, deleted: 0, conflicts: [] };
     const addConflict = (conflict) => {
       if (!result.conflicts.some((item) => item.sync_id === conflict.sync_id && item.reason === conflict.reason)) result.conflicts.push(conflict);
@@ -1465,7 +1857,7 @@ const RemoteWorkspace = {
       }
 
       let row;
-      try { row = await this._mediaRemoteRow(local, remoteTeamId, userId); }
+      try { row = await this._mediaRemoteRow(local, remoteTeamId, userId, referenceContext); }
       catch (error) {
         if (error.code !== "LOCAL_REFERENCE_CONFLICT") throw error;
         addConflict(remoteConflict("media_items", local, remote, error.reason));
@@ -1501,18 +1893,21 @@ const RemoteWorkspace = {
       }
       await this._ackPushedRecord("media_items", local, saved, {}, remoteTeamId);
       remoteMap.set(saved.id, saved);
+      referenceContext.mediaRows?.set(saved.id, saved);
       result.pushed++;
     }
 
-    const refreshed = await client.from("media_assets")
-      .select("*").eq("team_id", remoteTeamId);
-    if (refreshed.error) throw refreshed.error;
-    remoteMap = new Map((refreshed.data || []).map((x) => [x.id, x]));
+    // As with records, retain the second full read only to refresh a conflict.
+    if (result.conflicts.length) {
+      const refreshed = await remoteReadTeamRows(client, "media_assets", remoteTeamId);
+      remoteMap = new Map(refreshed.map((x) => [x.id, x]));
+    }
     localMap = new Map([...await this._localBySyncId("media_items")].filter(([, row]) => remoteRowBelongsToTeam(row, remoteTeamId)));
     const pendingDeletes = new Set((await DB.listar("sync_tombstones"))
       .filter((item) => item.store === "media_items" && (!item.remote_team_id || item.remote_team_id === remoteTeamId))
       .map((item) => item.sync_id));
     for (const remote of remoteMap.values()) {
+      if (remote._sync_cache) continue;
       if (pendingDeletes.has(remote.id)) continue;
       const local = localMap.get(remote.id);
       if (remote.deleted_at) {
@@ -1534,16 +1929,26 @@ const RemoteWorkspace = {
         continue;
       }
       const subjectId = await this._localIdForRemoteRef(
-        remote.subject_type, String(remote.subject_ref), remoteTeamId
+        remote.subject_type, String(remote.subject_ref), remoteTeamId, localReferenceCache
       );
-      let url = remote.external_url || null;
+      const signedUrlStillValid = Boolean(
+        local?.url && local.storage_path === remote.storage_path
+        && local.remote_updated_at === remote.updated_at
+        && Number(local.signed_url_expires_at) > Date.now() + 120_000
+      );
+      let url = remote.external_url || (signedUrlStillValid ? local.url : null);
+      let signedUrlExpiresAt = remote.external_url ? null : (signedUrlStillValid ? local.signed_url_expires_at : null);
       if (!url && remote.storage_path) {
         const signed = await client.storage.from("team-media")
           .createSignedUrl(remote.storage_path, 3600);
-        if (!signed.error) url = signed.data?.signedUrl || null;
+        if (!signed.error) {
+          url = signed.data?.signedUrl || null;
+          if (url) signedUrlExpiresAt = Date.now() + 3_480_000;
+        }
         else {
           addConflict(remoteConflict("media_items", local, remote, "storage_signed_url_failed"));
           url = local?.url || null;
+          signedUrlExpiresAt = local?.signed_url_expires_at || null;
         }
       }
 
@@ -1557,6 +1962,7 @@ const RemoteWorkspace = {
         title: remote.title,
         note: remote.note || null,
         url,
+        signed_url_expires_at: signedUrlExpiresAt,
         storage_path: remote.storage_path || null,
         file_name: remote.file_name || null,
         mime_type: remote.mime_type || null,
@@ -1572,7 +1978,8 @@ const RemoteWorkspace = {
       };
 
       if (local) {
-        if (local.remote_updated_at === remote.updated_at && !remote.storage_path) continue;
+        if (local.remote_updated_at === remote.updated_at
+          && (!remote.storage_path || signedUrlStillValid)) continue;
         merged.id = local.id;
         const applied = await this._applyPulledRecord("media_items", local, merged);
         if (!applied.applied) {
@@ -1717,17 +2124,23 @@ const RemoteWorkspace = {
     const remoteTeamId = await this.ensureSelectedTeam();
     if (!client || !session || !remoteTeamId) throw new Error("Liga primeiro o workspace remoto.");
 
-    const remoteRecordsRes = await client.from("workspace_records")
-      .select("id,kind,deleted_at").eq("team_id", remoteTeamId);
-    if (remoteRecordsRes.error) throw remoteRecordsRes.error;
-    const remoteRecordIds = new Set((remoteRecordsRes.data || []).map((x) => x.id));
-
-    let repaired = 0;
+    const localRecordGroups = [];
     for (const store of Object.keys(REMOTE_STORE_KINDS)) {
       let rows = (await DB.listar(store))
         .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID)
         .filter((x) => store !== "exercicios" || x.workspace_v2 || x.sync_id);
       rows = (await this._bindRemoteTeams(client, store, rows, remoteTeamId)).rows;
+      localRecordGroups.push({ store, rows });
+    }
+    const remoteRecordIds = await remoteReadTeamIds(
+      client,
+      "workspace_records",
+      remoteTeamId,
+      localRecordGroups.flatMap(({ rows }) => rows.map((row) => row.sync_id))
+    );
+
+    let repaired = 0;
+    for (const { store, rows } of localRecordGroups) {
       for (const original of rows) {
         let local = original;
         if (!remoteIsUuid(local.sync_id)) {
@@ -1750,13 +2163,15 @@ const RemoteWorkspace = {
       }
     }
 
-    const remoteMediaRes = await client.from("media_assets")
-      .select("id,deleted_at").eq("team_id", remoteTeamId);
-    if (remoteMediaRes.error) throw remoteMediaRes.error;
-    const remoteMediaIds = new Set((remoteMediaRes.data || []).map((x) => x.id));
     let mediaRows = (await DB.listar("media_items"))
       .filter((x) => (x.team_id || DEFAULT_TEAM_ID) === DEFAULT_TEAM_ID);
     mediaRows = (await this._bindRemoteTeams(client, "media_items", mediaRows, remoteTeamId)).rows;
+    const remoteMediaIds = await remoteReadTeamIds(
+      client,
+      "media_assets",
+      remoteTeamId,
+      mediaRows.map((row) => row.sync_id)
+    );
     for (const original of mediaRows) {
       let local = original;
       if (!remoteIsUuid(local.sync_id)) {
@@ -1840,11 +2255,28 @@ const RemoteWorkspace = {
     const result = { pushed: 0, pulled: 0, conflicts: [], deleted: 0 };
 
     const tombstoneResult = await this._syncTombstones(remoteTeamId);
-    const teamResult = await this.syncTeam(remoteTeamId);
-    const recordResult = await this._syncRecords(remoteTeamId, session.user.id);
-    const activityResult = await this._syncActivity(remoteTeamId, session.user.id);
-    const mediaResult = await this._syncMedia(remoteTeamId, session.user.id);
-    const parts = [tombstoneResult, teamResult, recordResult, activityResult, mediaResult];
+    // The team profile and sync snapshots are independent once tombstones have
+    // been applied. Start them together to avoid an extra network round trip.
+    const [teamResult, snapshots] = await Promise.all([
+      this.syncTeam(remoteTeamId),
+      this._readSyncSnapshots(remoteTeamId),
+    ]);
+    const referenceContext = {
+      recordRows: new Map(snapshots.records.map((row) => [row.id, row])),
+      mediaRows: new Map(snapshots.media.map((row) => [row.id, row])),
+      // A miss can be a record created earlier in this sync or an unchanged row
+      // omitted from an incremental snapshot; retain the scoped lookup fallback.
+      allowRemoteLookup: true,
+    };
+    const recordResult = await this._syncRecords(remoteTeamId, session.user.id, snapshots.records, snapshots.media, {
+      allowRemoteLookup: Boolean(snapshots.recordsSince),
+      referenceContext,
+    });
+    const mediaResult = await this._syncMedia(remoteTeamId, session.user.id, snapshots.media, referenceContext);
+    // Activity may point at media created above, so reconcile it after both
+    // records and media have added their confirmed rows to the shared context.
+    const activityResult = await this._syncActivity(remoteTeamId, session.user.id, snapshots.activity, referenceContext);
+    const parts = [tombstoneResult, teamResult, recordResult, mediaResult, activityResult];
 
     for (const part of parts) {
       result.pushed += part.pushed || 0;
@@ -1856,7 +2288,32 @@ const RemoteWorkspace = {
 
     const lastSyncAt = new Date().toISOString();
     const completed = { ...result, lastSyncAt };
-    remoteSaveConfig({ ...remoteLoadConfig(), lastSyncAt, conflicts: result.conflicts });
+    const currentConfig = remoteLoadConfig();
+    const currentCursors = currentConfig.syncCursors && typeof currentConfig.syncCursors === "object" ? currentConfig.syncCursors : {};
+    const previousTeamCursor = currentCursors[remoteTeamId] && typeof currentCursors[remoteTeamId] === "object" ? currentCursors[remoteTeamId] : {};
+    const recordsWatermark = remoteLatestTimestamp([
+      previousTeamCursor.recordsWatermark,
+      ...snapshots.records.map((row) => row._sync_cache ? null : row.updated_at),
+    ]);
+    const activityWatermark = remoteLatestTimestamp([
+      previousTeamCursor.activityWatermark,
+      ...snapshots.activity.map((row) => row._sync_cache ? null : row.created_at),
+    ]);
+    const mediaWatermark = remoteLatestTimestamp([
+      previousTeamCursor.mediaWatermark,
+      ...snapshots.media.map((row) => row._sync_cache ? null : row.updated_at),
+    ]);
+    const syncCursors = {
+      ...currentCursors,
+      [remoteTeamId]: {
+        recordsWatermark,
+        activityWatermark,
+        mediaWatermark,
+        fullRefreshAt: snapshots.fullRefreshAt || previousTeamCursor.fullRefreshAt || lastSyncAt,
+        localTeamCreatedAt: snapshots.localTeamCreatedAt || null,
+      },
+    };
+    remoteSaveConfig({ ...currentConfig, lastSyncAt, conflicts: result.conflicts, syncCursors });
     this._clearSyncRetry();
     remoteEmitSync(completed);
     return completed;
@@ -1880,7 +2337,7 @@ const RemoteWorkspace = {
   async previewInvalidIdentityRecovery(storeName, localId) {
     const config = remoteLoadConfig();
     const conflict = (config.conflicts || []).find((item) => item.store === storeName
-      && String(item.local_id) === String(localId) && item.reason === "invalid_local_sync_id");
+      && String(item.local_id) === String(localId) && ["invalid_local_sync_id", "duplicate_identity"].includes(item.reason));
     if (!conflict) throw new Error("Este conflito já mudou. Sincroniza novamente antes de procurar uma correspondência.");
     if (!REMOTE_STORE_KINDS[storeName]) return { status: "unsupported_identity" };
     const local = (await DB.listar(storeName)).find((item) => String(item.id) === String(localId)
@@ -1890,6 +2347,12 @@ const RemoteWorkspace = {
     const remoteTeamId = config.remoteTeamId;
     if (!remoteTeamId || (local.remote_team_id && local.remote_team_id !== remoteTeamId)) return { status: "team_mismatch" };
     const client = await this.init();
+    if (conflict.reason === "duplicate_identity" && remoteIsUuid(local.sync_id)) {
+      const oldIdentity = await client.from("workspace_records").select("id")
+        .eq("team_id", remoteTeamId).eq("id", local.sync_id).maybeSingle();
+      if (oldIdentity.error) throw oldIdentity.error;
+      if (oldIdentity.data) return { status: "identity_already_exists" };
+    }
     const kind = REMOTE_STORE_KINDS[storeName];
     const { data, error } = await client.from("workspace_records")
       .select("id,kind,payload,updated_at,deleted_at")
@@ -1901,6 +2364,9 @@ const RemoteWorkspace = {
     if (!candidates.length) return { status: "no_match", local: remoteConflictPreview(remotePayload(local)) };
     if (candidates.length !== 1) return { status: "ambiguous", candidate_count: candidates.length };
     const candidate = candidates[0];
+    const alreadyLinked = (await DB.listar(storeName)).some((item) => String(item.id) !== String(local.id)
+      && item.sync_id === candidate.id);
+    if (alreadyLinked) return { status: "already_linked", local: remoteConflictPreview(remotePayload(local)) };
     return {
       status: "unique_match", store: storeName, local_id: local.id,
       invalid_sync_id: local.sync_id, local_updated_at: local.sync_local_updated_at || null,
@@ -1967,8 +2433,9 @@ const RemoteWorkspace = {
     if (!conflict || !conflict.remote_updated_at) throw new Error("O conflito mudou. Sincroniza novamente antes de rever as versões.");
     const store = conflict.store;
     if (!REMOTE_STORE_KINDS[store] && store !== "media_items") throw new Error("Tipo de conflito não suportado para comparação.");
-    const locals = await DB.listar(store);
-    const local = locals.find((item) => item.id === conflict.local_id && item.sync_id === syncId && item.sync_dirty);
+    if (conflict.local_id == null) throw new Error("A edição local já não está pendente neste dispositivo.");
+    const local = await DB.obter(store, conflict.local_id);
+    if (local?.sync_id !== syncId || !local.sync_dirty) throw new Error("A edição local já não está pendente neste dispositivo.");
     if (!local) throw new Error("A edição local já não está pendente neste dispositivo.");
     const client = await this.init();
     const remoteTeamId = config.remoteTeamId;
@@ -2059,6 +2526,12 @@ const RemoteWorkspace = {
             payload: suggestion.changed_side === "local" ? versions.local : versions.remote,
           };
         }
+        if (versions.manual_merge_fields?.length && versions.remote_updated_at && versions.local_updated_at) return {
+          sync_id: conflict.sync_id, store: conflict.store, display_name: conflict.display_name || null,
+          requires_manual_choice: true, expected_remote: versions.remote_updated_at, expected_local: versions.local_updated_at,
+          reason: versions.merge_unavailable || "As versões alteraram os mesmos campos. Escolhe o valor a manter em cada campo.",
+          manual_merge_fields: versions.manual_merge_fields,
+        };
         return {
           sync_id: conflict.sync_id, store: conflict.store, display_name: conflict.display_name || null,
           mergeable: false, reason: versions.merge_unavailable || "As versões exigem decisão campo a campo.",
@@ -2073,7 +2546,8 @@ const RemoteWorkspace = {
     return {
       examined: conflicts.length,
       safe: reviewed.filter((item) => item.mergeable),
-      needs_review: reviewed.filter((item) => !item.mergeable),
+      manual_review: reviewed.filter((item) => item.requires_manual_choice),
+      needs_review: reviewed.filter((item) => !item.mergeable && !item.requires_manual_choice),
     };
   },
 
@@ -2082,9 +2556,15 @@ const RemoteWorkspace = {
     const seen = new Set();
     for (const item of previews) {
       const key = `${item?.store}|${item?.sync_id}`;
+      const validManualChoices = item?.resolution !== "merge_manual_fields" || (() => {
+        const choices = item.field_choices && typeof item.field_choices === "object" && !Array.isArray(item.field_choices) ? item.field_choices : {};
+        const keys = Object.keys(choices).sort();
+        return keys.length > 0 && keys.every((name) => ["local", "remote"].includes(choices[name]));
+      })();
       if (!item?.mergeable || !remoteIsUuid(item.sync_id) || !REMOTE_STORE_KINDS[item.store]
         || !item.expected_remote || !item.expected_local
-        || !["merge_non_overlapping", "keep_local", "keep_remote"].includes(item.resolution)
+        || !["merge_non_overlapping", "keep_local", "keep_remote", "merge_manual_fields"].includes(item.resolution)
+        || !validManualChoices
         || seen.has(key)) {
         throw new Error("A pré-visualização em lote é inválida ou repetida. Analisa novamente os conflitos.");
       }
@@ -2094,7 +2574,7 @@ const RemoteWorkspace = {
     try {
       for (const item of previews) {
         await this.resolveVersionConflict(item.sync_id, item.store, item.resolution,
-          item.expected_remote, item.expected_local, null, { deferSync: true });
+          item.expected_remote, item.expected_local, item.field_choices || null, { deferSync: true });
         applied++;
       }
     } catch (error) {
@@ -2229,6 +2709,11 @@ const RemoteWorkspace = {
     if (!client || !session || !config.remoteTeamId) {
       throw new Error("Liga o workspace remoto antes de enviar ficheiros grandes.");
     }
+    // Resolve and validate the parent before storing bytes. If this fails, no
+    // unreferenced object is left behind in the private media bucket.
+    const subjectRef = await this._subjectRemoteRef(
+      input.subject_type, input.subject_id, config.remoteTeamId
+    );
     const syncId = remoteUuid();
     const name = remoteSafeFilename(file.name || input.title);
     const path = config.remoteTeamId + "/" + syncId + "/" + name;
@@ -2242,9 +2727,6 @@ const RemoteWorkspace = {
       if (uploaded.error) throw uploaded.error;
     }
 
-    const subjectRef = await this._subjectRemoteRef(
-      input.subject_type, input.subject_id, config.remoteTeamId
-    );
     const remoteRow = {
       id: syncId,
       team_id: config.remoteTeamId,
@@ -2321,6 +2803,8 @@ if (typeof module !== "undefined" && module.exports) {
     remoteSyncRetryDelay,
     remoteConflictPreview,
     remoteDedupeConflicts,
+    remoteReadTeamRows,
+    remoteLatestTimestamp,
     remoteRowBelongsToTeam,
     remoteConflict,
     remoteProjectRef,

@@ -55,6 +55,7 @@
       }
       s.attendance=[...existing.values()];
     }else if(action==='start'){
+      if(row.status==='completed'||row.manual_completion?.status==='confirmed')throw new Error('Este treino já foi assinalado como realizado. Anula a confirmação na ficha antes de iniciar o cronómetro.');
       if(s.status!=='not_started')throw new Error('O treino já foi iniciado.');
       if(!Array.isArray(row.blocos)||!row.blocos.length)throw new Error('Adiciona exercícios antes de iniciar o treino.');
       s.blocks=row.blocos.slice().sort((a,b)=>(a.order||0)-(b.order||0)).map((b,i)=>{
@@ -95,6 +96,31 @@
     }else throw new Error('Operação de sessão desconhecida.');
     s.revision++;s.updated_at=at;row.session=s;return row;
   }
+  function setOccurrence(training,command,options={}){
+    if(command?.confirmed!==true)throw new Error('Confirma explicitamente esta alteração ao estado do treino.');
+    const row=copy(training),s=normalize(row.session),at=stamp(options.now);
+    if(command.expected_revision!==undefined&&command.expected_revision!==s.revision)throw new Error('A sessão mudou noutro dispositivo. Atualiza antes de guardar.');
+    if(s.status!=='not_started'||s.started_at||s.finished_at||s.blocks.length)throw new Error('Este treino já tem uma sessão em campo. Mantém o registo dessa sessão.');
+    const previous=row.manual_completion&&typeof row.manual_completion==='object'?row.manual_completion:null;
+    if(previous?.schema&&previous.schema!=='vision-training-manual-completion@1')throw new Error('Esta confirmação precisa de uma versão mais recente da app.');
+    const actor=text(options.actor||'Treinador',180);
+    const events=Array.isArray(previous?.history)?previous.history:[];
+    if(command.action==='confirm'){
+      const day=String(options.local_date||at.slice(0,10));
+      const planned=String(row.data||'').slice(0,10);
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(planned)||!Number.isFinite(Date.parse(planned+'T12:00:00Z'))||new Date(planned+'T12:00:00Z').toISOString().slice(0,10)!==planned)throw new Error('A data do treino é inválida.');
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(day)||planned>day)throw new Error('Só é possível confirmar um treino de hoje ou anterior.');
+      if(row.status==='completed'||previous?.status==='confirmed')throw new Error('Este treino já está assinalado como realizado.');
+      const priorStatus=['ready','draft'].includes(row.status)?row.status:'draft';
+      row.status='completed';
+      row.manual_completion={schema:'vision-training-manual-completion@1',status:'confirmed',revision:(Number(previous?.revision)||0)+1,prior_status:priorStatus,confirmed_at:at,confirmed_by:actor,history:[...events,{action:'confirm',at,actor}]};
+    }else if(command.action==='retract'){
+      if(row.status!=='completed'||previous?.status!=='confirmed')throw new Error('Não existe confirmação manual para anular.');
+      row.status=['ready','draft'].includes(previous.prior_status)?previous.prior_status:'draft';
+      row.manual_completion={...previous,status:'retracted',revision:(Number(previous.revision)||0)+1,retracted_at:at,retracted_by:actor,history:[...events,{action:'retract',at,actor}]};
+    }else throw new Error('Operação de realização desconhecida.');
+    return row;
+  }
   function duplicate(training,{date,time,identity}){
     if(!/^\d{4}-\d{2}-\d{2}$/.test(date||'')||new Date(date+'T12:00:00Z').toISOString().slice(0,10)!==date)throw new Error('Escolhe uma data válida.');
     if(time&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(time))throw new Error('Hora inválida.');
@@ -103,6 +129,6 @@
     return {team_id:training.team_id,source_training_ref:training.sync_id||null,data:date,hora:time||training.hora||null,local:training.local||null,escalao:training.escalao||null,objetivo:training.objetivo||'',notas:training.notas||null,source_match_ref:training.source_match_ref||null,status:'draft',external_key:'training-copy-'+identity,blocos:(training.blocos||[]).map((b,i)=>({...copy(b),order:i,block_id:identity+'-'+i})),review:{status:'pending'}};
   }
   function format(ms){const sec=Math.floor(Math.max(0,Number(ms)||0)/1000);return String(Math.floor(sec/60)).padStart(2,'0')+':'+String(sec%60).padStart(2,'0');}
-  const api={schema:SCHEMA,attendance:ATTENDANCE,states:STATES,normalize,roster,elapsed,summary,apply,duplicate,format};
+  const api={schema:SCHEMA,attendance:ATTENDANCE,states:STATES,normalize,roster,elapsed,summary,apply,setOccurrence,duplicate,format};
   root.VisionTrainingSession=api;if(typeof module!=='undefined'&&module.exports)module.exports=api;
 })(globalThis);

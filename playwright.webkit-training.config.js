@@ -5,7 +5,7 @@ const { defineConfig } = require("@playwright/test");
 module.exports = defineConfig({
   testDir: "./tests/e2e",
   testMatch: "training_session.spec.js",
-  grep: /session attendance, timer, reload, notes, finish and reset 390/,
+  grep: /session attendance, timer, reload, notes, finish and reset 390|archived athlete history keeps match starts, re-entry, minutes and positions/,
   timeout: 30000,
   workers: 1,
   use: {

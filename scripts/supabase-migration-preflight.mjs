@@ -20,6 +20,31 @@ export function migrationHistoryDrift(rows) {
   return { unapplied, unknownApplied, mismatched };
 }
 
+export function migrationDeploymentPlan(rows) {
+  const local = new Set();
+  const remote = new Set();
+  for (const row of rows || []) {
+    if (row?.local) local.add(String(row.local));
+    if (row?.remote) remote.add(String(row.remote));
+  }
+  const unapplied = [...local].filter(version => !remote.has(version)).sort();
+  const unknownApplied = [...remote].filter(version => !local.has(version)).sort();
+  const latestApplied = [...remote].sort().at(-1) || null;
+  const appliedOutOfOrder = latestApplied
+    ? unapplied.filter(version => version < latestApplied)
+    : [];
+  return { unapplied, unknownApplied, latestApplied, appliedOutOfOrder, ready: !unknownApplied.length && !appliedOutOfOrder.length };
+}
+
+export function migrationDeploymentMessage(plan) {
+  const lines = ["Auditoria apenas de leitura; não aplicou migrations nem alterou dados."];
+  if (plan.unapplied.length) lines.push("Versões locais sem registo remoto (isto não prova se o SQL já foi executado): " + plan.unapplied.join(", ") + ".");
+  if (plan.unknownApplied.length) lines.push("Versões no histórico remoto sem ficheiro local: " + plan.unknownApplied.join(", ") + ".");
+  if (plan.appliedOutOfOrder.length) lines.push("Bloqueio: há versões locais sem registo antes da versão remota " + plan.latestApplied + ": " + plan.appliedOutOfOrder.join(", ") + ". O SQL pode já ter sido aplicado fora da sequência. Confirma nomes e efeitos, e reconcilia explicitamente o histórico antes de qualquer db push.");
+  if (plan.ready) lines.push("A ordem remota não revela versões desconhecidas nem migrations anteriores em falta.");
+  return lines.join("\n") + "\n";
+}
+
 export function migrationDriftMessage(drift) {
   const lines = ["A stack Supabase local não corresponde às migrations deste branch; os testes de integração foram interrompidos sem aplicar migrations nem fazer reset."];
   if (drift.unapplied.length) lines.push("Ainda por aplicar: " + drift.unapplied.join(", ") + ".");

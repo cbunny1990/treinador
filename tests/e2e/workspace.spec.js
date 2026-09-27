@@ -99,13 +99,15 @@ test("migra dados antigos para o workspace e continua offline", async ({ page, c
       dateIndexes: ["jogos", "treinos"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_data")),
       operationsIndexes: db.transaction("jogos").objectStore("jogos").indexNames.contains("team_proposal_status")
         && ["team_completed_review", "team_proposal_status"].every((index) => db.transaction("treinos").objectStore("treinos").indexNames.contains(index)),
+      memoryUuidIndex: db.transaction("memory_items").objectStore("memory_items").indexNames.contains("sync_id"),
       timelineIndexes: ["activity_items", "jogos", "treinos"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_timeline"))
         && db.transaction("workspace_documents").objectStore("workspace_documents").indexNames.contains("team_timeline_status")
         && ["memory_items", "workspace_documents"].every((store) => db.transaction(store).objectStore(store).indexNames.contains("team_status_timeline")),
     };
   });
 
-  expect(migrated.version).toBe(15);
+  expect(migrated.version).toBe(16);
+  expect(migrated.memoryUuidIndex).toBe(true);
   expect(migrated.trainingNeedsReview).toBe("not_pending");
   expect(migrated.teamId).toBe("default");
   expect(migrated.dateIndexes).toBeTruthy();
@@ -317,7 +319,7 @@ test("snapshot compacto do Workspace percorre o histórico sem materializar jogo
   }));
   expect(snapshot).toEqual({
     hasFullHistory: false, nextMatch: "Próximo adversário", nextTraining: "Próximo treino",
-    reviewCount: 26, reviewSamples: 4, trainingProposals: 7, matchProposals: 9, staleMatchProposals: 10,
+    reviewCount: 26, reviewSamples: 4, trainingProposals: 7, matchProposals: 0, staleMatchProposals: 19,
     scanned: {
       next_jogos: 1, next_treinos: 1, jogos_team_proposal_status: 19,
       treinos_team_completed_review: 26, treinos_team_proposal_status: 7,
@@ -434,6 +436,35 @@ test("Workspace surfaces ready training plans in the explicit approval queue", a
   await expect(queue.getByRole("link", { name: /Plano arquivado E2E/ })).toHaveCount(0);
 });
 
+test("Workspace mostra observações recentes ativas com origem e ligação à ficha", async ({ page }) => {
+  await page.goto("/");
+  const ids = await page.evaluate(async () => {
+    RemoteWorkspace.scheduleSync = () => {};
+    const recent = await HeadCoachMemory.create({ team_id: DEFAULT_TEAM_ID, kind: "observation", title: "Apoio após passe", content: "O apoio apareceu depois do passe.", occurred_at: "2026-09-24", source: { type: "match", label: "Jogo vs União" } });
+    const older = await HeadCoachMemory.create({ team_id: DEFAULT_TEAM_ID, kind: "observation", title: "Pressão na saída", content: "A equipa recuperou a bola no meio campo.", occurred_at: "2026-09-20", source: { type: "coach", label: "Treinador" } });
+    const archived = await HeadCoachMemory.create({ team_id: DEFAULT_TEAM_ID, kind: "observation", title: "Observação arquivada", content: "Registo antigo.", occurred_at: "2026-09-25", source: { type: "coach", label: "Treinador" } });
+    await HeadCoachMemory.archive(archived);
+    return { recent, older };
+  });
+  await page.goto("/");
+  const panel = page.locator("[data-workspace-observations-list]");
+  const rows = panel.locator("[data-workspace-observation]");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("Apoio após passe");
+  await expect(rows.nth(0)).toContainText("Origem: Jogo vs União");
+  await expect(rows.nth(0)).toContainText("O apoio apareceu depois do passe.");
+  await expect(rows.nth(0)).toHaveAttribute("href", `#/timeline/memory/${ids.recent}`);
+  await expect(rows.nth(1)).toHaveAttribute("href", `#/timeline/memory/${ids.older}`);
+  await expect(panel).not.toContainText("Observação arquivada");
+});
+
+test("Workspace oferece captura quando não existem observações ativas", async ({ page }) => {
+  await page.goto("/");
+  const panel = page.locator("[data-workspace-observations-list]");
+  await expect(panel).toContainText("Ainda não há observações ativas.");
+  await expect(panel.getByRole("link", { name: "Registar observação" })).toHaveAttribute("href", "#/capturar");
+});
+
 test("Workspace shows the current weekly objective and explains duplicate or empty focus", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => typeof DB !== "undefined" && typeof TeamDevelopment !== "undefined");
@@ -516,7 +547,7 @@ test("Workspace includes Head Coach team priority proposals in the review queue"
   await page.goto("/");
   const queue = page.getByRole("heading", { name: /Propostas por rever/ }).locator("xpath=..");
   await expect(queue).toContainText("1");
-  await expect(queue.getByRole("link", { name: /Apoio após passe/ })).toHaveAttribute("href", "#/evolucao");
+  await expect(queue.getByRole("link", { name: /Apoio após passe/ })).toHaveAttribute("href", "#/evolucao?focus=objetivos");
   await expect(queue.getByRole("link", { name: /Prioridade arquivada E2E/ })).toHaveCount(0);
 });
 
@@ -603,13 +634,13 @@ test("Workspace next events skip cancelled, completed matches and completed sess
 
 test("treinador regista observação e ela entra na atividade partilhada", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("link", { name: "Registar observação" }).click();
+  await page.locator(".hero-main").getByRole("link", { name: "Registar observação" }).click();
 
   await page.getByLabel("Título").fill("Saída sob pressão");
   await page.getByRole("textbox", { name: "Observação", exact: true }).fill("Faltaram linhas de passe quando o adversário pressionou alto.");
   await page.getByRole("button", { name: "Guardar observação" }).click();
 
-  await expect(page.getByText("Saída sob pressão")).toBeVisible();
+  await expect(page.locator("[data-workspace-observation]").filter({ hasText: "Saída sob pressão" })).toBeVisible();
   await expect(page.getByText(/Registou observação/)).toBeVisible();
 
   await page.getByRole("link", { name: "Timeline", exact: true }).first().click();
@@ -862,6 +893,49 @@ test("definições distinguem Realtime degradado sem voltar a desenhar a página
   await expect(page.getByRole("heading", { name: "Definições" })).toBeVisible();
 });
 
+test("Definições permite trocar offline entre workspaces conhecidos sem misturar atletas", async ({ page, context }) => {
+  await page.goto("/");
+  await page.evaluate(async () => {
+    const teamA = "11111111-1111-4111-8111-111111111111";
+    const teamB = "22222222-2222-4222-8222-222222222222";
+    const userId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const url = "https://coach.example.supabase.co";
+    localStorage.setItem("treinador.remote.supabase.v1", JSON.stringify({
+      url, remoteTeamId: teamA, cachedRemoteTeamsUserId: userId, cachedRemoteTeamsUrl: url,
+      cachedRemoteTeams: [
+        { id: teamA, name: "Sub-8 Offline", metadata: { escalao: "Sub-8" }, updated_at: "team-a-v1" },
+        { id: teamB, name: "Sub-9 Offline", metadata: { escalao: "Sub-9" }, updated_at: "team-b-v1" },
+      ],
+    }));
+    RemoteWorkspace.getSession = async () => ({ user: { id: userId } });
+    RemoteWorkspace.status = async () => ({ configured: true, signedIn: true, email: "coach@example.test", remoteTeamId: teamA, conflicts: [], offline: true });
+    RemoteWorkspace.listTeams = async () => [
+      { id: teamA, name: "Sub-8 Offline", cached: true },
+      { id: teamB, name: "Sub-9 Offline", cached: true },
+    ];
+    RemoteWorkspace.stopRealtime = async () => {};
+    RemoteWorkspace.scheduleSync = () => {};
+    MCPConnectors.list = async () => ({ ok: true, connectors: [] });
+    const team = await DB.obter("teams", DEFAULT_TEAM_ID);
+    await DB.atualizar("teams", { ...(team || {}), id: DEFAULT_TEAM_ID, nome: "Sub-8 Offline", sync_id: teamA, remote_updated_at: "team-a-v1", sync_dirty: false }, { remote: true });
+    for (const player of await DB.listar("jogadores")) {
+      await DB.atualizar("jogadores", { ...player, remote_team_id: teamA }, { remote: true });
+    }
+    await DB.criar("jogadores", { team_id: DEFAULT_TEAM_ID, nome: "Atleta só da Sub-9", remote_team_id: teamB, sync_id: "33333333-3333-4333-8333-333333333333", sync_dirty: false }, { remote: true });
+    location.hash = "#/definicoes";
+    await router();
+  });
+  await expect(page.getByText(/Sem Internet: lista de workspaces guardada/)).toBeVisible();
+  await expect(page.locator("#remote-team-select option").filter({ hasText: "Sub-9 Offline · guardada offline" })).toHaveCount(1);
+  await context.setOffline(true);
+  await page.locator("#remote-team-select").selectOption("22222222-2222-4222-8222-222222222222");
+  await page.getByRole("button", { name: "Usar equipa selecionada" }).click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("treinador.remote.supabase.v1")).remoteTeamId)).toBe("22222222-2222-4222-8222-222222222222");
+  const visible = await page.evaluate(async () => (await DB.listar("jogadores")).map((player) => player.nome));
+  expect(visible).toEqual(["Atleta só da Sub-9"]);
+  await expect(page.getByRole("heading", { name: "Definições" })).toBeVisible();
+});
+
 test("alteração offline recebe UUID e eliminação cria tombstone", async ({ page }) => {
   await page.goto("/");
   const state = await page.evaluate(async () => {
@@ -1002,11 +1076,13 @@ test("editar documento remoto preserva identidade e versão de sincronização",
 
 
 test("calendário e página de jogo preservam preparação estruturada", async ({ page }) => {
-  const gameDate = new Date();
-  gameDate.setUTCDate(gameDate.getUTCDate() + 1);
-  const gameDateISO = gameDate.toISOString().slice(0, 10);
+  const gameDate = await page.evaluate(() => {
+    const date = new Date();
+    date.setDate(date.getDate() - 2);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  });
   await page.goto("/#/equipa/jogo/novo");
-  await page.getByLabel("Data").fill(gameDateISO);
+  await page.getByLabel("Data").fill(gameDate);
   await page.getByLabel("Hora do jogo").fill("10:00");
   await page.getByLabel("Adversário").fill("Teste E2E");
   await page.getByLabel("Casa / Fora").selectOption("fora");
@@ -1017,15 +1093,19 @@ test("calendário e página de jogo preservam preparação estruturada", async (
 
   await expect(page.getByRole("heading", { name: "Antes do jogo" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Alinhamento 5v5" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Durante" })).toBeVisible();
+  await expect(page.locator('.match-stage-nav').getByRole('button', { name: 'Durante' })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Depois" })).toBeVisible();
 
   await page.getByLabel("Objetivo principal").fill("Circular rápido e abrir o campo");
+  await expect(page.getByLabel("Sistema observado")).toHaveCount(0);
+  await page.getByRole("button", { name: "Guardar plano" }).click();
+  page.on('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Dar jogo como terminado' }).click();
   await page.getByLabel("Sistema observado").fill("1-2-1");
   await page.getByLabel("Estilo observado").selectOption("pressao_alta");
   await page.getByLabel("Pontos fortes observados · um por linha").fill("Pressão coordenada\nAvançado rápido");
   await page.getByLabel("Vulnerabilidades observadas · um por linha").fill("Espaço nas costas");
-  await page.getByRole("button", { name: "Guardar plano" }).click();
+  await page.getByRole("button", { name: "Guardar observações ao adversário" }).click();
   await page.getByRole("link", { name: "Editar dados" }).click();
   await page.getByLabel("Local").fill("Campo Teste 2");
   await page.getByRole("button", { name: "Guardar jogo" }).click();
@@ -1035,16 +1115,70 @@ test("calendário e página de jogo preservam preparação estruturada", async (
     return games.find((x) => x.adversario === "Teste E2E");
   });
   expect(stored.pre_game.objetivo_principal).toBe("Circular rápido e abrir o campo");
-  expect(stored.pre_game.adversario_sistema).toBe("1-2-1");
-  expect(stored.pre_game.adversario_estilo).toBe("pressao_alta");
-  expect(stored.pre_game.adversario_pontos_fortes).toEqual(["Pressão coordenada", "Avançado rápido"]);
-  expect(stored.pre_game.adversario_vulnerabilidades).toEqual(["Espaço nas costas"]);
+  expect(stored.post_game.opponent_observation.adversario_sistema).toBe("1-2-1");
+  expect(stored.post_game.opponent_observation.adversario_estilo).toBe("pressao_alta");
+  expect(stored.post_game.opponent_observation.adversario_pontos_fortes).toEqual(["Pressão coordenada", "Avançado rápido"]);
+  expect(stored.post_game.opponent_observation.adversario_vulnerabilidades).toEqual(["Espaço nas costas"]);
   expect(stored.hora_saida).toBe("08:30");
-  expect(stored.external_key).toContain(gameDateISO);
+  expect(stored.external_key).toContain(gameDate);
 
   await page.goto("/#/calendario");
+  await page.getByRole("link", { name: "6 semanas anteriores" }).click();
   await expect(page.getByText("Jogo vs Teste E2E")).toBeVisible();
-  await expect(page.getByText(/saída 08:30/)).toBeVisible();
+});
+
+for (const width of [390, 1440]) test(`observações antigas do adversário são revistas apenas depois do jogo · ${width}px`, async ({ page, context }) => {
+  await page.setViewportSize({ width, height: 844 });
+  await page.goto('/#/calendario');
+  await page.waitForFunction(() => typeof DB !== 'undefined' && typeof go === 'function');
+  const id = await page.evaluate(() => DB.criar('jogos', {
+    team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: '2026-09-27', adversario: 'Legado adversário', estado: 'concluido',
+    pre_game: { objetivo_principal: 'Circular', adversario_sistema: '1-2-1', adversario_notas: 'Nota antiga', adversario_pontos_fortes: ['Pressão alta'] },
+    post_game: { analysis: { schema: 'vision-match-analysis@1', revision: 0, status: 'pending', fields: {}, goals_conceded: {}, history: [] } },
+  }));
+  await page.evaluate(matchId => go('#/equipa/jogo/' + matchId), id);
+  await expect(page.locator('#match-before [name="adversario_sistema"]')).toHaveCount(0);
+  await expect(page.locator('.match-stage-nav [data-target="match-during"]')).toHaveCount(0);
+  const form = page.locator('[data-form="match-opponent"]');
+  await expect(form.getByLabel('Sistema observado')).toHaveValue('1-2-1');
+  await expect(form.getByLabel('Notas do adversário')).toHaveValue('Nota antiga');
+  await context.setOffline(true);
+  await form.getByLabel('Sistema observado').fill('2-2');
+  await form.getByLabel('Notas do adversário').fill('Observado depois da partida');
+  await form.getByRole('button', { name: 'Guardar observações ao adversário' }).click();
+  await expect.poll(() => page.evaluate(matchId => DB.obter('jogos', matchId).then(row => row.post_game?.opponent_observation?.adversario_sistema), id)).toBe('2-2');
+  await context.setOffline(false);
+  await page.reload();
+  const reopened = page.locator('[data-form="match-opponent"]');
+  await expect(reopened.getByLabel('Sistema observado')).toHaveValue('2-2');
+  await reopened.getByLabel('Sistema observado').fill('');
+  await reopened.getByLabel('Notas do adversário').fill('');
+  await reopened.getByLabel('Pontos fortes observados · um por linha').fill('');
+  await reopened.getByRole('button', { name: 'Guardar observações ao adversário' }).click();
+  const stored = await page.evaluate(matchId => DB.obter('jogos', matchId), id);
+  expect(stored.pre_game.adversario_sistema).toBe('1-2-1');
+  expect(stored.post_game.opponent_observation.adversario_sistema).toBeNull();
+  expect(stored.post_game.opponent_observation.adversario_pontos_fortes).toEqual([]);
+  expect(stored.post_game.analysis.schema).toBe('vision-match-analysis@1');
+  expect(await page.evaluate(matchId => ReportExporter.render('match-report', matchId), id)).toContain('Sem observações ao adversário registadas');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+});
+
+test('edição concorrente das observações ao adversário mantém o texto por guardar', async ({ page }) => {
+  await page.goto('/#/calendario');
+  await page.waitForFunction(() => typeof DB !== 'undefined' && typeof go === 'function');
+  const id = await page.evaluate(() => DB.criar('jogos', { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: '2026-09-27', adversario: 'Conflito adversário', estado: 'concluido' }));
+  await page.evaluate(matchId => go('#/equipa/jogo/' + matchId), id);
+  const form = page.locator('[data-form="match-opponent"]');
+  await form.getByLabel('Notas do adversário').fill('Texto ainda por guardar');
+  await page.evaluate(matchId => DB.modificar('jogos', matchId, row => ({ ...row, post_game: { ...(row.post_game || {}), opponent_observation: { adversario_notas: 'Texto noutro dispositivo', updated_at: '2026-09-27T12:00:00.000Z' } } })), id);
+  const dialog = page.waitForEvent('dialog').then(async alert => {
+    expect(alert.message()).toContain('mudaram noutro dispositivo');
+    await alert.accept();
+  });
+  await Promise.all([dialog, form.getByRole('button', { name: 'Guardar observações ao adversário' }).click()]);
+  await expect(form.getByLabel('Notas do adversário')).toHaveValue('Texto ainda por guardar');
+  expect(await page.evaluate(matchId => DB.obter('jogos', matchId).then(row => row.post_game.opponent_observation.adversario_notas), id)).toBe('Texto noutro dispositivo');
 });
 
 
@@ -1254,9 +1388,59 @@ test("sync do Workspace corre em fundo, atualiza a vista uma vez e preserva o sc
   await expect(page.getByText("Human–AI Shared Workspace")).toBeVisible();
 });
 
+test("Workspace espera pelo fim do gesto de scroll antes de redesenhar dados recebidos", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.waitForFunction(() => typeof routerRunning === "boolean" && !routerRunning);
+  await page.evaluate(() => {
+    RemoteWorkspace.scheduleSync = () => {};
+    RemoteWorkspace.status = async () => ({ configured: false, signedIn: false, conflicts: [] });
+    window.__scrollRefreshBuilds = 0;
+    const build = WorkspaceStore.buildSnapshot.bind(WorkspaceStore);
+    WorkspaceStore.buildSnapshot = (...args) => { window.__scrollRefreshBuilds++; return build(...args); };
+    document.getElementById("app").style.minHeight = "2200px";
+    window.scrollTo(0, 640);
+    window.dispatchEvent(new Event("touchmove", { bubbles: true }));
+    window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", {
+      detail: { pulled: 1, pushed: 0, conflicts: [], deleted: 0 },
+    }));
+    window.__scrollGestureProbe = new Promise(resolve => {
+      setTimeout(() => {
+        const beforeSecond = window.__scrollRefreshBuilds;
+        window.dispatchEvent(new Event("touchmove", { bubbles: true }));
+        setTimeout(() => resolve({ beforeSecond, afterSecond: window.__scrollRefreshBuilds }), 260);
+      }, 180);
+    });
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(640);
+  const gestureProbe = await page.evaluate(() => window.__scrollGestureProbe);
+  expect(gestureProbe).toEqual({ beforeSecond: 0, afterSecond: 0 });
+  await expect.poll(() => page.evaluate(() => window.__scrollRefreshBuilds), { timeout: 2000 }).toBe(1);
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(640);
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event("touchmove", { bubbles: true }));
+    window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", {
+      detail: { pulled: 1, pushed: 0, conflicts: [], deleted: 0 },
+    }));
+    go("#/calendario");
+  });
+  await expect(page.getByRole("heading", { name: "Calendário" })).toBeVisible();
+  await page.waitForTimeout(450);
+  expect(await page.evaluate(() => window.__scrollRefreshBuilds)).toBe(1);
+});
+
 test("emblema do Sub-8 de Figueiró aparece na identidade da equipa", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => typeof DB !== "undefined" && typeof router === "function");
+  const brandColors = await page.evaluate(() => {
+    const style = getComputedStyle(document.documentElement);
+    return {
+      accent: style.getPropertyValue("--accent").trim().toLowerCase(),
+      surface: style.getPropertyValue("--surface").trim().toLowerCase(),
+      ink: style.getPropertyValue("--ink").trim().toLowerCase(),
+    };
+  });
+  expect(brandColors).toEqual({ accent: "#c8102e", surface: "#ffffff", ink: "#0f172a" });
   await page.evaluate(async () => {
     await DB.modificar("teams", DEFAULT_TEAM_ID, team => ({
       ...team, nome: "Sub-8 do 1.º de Maio de Figueiró", clube: "1.º de Maio de Figueiró", escalao: "sub-8",
@@ -1304,22 +1488,75 @@ test("conflito de eliminação offline mostra versões e exige uma escolha expl�
   await expect.poll(() => page.evaluate(() => window.__identityRecovery)).toEqual(["jogos", "12", "match-stable", "local-v2", "v2"]);
 });
 
-test("atalho do Workspace abre diretamente a fila de conflitos", async ({ page }) => {
+test("conflito bloqueado orienta para a equipa e liga ao registo local sem transbordo móvel", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined" && typeof router === "function");
+  await page.evaluate(async () => {
+    RemoteWorkspace.status = async () => ({ configured: true, signedIn: true, email: "coach@example.test", remoteTeamId: "team-test", conflicts: [
+      { store: "jogos", local_id: 12, sync_id: "match-blocked", reason: "subject_other_team" },
+      { store: "treinos", local_id: 4, sync_id: "training-blocked", reason: "subject_uuid_not_in_team" },
+      { store: "media_items", local_id: 9, sync_id: "media-blocked", reason: "storage_path_team_mismatch" },
+      { store: "activity_items", local_id: null, sync_id: "unknown-origin", reason: "remote_team_unknown" },
+      { store: "memory_items", local_id: null, sync_id: "unknown-memory", reason: "invalid_subject_id" }
+    ] });
+    RemoteWorkspace.getConfig = () => ({ url: "https://example.supabase.co", publishableKey: "sb_publishable_test" });
+    RemoteWorkspace.listTeams = async () => [{ id: "team-test", name: "Equipa de teste" }];
+    MCPConnectors.list = async () => [];
+    await router();
+  });
+  await page.getByRole("button", { name: "Abrir revisão" }).click();
+  await expect(page.locator('[data-conflict-card="match-blocked"] [data-conflict-local-link]')).toHaveAttribute("href", "#/equipa/jogo/12");
+  await expect(page.locator('[data-conflict-card="training-blocked"] [data-conflict-local-link]')).toHaveAttribute("href", "#/treinos/4");
+  await expect(page.locator('[data-conflict-card="training-blocked"]')).not.toContainText("Abrir seleção do workspace");
+  await expect(page.locator('[data-conflict-card="training-blocked"]')).toContainText("A UUID do registo de origem não pertence ao workspace selecionado");
+  await expect(page.locator('[data-conflict-card="training-blocked"]')).not.toContainText("atividade");
+  await expect(page.locator('[data-conflict-card="media-blocked"] [data-conflict-local-link]')).toHaveAttribute("href", "#/media/9/editar");
+  await expect(page.locator('[data-conflict-card="match-blocked"] [data-conflict-reason]')).toHaveText("subject_other_team");
+  await expect(page.locator('[data-conflict-card="unknown-memory"] [data-conflict-next-step]')).toContainText("invalid_subject_id");
+  await page.getByText("Contagem por motivo e tipo de registo").click();
+  await expect(page.locator(".conflict-counts li").filter({ hasText: "invalid_subject_id · Memória: 1" })).toBeVisible();
+  await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async text => { window.__conflictSummary = text; } } }));
+  await page.getByRole("button", { name: "Copiar resumo sem dados pessoais" }).click();
+  await expect(page.locator("[data-conflict-copy-feedback]")).toContainText("Resumo copiado");
+  const summary = await page.evaluate(() => window.__conflictSummary);
+  expect(summary).toContain("invalid_subject_id · Memória: 1");
+  expect(summary).not.toContain("match-blocked");
+  expect(summary).not.toContain("coach@example.test");
+  const width = await page.evaluate(() => ({ viewport: document.documentElement.clientWidth, content: document.documentElement.scrollWidth }));
+  expect(width.content).toBeLessThanOrEqual(width.viewport);
+  await page.locator('[data-conflict-card="match-blocked"]').getByRole("link", { name: "Abrir seleção do workspace" }).click();
+  await expect(page).toHaveURL(/#\/definicoes\?focus=workspace$/);
+  await expect(page.locator("#remote-team-select")).toBeVisible();
+});
+
+test("Workspace permite rever e decidir um conflito sem sair da página", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined" && typeof router === "function" && typeof MCPConnectors !== "undefined");
   await page.evaluate(async () => {
     RemoteWorkspace.status = async () => ({ configured: true, signedIn: true, email: "treinador@example.test", remoteTeamId: "team-test", conflicts: [{ store: "jogos", local_id: null, sync_id: "match-conflict", reason: "version_mismatch", expected_updated_at: "v1", remote_updated_at: "v2" }] });
     RemoteWorkspace.getConfig = () => ({ url: "https://example.supabase.co", publishableKey: "sb_publishable_test" });
     RemoteWorkspace.listTeams = async () => [{ id: "team-test", name: "Equipa de teste" }];
+    RemoteWorkspace.scheduleSync = () => {};
+    RemoteWorkspace.syncNow = async () => ({ pulled: 0, deleted: 0, conflicts: [] });
+    RemoteWorkspace.readVersionConflict = async () => ({ store: "jogos", sync_id: "match-conflict", remote_updated_at: "v2", local_updated_at: "local-v2", local: { adversario: "Local" }, remote: { adversario: "Remoto" }, merge_unavailable: "Escolhe a versão a manter." });
+    RemoteWorkspace.resolveVersionConflict = async (...args) => { window.__workspaceConflictDecision = args; return { conflicts: [] }; };
+    window.confirm = () => true;
+    window.alert = () => {};
     MCPConnectors.list = async () => [];
     await router();
   });
-  await page.getByRole("link", { name: "Rever conflitos" }).click();
-  await expect(page).toHaveURL(/#\/definicoes\?focus=conflitos$/);
+  const workspaceUrl = page.url();
+  await page.getByRole("button", { name: "Abrir revisão" }).click();
+  expect(page.url()).toBe(workspaceUrl);
+  await expect(page.locator("[data-workspace-conflicts]")).toHaveAttribute("open", "");
   await expect(page.getByText("1 ocorrências detetadas")).toBeVisible();
   await expect.poll(() => page.locator("#remote-conflicts").evaluate(element => element.getBoundingClientRect().top)).toBeLessThan(140);
   const top = await page.locator("#remote-conflicts").evaluate(element => element.getBoundingClientRect().top);
   expect(top).toBeGreaterThanOrEqual(-8);
+  await page.getByRole("button", { name: "Comparar versões" }).click();
+  await page.getByRole("button", { name: "Usar versão do workspace remoto" }).click();
+  await expect.poll(() => page.evaluate(() => window.__workspaceConflictDecision)).toEqual(["match-conflict", "jogos", "keep_remote", "v2", "local-v2", null]);
 });
 
 test("Definições carrega em paralelo e não lê os bytes de media para contar conflitos", async ({ page }) => {
@@ -1395,12 +1632,14 @@ test("conflito de edição compara as duas versões antes de permitir uma decis�
     RemoteWorkspace.getConfig = () => ({ url: "https://example.supabase.co", publishableKey: "sb_publishable_test" });
     RemoteWorkspace.listTeams = async () => [{ id: "team-test", name: "Equipa de teste" }];
     MCPConnectors.list = async () => [];
-    RemoteWorkspace.readVersionConflict = async (id, store) => ({ sync_id: id, store, local_updated_at: "local-v2", remote_updated_at: "v2", local: { nota_tatica: "Versão escrita no telemóvel" }, remote: { nota_tatica: "Versão atual do PC" }, merge_suggestion: null, merge_unavailable: "As duas versões alteraram os mesmos campos; a combinação automática ficou bloqueada." });
+    RemoteWorkspace.readVersionConflict = async (id, store) => ({ sync_id: id, store, local_updated_at: "local-v2", remote_updated_at: "v2", local: { nota_tatica: "Versão escrita no telemóvel", historico: ["[conteúdo omitido: mais 3 itens]"] }, remote: { nota_tatica: "Versão atual do PC" }, merge_suggestion: null, merge_unavailable: "As duas versões alteraram os mesmos campos; a combinação automática ficou bloqueada." });
     RemoteWorkspace.resolveVersionConflict = async (...args) => { window.__versionResolution = args; return { conflicts: [] }; };
     go("#/definicoes");
   });
   await expect(page.getByText(/As duas versões estão preservadas/)).toBeVisible();
   await page.getByRole("button", { name: "Comparar versões" }).click();
+  await expect(page.getByText(/conteúdo omitido da pré-visualização aparece assinalado/)).toBeVisible();
+  await expect(page.locator(".conflict-preview").first()).toContainText("[conteúdo omitido: mais 3 itens]");
   await expect(page.getByText('"nota_tatica": "Versão escrita no telemóvel"')).toBeVisible();
   await expect(page.getByText('"nota_tatica": "Versão atual do PC"')).toBeVisible();
   await expect(page.getByText("As duas versões alteraram os mesmos campos; a combinação automática ficou bloqueada.")).toBeVisible();
@@ -1438,6 +1677,7 @@ test("conflito com uma só versão alterada mostra a proposta antes de confirmar
 });
 
 test("pré-visualização em lote deixa os conflitos sobrepostos para revisão e só grava após confirmação", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined" && typeof router === "function" && typeof MCPConnectors !== "undefined");
   await page.evaluate(() => {
@@ -1452,7 +1692,9 @@ test("pré-visualização em lote deixa os conflitos sobrepostos para revisão e
         { sync_id: "m1", store: "jogos", display_name: "Jogo 1", mergeable: true, resolution: "merge_non_overlapping", expected_remote: "r1", expected_local: "l1", local_changes: ["resultado"], remote_changes: ["nota_tatica"], payload: { resultado: "2-1", nota_tatica: "Apoio" } },
         { sync_id: "m2", store: "jogos", display_name: "Jogo 2", mergeable: true, resolution: "merge_non_overlapping", expected_remote: "r2", expected_local: "l2", local_changes: ["local"], remote_changes: ["data"], payload: { local: "Campo A", data: "2026-10-04" } },
         { sync_id: "m3", store: "jogos", display_name: "Jogo 3", mergeable: true, resolution: "keep_remote", single_change: true, changed_side: "remote", expected_remote: "r3", expected_local: "l3", local_changes: [], remote_changes: ["nota_tatica"], payload: { nota_tatica: "Versão remota" } },
-      ], needs_review: [{ sync_id: "m4", store: "jogos", display_name: "Jogo 4", mergeable: false, reason: "Os dois lados alteraram o mesmo campo." }] };
+      ], manual_review: [{ sync_id: "m4", store: "jogos", display_name: "Jogo 4", requires_manual_choice: true, reason: "Os dois lados alteraram o mesmo campo.", expected_remote: "r4", expected_local: "l4", manual_merge_fields: [
+        { key: "adversario", local_present: true, remote_present: true, local_value: "Rival local", remote_value: "Rival remoto" },
+      ] }], needs_review: [] };
     };
     RemoteWorkspace.resolveIndependentConflictBatch = async (items) => {
       window.__batchWrites++;
@@ -1462,16 +1704,35 @@ test("pré-visualização em lote deixa os conflitos sobrepostos para revisão e
     go("#/definicoes");
   });
   await page.getByRole("button", { name: "Analisar resoluções seguras (4)" }).click();
-  await expect(page.getByText("3 resoluções seguras · 1 conflito para rever")).toBeVisible();
-  await page.getByText("1 conflito(s) precisam de escolha campo a campo", { exact: true }).click();
+  await expect(page.getByText("3 resoluções seguras · 1 conflito com escolha por campo")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true, "a pré-visualização não deve criar scroll horizontal no telemóvel");
   await expect(page.getByText("Os dois lados alteraram o mesmo campo.")).toBeVisible();
   await expect(page.getByText("Só workspace remoto alterou: Nota tática. Será mantida essa versão.")).toBeVisible();
+  const manualChoiceBox = await page.locator('[data-batch-merge-choice][data-sync-id="m4"]').boundingBox();
+  expect(manualChoiceBox.height).toBeGreaterThanOrEqual(44);
+  const batchPresetBox = await page.locator('[data-action="set-batch-conflict-side"][data-choice="remote"]').boundingBox();
+  expect(batchPresetBox.height).toBeGreaterThanOrEqual(44);
+  await page.getByText("Comparar valores").click();
+  await expect(page.getByText('"Rival local"')).toBeVisible();
+  await expect(page.getByText('"Rival remoto"')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true, "os valores comparados devem caber no telemóvel");
+  let missingChoiceMessage = "";
+  page.on("dialog", async dialog => { if (dialog.type() === "alert") missingChoiceMessage = dialog.message(); await dialog.accept(); });
+  await page.getByRole("button", { name: "Aplicar e sincronizar 4 decisões" }).click();
+  expect(missingChoiceMessage).toContain("Escolhe Neste dispositivo ou Workspace remoto para cada campo diferente");
+  expect(await page.evaluate(() => window.__batchWrites)).toBe(0);
+  await page.locator('[data-action="set-batch-conflict-side"][data-choice="remote"]').click();
+  await expect(page.locator('[data-batch-merge-choice][data-sync-id="m4"]')).toHaveValue("remote");
+  expect(await page.evaluate(() => window.__batchWrites)).toBe(0);
+  await page.locator('[data-batch-merge-choice][data-sync-id="m4"]').selectOption("local");
   expect(await page.evaluate(() => window.__batchWrites)).toBe(0);
   let resultMessage = "";
+  page.removeAllListeners("dialog");
   page.on("dialog", async dialog => { if (dialog.type() === "alert") resultMessage = dialog.message(); await dialog.accept(); });
-  await page.getByRole("button", { name: "Aplicar e sincronizar 3 resoluções seguras" }).click();
-  await expect.poll(() => page.evaluate(() => window.__batchItems?.length)).toBe(3);
-  expect(await page.evaluate(() => window.__batchItems.map(item => item.sync_id))).toEqual(["m1", "m2", "m3"]);
+  await page.getByRole("button", { name: "Aplicar e sincronizar 4 decisões" }).click();
+  await expect.poll(() => page.evaluate(() => window.__batchItems?.length)).toBe(4);
+  expect(await page.evaluate(() => window.__batchItems.map(item => item.sync_id))).toEqual(["m1", "m2", "m3", "m4"]);
+  expect(await page.evaluate(() => window.__batchItems[3].field_choices)).toEqual({ adversario: "local" });
   expect(resultMessage).toContain("1 conflito continua preservado");
 });
 
@@ -1617,6 +1878,26 @@ test("render do Workspace não repõe o scroll capturado se a barra mudar antes 
   expect(finalScroll).toBe(920);
 });
 
+test("Workspace não salta para o topo se o treinador rolar enquanto a vista inicial carrega", async ({ page }) => {
+  await page.goto("/#/calendario");
+  await page.waitForFunction(() => typeof routerRunning === "boolean" && !routerRunning);
+  await page.evaluate(() => {
+    document.getElementById("app").style.minHeight = "2200px";
+    window.__releaseWorkspaceStatus = null;
+    RemoteWorkspace.status = () => new Promise(resolve => { window.__releaseWorkspaceStatus = resolve; });
+    go("#/");
+  });
+  await expect.poll(() => page.evaluate(() => typeof window.__releaseWorkspaceStatus)).toBe("function");
+  await page.evaluate(() => {
+    window.dispatchEvent(new WheelEvent("wheel", { deltaY: 640 }));
+    window.scrollTo(0, 640);
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(640);
+  await page.evaluate(() => window.__releaseWorkspaceStatus({ signedIn: false, conflicts: [] }));
+  await expect(page.getByText("Human–AI Shared Workspace")).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(640);
+});
+
 test("conflito antigo permite escolher valores por campo e bloqueia escolhas incompletas", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
@@ -1643,6 +1924,8 @@ test("conflito antigo permite escolher valores por campo e bloqueia escolhas inc
   await page.getByRole("button", { name: "Comparar versões" }).click();
   await expect(page.getByRole("heading", { name: "Escolher campo a campo" })).toBeVisible();
   await expect(page.locator("[data-manual-merge-field]")).toHaveCount(2);
+  const manualChoiceBox = await page.locator('[data-manual-merge-field="nota_tatica"]').boundingBox();
+  expect(manualChoiceBox.height).toBeGreaterThanOrEqual(44);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   let alertMessage = "";
   page.once("dialog", async (dialog) => { alertMessage = dialog.message(); await dialog.accept(); });
@@ -1694,23 +1977,32 @@ test("service worker não recarrega enquanto existe formulário ou sessão em ut
     navigator.serviceWorker.dispatchEvent(new Event("controllerchange"));
     navigator.serviceWorker.dispatchEvent(new Event("controllerchange"));
   });
-  await expect(page.getByText(/Atualização disponível\. Termina ou guarda o trabalho em curso/)).toBeVisible();
+  await expect(page.getByText(/Atualização disponível\. Guarda o trabalho em curso antes de atualizar/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Atualizar app" })).toBeDisabled();
   await expect(page.locator("textarea")).toHaveValue("texto por guardar");
   expect(await page.evaluate((version) => sessionStorage.getItem(`vision-sw-reloaded-v${version}`), appVersion)).toBeNull();
 });
 
-test("service worker update after an older cached reload does not stay suppressed", async ({ page }) => {
+test("service worker update asks before reloading and preserves Workspace scroll", async ({ page }) => {
   await page.goto("/");
   await page.waitForFunction(() => !!navigator.serviceWorker?.controller);
-  const reloaded = page.waitForEvent("framenavigated");
-  void page.evaluate(() => {
-    sessionStorage.setItem("vision-sw-reloaded-v95", "1");
+  await page.waitForFunction(() => typeof routerRunning === "boolean" && !routerRunning);
+  await page.waitForTimeout(350);
+  const initial = await page.evaluate(() => {
+    document.getElementById("app").style.minHeight = "2200px";
+    window.scrollTo(0, 640);
+    return { scroll: window.scrollY, navigation: performance.getEntriesByType("navigation").length };
+  });
+  expect(initial.scroll).toBe(640);
+  await page.evaluate(() => {
     navigator.serviceWorker.dispatchEvent(new Event("controllerchange"));
-  }).catch(() => {});
-  await reloaded;
-  await page.waitForLoadState("domcontentloaded");
-  await expect.poll(() => page.evaluate((version) => sessionStorage.getItem(`vision-sw-reloaded-v${version}`), appVersion)).toBe("1");
+  });
+  await expect(page.getByRole("status").filter({ hasText: "Atualização disponível" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Atualizar app" })).toBeEnabled();
+  await page.waitForTimeout(100);
+  await expect(page.getByRole("heading", { name: "O estado da equipa, num único lugar." })).toBeVisible();
+  expect(await page.evaluate(() => ({ scroll: window.scrollY, navigation: performance.getEntriesByType("navigation").length }))).toEqual(initial);
+  expect(await page.evaluate((version) => sessionStorage.getItem(`vision-sw-reloaded-v${version}`), appVersion)).toBeNull();
 });
 
 test("estado do jogador condiciona convocatória e saída do plantel preserva registo", async ({ page }) => {
@@ -1797,6 +2089,33 @@ test("foto do atleta persiste na fila local antes de iniciar a sincronização r
   expect(saved.media.sync_dirty).toBe(true);
   expect(saved.ref).toBe(saved.media.sync_id);
   expect(saved.syncDelays).toContain(0);
+});
+
+test("foto antiga permanece visível e a remoção da foto de perfil avisa do efeito em todos os dispositivos", async ({ page }) => {
+  await page.goto("/#/equipa");
+  const fixture = await page.evaluate(async () => {
+    const photo = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const playerId = await DB.criar("jogadores", { team_id: DEFAULT_TEAM_ID, nome: "Atleta Foto Antiga E2E", foto: photo });
+    const mediaId = await HeadCoachMedia.create({
+      team_id: DEFAULT_TEAM_ID, subject_type: "player", subject_id: playerId,
+      type: "photo", title: "Foto de perfil E2E", note: "Foto de perfil do atleta", data_url: photo,
+    });
+    return { playerId, mediaId, photo };
+  });
+  await page.goto("/#/equipa/jogador/" + fixture.playerId);
+  await expect(page.locator(".hero-main .avatar img")).toHaveAttribute("src", fixture.photo);
+  await page.goto("/#/media");
+  const messages = [];
+  page.on("dialog", async (dialog) => { messages.push(dialog.message()); await dialog.dismiss(); });
+  await page.locator('.media-card:has-text("Foto de perfil E2E") [data-action="delete-media"]').click();
+  await expect.poll(() => messages.length).toBe(1);
+  expect(messages[0]).toContain("Vai desaparecer do plantel e da ficha do atleta em todos os dispositivos");
+  expect(await page.evaluate(async (id) => Boolean(await DB.obter("media_items", id)), fixture.mediaId)).toBe(true);
+  const legacy = await page.evaluate(async () => {
+    const playerId = await DB.criar("jogadores", { team_id: DEFAULT_TEAM_ID, nome: "Atleta Só Foto Legada", foto: "data:image/png;base64,legado" });
+    return (await applyPlayerProfilePhotos([await DB.obter("jogadores", playerId)]))[0].foto;
+  });
+  expect(legacy).toBe("data:image/png;base64,legado");
 });
 
 test("a UUID local pendente da foto prevalece sobre datas empatadas", async ({ page }) => {

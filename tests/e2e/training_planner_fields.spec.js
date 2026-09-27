@@ -1,5 +1,63 @@
 const { test, expect } = require('@playwright/test');
 
+for (const width of [390, 1440]) test(`planos passados ficam no histórico sem inferir realização · ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 844 });
+  await page.goto('/#/treinos');
+  const ids = await page.evaluate(async () => {
+    RemoteWorkspace.scheduleSync = () => {};
+    const date = (days) => { const d = new Date(TrainingPlanner.localDate() + 'T12:00:00'); d.setDate(d.getDate() + days); return TrainingPlanner.localDate(d); };
+    const create = (data, objetivo, session) => DB.criar('treinos', { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data, objetivo, status: 'ready', blocos: [], ...(session ? { session: { status: session } } : {}) });
+    const old = await create(date(-3), 'Plano anterior sem sessão');
+    await create(date(-2), 'Treino concluído', 'completed');
+    await create(date(-1), 'Sessão ainda em pausa', 'paused');
+    await create(date(2), 'Próximo treino');
+    await router();
+    return { old };
+  });
+  const history = page.getByRole('heading', { name: 'Histórico' }).locator('..');
+  const upcoming = page.getByRole('heading', { name: 'Em curso e próximos' }).locator('..');
+  await expect(history.getByText('Plano anterior sem sessão')).toBeVisible();
+  const oldCard = history.locator('.training-card').filter({ hasText: 'Plano anterior sem sessão' });
+  await expect(oldCard).toContainText('Plano passado');
+  await expect(oldCard.locator('.badge')).toHaveClass(/system/);
+  expect(await oldCard.evaluate(card => card.querySelector('.meta').getBoundingClientRect().top >= card.querySelector('.title').getBoundingClientRect().bottom)).toBe(true);
+  await expect(history.locator('.training-card').filter({ hasText: 'Treino concluído' })).toContainText('Terminado');
+  await expect(upcoming.locator('.training-card').filter({ hasText: 'Sessão ainda em pausa' })).toContainText('Em pausa');
+  await expect(upcoming.locator('.training-card').filter({ hasText: 'Próximo treino' })).toContainText('Pronto');
+  await history.locator('.training-card').filter({ hasText: 'Plano anterior sem sessão' }).click();
+  await expect(page.getByText('Não há uma sessão em campo terminada')).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('Plano passado')).toBeVisible();
+  const saved = await page.evaluate(async (id) => DB.obter('treinos', id), ids.old);
+  expect(saved.status).toBe('ready');
+  expect(saved.session?.status).toBeFalsy();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  page.on('dialog', dialog => dialog.accept());
+  await page.context().setOffline(true);
+  await page.getByRole('button', { name: 'Confirmar que o treino aconteceu' }).click();
+  await expect(page.getByText('Realizado sem cronómetro', { exact: true })).toBeVisible();
+  let occurrence = await page.evaluate(async id => DB.obter('treinos', id), ids.old);
+  expect(occurrence.status).toBe('completed');
+  expect(occurrence.session?.status).toBeFalsy();
+  expect(occurrence.review).toBeUndefined();
+  await page.getByRole('link', { name: 'Treino em campo / presenças' }).click();
+  await expect(page.getByRole('button', { name: 'Iniciar treino' })).toHaveCount(0);
+  await expect(page.getByText('Não foram atribuídos minutos')).toBeVisible();
+  await page.getByRole('link', { name: 'Ficha do treino' }).click();
+  await page.locator('form[data-form="training-review"] textarea[name="conclusao"]').fill('Texto ainda por guardar');
+  await page.getByRole('button', { name: 'Anular confirmação de realização' }).click();
+  await expect(page.getByText('Guarda a avaliação antes de alterar o estado')).toBeVisible();
+  await expect(page.locator('form[data-form="training-review"] textarea[name="conclusao"]')).toHaveValue('Texto ainda por guardar');
+  await page.context().setOffline(false);
+  await page.reload();
+  await page.getByRole('button', { name: 'Anular confirmação de realização' }).click();
+  await expect(page.getByText('Plano passado')).toBeVisible();
+  occurrence = await page.evaluate(async id => DB.obter('treinos', id), ids.old);
+  expect(occurrence.status).toBe('ready');
+  expect(occurrence.manual_completion.history.map(event => event.action)).toEqual(['confirm', 'retract']);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
 test('biblioteca guarda montagem e passos para consulta e plano exportado', async ({ page }) => {
   await page.goto('/#/exercicios/novo');
   await page.evaluate(() => { RemoteWorkspace.scheduleSync = () => {}; });
@@ -58,6 +116,7 @@ test('biblioteca guarda montagem e passos para consulta e plano exportado', asyn
   await page.goto(`/#/treinos/${training.id}/editar`);
   await expect(page.getByRole('checkbox', { name: /Circuito montagem E2E/ })).toBeChecked();
   await page.getByRole('button', { name: 'Guardar treino' }).click();
+  await expect(page).toHaveURL(new RegExp(`#\\/treinos\\/${training.id}$`));
   let savedTraining = await page.evaluate(async id => DB.obter('treinos', id), training.id);
   expect(savedTraining.blocos[0].exercise_snapshot.montagem).toBe('Quatro cones num quadrado de 12 metros.');
 

@@ -82,6 +82,7 @@
     check(row,options);const s=state(row),p=s.proposal;
     if(!p||p.status!=='draft')throw new Error('Não existe uma proposta editável.');
     if(p.source_key!==sourceKey(row))throw new Error('A origem mudou. Gera uma nova proposta antes de a aprovar.');
+    if(p.planning_context?.target_date&&txt(changes.date,10)!==p.planning_context.target_date)throw new Error('A data mudou em relação ao contexto consultado. Gera novamente a proposta para a data escolhida antes de guardar.');
     const next={...p,objective:txt(changes.objective),rationale:txt(changes.rationale),success_criterion:txt(changes.success_criterion),date:txt(changes.date,10),time:txt(changes.time,5),blocks:blocks(changes.blocks,exercises),edited_by:options.actor||'Treinador',updated_at:stamp(options.now)};
     return {...clone(row),continuity:{...s,revision:s.revision+1,proposal:next}};
   }
@@ -95,6 +96,7 @@
     if(!confirmed)throw new Error('A criação do treino exige a tua aprovação explícita.');check(row,{expected_revision});
     const s=state(row),p=s.proposal;if(!p||p.status!=='draft')throw new Error('A proposta já foi aprovada ou não está disponível.');
     if(p.source_key!==sourceKey(row))throw new Error('A avaliação mudou desde a proposta. Atualiza-a antes de aprovar.');
+    if(p.planning_context?.target_date&&p.date!==p.planning_context.target_date)throw new Error('A data da sessão não corresponde à data do contexto consultado. Atualiza a proposta antes de aprovar.');
     if(!validDate(p.date)||p.date<=String(row.data||''))throw new Error('Escolhe uma data válida posterior ao treino de origem.');
     if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(p.time))throw new Error('Define uma hora válida.');
     if(!txt(p.objective)||!txt(p.rationale)||!txt(p.success_criterion))throw new Error('Define objetivo, justificação e como vais avaliar o foco.');
@@ -111,7 +113,7 @@
     if(p.status!=='approved')return {stage:'proposed',label:p.source_key===sourceKey(source)?'Proposta por aprovar':'Proposta desatualizada'};
     if(!target)return {stage:'created',label:'Treino aprovado; não disponível neste dispositivo'};
     const review=effectiveReview(target);if(review.status==='done')return {stage:'evaluated',label:'Avaliado',outcome:OUTCOMES[review.focus_outcome]||OUTCOMES.pending};
-    if(target.session?.status==='completed')return {stage:'trained',label:'Realizado · falta avaliar'};
+    if(target.session?.status==='completed'||target.status==='completed')return {stage:'trained',label:'Realizado · falta avaliar'};
     return {stage:'created',label:'Treino criado'};
   }
   const api={schema:SCHEMA,fields:FIELDS,outcomes:OUTCOMES,state,effectiveReview,reviewKey,sourceKey,sourceData,stableId,identities,evidence,saveReview,clearReview,memory,prepare,check,update,dismiss,approve,progress,blocks,available};

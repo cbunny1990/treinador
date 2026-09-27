@@ -14,7 +14,7 @@ function withIndexingBacklog(admin){
 }
 function fakeAdmin(rows=[match()]){
  const calls=[],fromCalls=[];
- return {calls,fromCalls,from(table){const filters=[];let rangeStart=0,rangeEnd=Infinity;fromCalls.push({table,filters});const query={select(){return this;},eq(k,v){filters.push(r=>r[k]===v);return this;},is(k,v){filters.push(r=>v===null?r[k]==null:r[k]===v);return this;},limit(){return this;},range(start,end){rangeStart=start;rangeEnd=end;return this;},maybeSingle(){return Promise.resolve({data:{metadata:{escalao:'Sub-8'}},error:null});},then(resolve){return Promise.resolve({data:rows.filter(r=>filters.every(f=>f(r))).slice(rangeStart,rangeEnd+1).map(r=>({payload:structuredClone(r.payload)}))}).then(resolve);}};return query;},async rpc(name,args){calls.push({name,args});
+ return {calls,fromCalls,from(table){const filters=[];let rangeStart=0,rangeEnd=Infinity;fromCalls.push({table,filters});const value=(row,key)=>key.startsWith('payload->>')?row.payload?.[key.slice('payload->>'.length)]:row[key];const query={select(){return this;},eq(k,v){filters.push(r=>value(r,k)===v);return this;},is(k,v){filters.push(r=>v===null?value(r,k)==null:value(r,k)===v);return this;},limit(){return this;},range(start,end){rangeStart=start;rangeEnd=end;return this;},maybeSingle(){return Promise.resolve({data:{metadata:{escalao:'Sub-8'}},error:null});},then(resolve){return Promise.resolve({data:rows.filter(r=>filters.every(f=>f(r))).slice(rangeStart,rangeEnd+1).map(r=>({payload:structuredClone(r.payload)}))}).then(resolve);}};return query;},async rpc(name,args){calls.push({name,args});
     if(name==='claim_team_knowledge_jobs')return {data:rows.filter(x=>x.team_id===args.p_team_id&&!x.deleted_at&&['player','match','training','memory','document','game_model','exercise'].includes(x.kind)).map(x=>({source_id:x.id,source_updated_at:x.updated_at,source_kind:x.kind,payload:x.payload,claim_token:'90000000-0000-4000-8000-000000000009'}))};
     if(name==='replace_team_knowledge_source')return {data:args.p_chunks.length};
     if(name==='release_team_knowledge_jobs')return {data:args.p_claims.length};
@@ -31,32 +31,49 @@ test('RAG tool is read-scoped, bounded and has structured filters with stable UU
  const tool=rag.TEAM_KNOWLEDGE_TOOLS[0];assert.equal(tool.name,'search_team_knowledge');assert.equal(tool.annotations.readOnlyHint,false);
  assert.equal(tool.inputSchema.properties.limit.maximum,12);assert.equal(tool.inputSchema.properties.source_kinds.maxItems,7);assert.equal(tool.inputSchema.properties.match_ref.format,'uuid');assert.equal(tool.inputSchema.properties.match_refs.maxItems,10);assert.equal(tool.inputSchema.properties.match_refs.uniqueItems,true);assert.equal(tool.inputSchema.properties.player_ref.format,'uuid');
  assert.equal(tool.inputSchema.properties.per_match_limit.maximum,4);
- const context=rag.TEAM_KNOWLEDGE_TOOLS.find(x=>x.name==='get_training_planning_context');assert.ok(context);assert.equal(context.annotations.readOnlyHint,false);assert.deepEqual(context.inputSchema.required,['target_date','question']);assert.match(context.description,/recently completed training sessions/);assert.match(context.description,/do not count as completed exercise use/);assert.match(tool.description,/not proof that a session or exercise was completed/);
+ const context=rag.TEAM_KNOWLEDGE_TOOLS.find(x=>x.name==='get_training_planning_context');assert.ok(context);assert.equal(context.annotations.readOnlyHint,false);assert.deepEqual(context.inputSchema.required,['target_date','question']);assert.match(context.description,/recently completed training sessions/);assert.match(context.description,/do not count as completed exercise use/);assert.match(context.description,/search_workspace can search kind exercise/);assert.match(tool.description,/not proof that a session or exercise was completed/);
  const recent=rag.TEAM_KNOWLEDGE_TOOLS.find(x=>x.name==='get_recent_match_context');assert.ok(recent);assert.deepEqual(recent.inputSchema.required,['question']);assert.equal(recent.inputSchema.properties.match_count.maximum,5);
 });
 
 test('hybrid training context combines exact structured scope and separate cited RAG results without writing',async()=>{
  const target='50000000-0000-4000-8000-000000000005',training=(id,date,objective,exerciseRef=null)=>({id,team_id:TEAM,kind:'training',updated_at:`${date}T10:00:00.000Z`,payload:{data:date,objetivo:objective,duracao_min:60,blocos:exerciseRef?[{exercise_ref:exerciseRef,exercise_name:'Apoio após passe',duration_min:15}]:[],session:{review:{status:'pending'}}}});
  const matchRows=Array.from({length:7},(_,i)=>({id:`60000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`,team_id:TEAM,kind:'match',updated_at:`2026-09-${String(17-i).padStart(2,'0')}T10:00:00.000Z`,payload:{data:`2026-09-${String(17-i).padStart(2,'0')}`,estado:'concluido',adversario:`Rival ${i+1}`,golos_favor:i,golos_contra:1}}));
- const exercise={id:'70000000-0000-4000-8000-000000000007',team_id:TEAM,kind:'exercise',updated_at:'v1',payload:{nome:'Apoio após passe'}};
+ matchRows[0].payload.post_game={analysis:{fields:{problems:'Atleta A ficou sem apoio após o passe em zona baixa.',hypotheses:'Talvez a distância entre linhas tenha aumentado.'}}};
+ const exercise={id:'70000000-0000-4000-8000-000000000007',team_id:TEAM,kind:'exercise',updated_at:'v1',payload:{nome:'Apoio após passe'}},untouchedExerciseRef='70000000-0000-4000-8000-000000000008';
  const targetTraining=training(target,'2026-09-24','Criar apoios na saída',exercise.id);
- const completedSession=training('50000000-0000-4000-8000-000000000004','2026-09-22','Passe e apoio',exercise.id);completedSession.payload.review={};completedSession.payload.session.status='completed';completedSession.payload.session.review={status:'done',melhorou:'O apoio surgiu mais cedo.'};
+ const completedSession=training('50000000-0000-4000-8000-000000000004','2026-09-22','Passe e apoio',exercise.id);completedSession.payload.review={};completedSession.payload.session.status='completed';completedSession.payload.session.review={status:'done',melhorou:'O apoio surgiu mais cedo.',continua:'Atleta A ainda demora a oferecer apoio na saída.',conclusao:'Atleta A teve febre e precisou de acompanhamento médico.',proxima_acao:'Introduzir oposição progressiva.'};completedSession.payload.session.blocks=[{key:'used-block',exercise_ref:exercise.id,exercise_name:'Apoio após passe',done:true,elapsed_ms:900000}];
+ const completedEarly=training('50000000-0000-4000-8000-000000000009','2026-09-23','Treino terminado antes do fim',exercise.id);completedEarly.payload.session.status='completed';completedEarly.payload.session.blocks=[{key:'partly-used',exercise_ref:exercise.id,exercise_name:'Apoio após passe',done:false,elapsed_ms:120000},{key:'untouched',exercise_ref:untouchedExerciseRef,exercise_name:'Remate',done:false,elapsed_ms:0}];
  const completedLegacy=training('50000000-0000-4000-8000-000000000003','2026-09-18','Construção curta');completedLegacy.payload.status='completed';completedLegacy.payload.duracao_min=null;
+ completedLegacy.payload.manual_completion={status:'confirmed',confirmed_at:'2026-09-18T20:00:00.000Z'};
  const incompleteTraining=training('50000000-0000-4000-8000-000000000002','2026-09-17','Treino sem duração registada',exercise.id);incompleteTraining.payload.duracao_min=null;
- const rows=[targetTraining,completedSession,completedLegacy,incompleteTraining,...matchRows,{...exercise},{id:'40000000-0000-4000-8000-000000000006',team_id:TEAM,kind:'game_model',updated_at:'v1',payload:{title:'Modelo de jogo Sub-8',principles:['Depois do passe, o portador recebe apoio próximo.','Atleta A oferece largura após o passe.','A atleta Atleta A está lesionada e não deve treinar.']}},{id:PLAYER,team_id:TEAM,kind:'player',updated_at:'v1',payload:{nome:'Atleta A',numero:7,plantel_ativo:true,estado_disponibilidade:'lesionado'}},{id:'30000000-0000-4000-8000-000000000004',team_id:TEAM,kind:'player',updated_at:'v1',payload:{nome:'Atleta B',numero:8,plantel_ativo:true,estado_disponibilidade:'disponivel'}},{id:'30000000-0000-4000-8000-000000000005',team_id:TEAM,kind:'player',updated_at:'v1',payload:{nome:'Atleta C',numero:9,plantel_ativo:true}}];
+ const rows=[targetTraining,completedSession,completedEarly,completedLegacy,incompleteTraining,...matchRows,{...exercise},{id:'40000000-0000-4000-8000-000000000006',team_id:TEAM,kind:'game_model',updated_at:'v1',payload:{title:'Modelo de jogo Sub-8',principles:['Depois do passe, o portador recebe apoio próximo.','Atleta A oferece largura após o passe.','A atleta Atleta A está lesionada e não deve treinar.']}},{id:PLAYER,team_id:TEAM,kind:'player',updated_at:'v1',payload:{nome:'Atleta A',numero:7,plantel_ativo:true,estado_disponibilidade:'lesionado'}},{id:'30000000-0000-4000-8000-000000000004',team_id:TEAM,kind:'player',updated_at:'v1',payload:{nome:'Atleta B',numero:8,plantel_ativo:true,estado_disponibilidade:'disponivel'}},{id:'30000000-0000-4000-8000-000000000005',team_id:TEAM,kind:'player',updated_at:'v1',payload:{nome:'Atleta C',numero:9,plantel_ativo:true}}];
   const malformedRows=Array.from({length:55},(_,i)=>({id:`61000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`,team_id:TEAM,kind:'match',updated_at:`bad-${i}`,payload:{data:'2026-09-2!',estado:'concluido',adversario:'Data legada inválida'}}));const malformedTrainings=Array.from({length:55},(_,i)=>({id:`51000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`,team_id:TEAM,kind:'training',updated_at:`bad-${i}`,payload:{data:'2026-09-2!',objetivo:'Data legada inválida'}}));rows.splice(4,0,...malformedTrainings);rows.splice(rows.findIndex(row=>row.kind==='match'),0,...malformedRows);
  const calls=[],queryPlans=[],db={from(table){const filters=[],orders=[],operations=[];let limit=null;const paging={start:0,end:Infinity};queryPlans.push({table,operations});const value=(row,key)=>key.startsWith('payload->>')?row.payload?.[key.slice(10)]:row[key];const q={select(){return this;},eq(k,v){operations.push({op:'eq',key:k,value:v});filters.push(row=>value(row,k)===v);return this;},lt(k,v){operations.push({op:'lt',key:k,value:v});filters.push(row=>value(row,k)<v);return this;},in(k,values){operations.push({op:'in',key:k,value:values});filters.push(row=>values.includes(value(row,k)));return this;},is(k,v){operations.push({op:'is',key:k,value:v});filters.push(row=>v===null?value(row,k)==null:value(row,k)===v);return this;},order(k,options={}){operations.push({op:'order',key:k,ascending:options.ascending!==false});orders.push({k,ascending:options.ascending!==false});return this;},limit(n){operations.push({op:'limit',value:n});limit=n;return this;},range(from,to){operations.push({op:'range',from,to});paging.start=from;paging.end=to;return this;},maybeSingle(){return Promise.resolve({data:{metadata:{escalao:'Sub-8'}},error:null});},then(resolve){let data=(table==='workspace_records'?rows:[]).filter(row=>filters.every(test=>test(row)));for(const order of orders.slice().reverse())data.sort((a,b)=>{const result=String(value(a,order.k)??'').localeCompare(String(value(b,order.k)??''));return order.ascending?result:-result;});if(limit!=null)data=data.slice(0,limit);data=data.slice(paging.start,paging.end+1);return Promise.resolve({data,error:null}).then(resolve);}};q.or=expression=>{operations.push({op:'or',value:expression});filters.push(row=>row.payload?.status==='completed'||row.payload?.session?.status==='completed');return q;};return q;},async rpc(name,args){calls.push({name,args});if(name==='claim_team_knowledge_jobs')return {data:[]};if(name==='search_team_knowledge_chunks')return {data:[{source_id:args.p_match_refs?.[0]||target,source_kind:args.p_match_refs?'match':'training',source_path:'post_game.analysis.fields.problems',source_updated_at:'v1',source_date:'2026-09-17',match_ref:args.p_match_refs?.[0]||null,training_ref:null,player_ref:null,category:'match_analysis',evidence_type:'coach_observation',title:'Problemas',content:args.p_match_refs?'Pressão alta causou perdas na saída.':'O apoio após passe apareceu tarde.',metadata:{},similarity:.8,lexical_rank:.2}]};throw Error('unexpected rpc '+name);}};
  const provider=fakeProvider(),out=await rag.executeTeamKnowledgeTool(db,connector,'get_training_planning_context',{target_date:'2026-09-24',question:'O que devo trabalhar na saída de bola?'},{provider});
- assert.equal(out.team.age_group,'Sub-8');assert.equal(out.team.game_model.title,'Modelo de jogo Sub-8');assert.equal(out.team.game_model.provenance,'coach_defined_model');assert.ok(out.team.game_model.principles.some(x=>x.text==='Depois do passe, o portador recebe apoio próximo.'));assert.ok(out.team.game_model.principles.some(x=>x.text.includes('atleta oferece largura')));assert.ok(out.team.game_model.principles.every(x=>!/lesionada|Atleta A/i.test(x.text)));assert.equal(out.target_training.ref,target);assert.equal(out.target_training.planned_minutes,60);assert.equal(out.missing_data.target_training_duration,false);assert.equal(out.missing_data.target_training_exercises,false);assert.deepEqual(out.roster.availability_counts,{disponivel:1,indisponivel:0,lesionado:1,castigado:0,ausente:0,desconhecido:1});assert.equal(out.roster.available_count,1);assert.equal(out.roster.unavailable_count,1);assert.equal(out.roster.unknown_availability_count,1);assert.deepEqual(out.roster.available_players.map(x=>x.ref),['30000000-0000-4000-8000-000000000004']);assert.deepEqual(out.roster.unavailable_players.map(x=>x.ref),[PLAYER]);assert.deepEqual(out.roster.unknown_availability_players.map(x=>x.ref),['30000000-0000-4000-8000-000000000005']);assert.equal(out.missing_data.availability,true);assert.deepEqual(out.recent_matches.map(x=>x.date),['2026-09-17','2026-09-16','2026-09-15','2026-09-14','2026-09-13']);assert.equal(out.recent_trainings.length,2);assert.ok(out.recent_trainings.every(x=>x.status==='completed'));assert.equal(out.recent_trainings.find(x=>x.ref===completedSession.id).reviewed,true);assert.equal(out.recent_trainings.at(-1).planned_minutes,null);assert.equal(out.recent_exercise_use.find(x=>x.exercise_ref===exercise.id).uses,1,'only the previous completed session counts; the target and unstarted plan do not');assert.equal(out.semantic_evidence.length,2);assert.deepEqual(out.semantic_retrieval_statuses,['ready','ready']);assert.equal(calls.filter(x=>x.name==='search_team_knowledge_chunks').length,2);assert.equal(calls.filter(x=>x.name==='claim_team_knowledge_jobs').length,1,'a hybrid context indexes one bounded batch per request');assert.deepEqual(calls.filter(x=>x.name==='search_team_knowledge_chunks')[0].args.p_match_refs,out.recent_matches.map(x=>x.ref));assert.equal(calls.filter(x=>x.name==='search_team_knowledge_chunks')[0].args.p_per_match_limit,2);assert.equal(calls.some(x=>x.name==='replace_team_knowledge_source'),false);
+ assert.equal(out.team.age_group,'Sub-8');assert.equal(out.team.game_model.title,'Modelo de jogo Sub-8');assert.equal(out.team.game_model.provenance,'coach_defined_model');assert.ok(out.team.game_model.principles.some(x=>x.text==='Depois do passe, o portador recebe apoio próximo.'));assert.ok(out.team.game_model.principles.some(x=>x.text.includes('atleta oferece largura')));assert.ok(out.team.game_model.principles.every(x=>!/lesionada|Atleta A/i.test(x.text)));assert.equal(out.target_training.ref,target);assert.equal(out.target_training.planned_minutes,60);assert.equal(out.missing_data.target_training_duration,false);assert.equal(out.missing_data.target_training_exercises,false);assert.deepEqual(out.roster.availability_counts,{disponivel:1,indisponivel:0,lesionado:1,castigado:0,ausente:0,desconhecido:1});assert.equal(out.roster.available_count,1);assert.equal(out.roster.unavailable_count,1);assert.equal(out.roster.unknown_availability_count,1);assert.deepEqual(out.roster.available_players.map(x=>x.ref),['30000000-0000-4000-8000-000000000004']);assert.deepEqual(out.roster.unavailable_players.map(x=>x.ref),[PLAYER]);assert.deepEqual(out.roster.unknown_availability_players.map(x=>x.ref),['30000000-0000-4000-8000-000000000005']);assert.equal(out.missing_data.availability,true);assert.deepEqual(out.recent_matches.map(x=>x.date),['2026-09-17','2026-09-16','2026-09-15','2026-09-14','2026-09-13']);assert.equal(out.recent_trainings.length,3);assert.ok(out.recent_trainings.every(x=>x.status==='completed'));assert.equal(out.recent_trainings.find(x=>x.ref===completedSession.id).reviewed,true);assert.equal(out.recent_trainings.at(-1).planned_minutes,null);assert.equal(out.recent_exercise_use_status,'recorded');assert.equal(out.missing_data.recent_exercise_use,false);const exerciseUse=out.recent_exercise_use.find(x=>x.exercise_ref===exercise.id);assert.equal(exerciseUse.uses,2,'count the explicit completed block and the block with recorded active time');assert.deepEqual(exerciseUse.usage_evidence,[{training_ref:completedEarly.id,training_date:'2026-09-23',block_ref:'partly-used'},{training_ref:completedSession.id,training_date:'2026-09-22',block_ref:'used-block'}]);assert.ok(out.recent_exercise_use.every(x=>x.exercise_ref!==untouchedExerciseRef),'an untouched block in an early-finished session is not exercise-use evidence');assert.equal(out.semantic_evidence.length,2);assert.deepEqual(out.semantic_retrieval_statuses,['ready','ready']);assert.equal(calls.filter(x=>x.name==='search_team_knowledge_chunks').length,2);assert.equal(calls.filter(x=>x.name==='claim_team_knowledge_jobs').length,1,'a hybrid context indexes one bounded batch per request');assert.deepEqual(calls.filter(x=>x.name==='search_team_knowledge_chunks')[0].args.p_match_refs,out.recent_matches.map(x=>x.ref));assert.equal(calls.filter(x=>x.name==='search_team_knowledge_chunks')[0].args.p_per_match_limit,2);assert.equal(calls.some(x=>x.name==='replace_team_knowledge_source'),false);
+ assert.equal(out.recent_trainings.find(x=>x.ref===completedLegacy.id).completion_provenance,'coach_confirmed_without_timer');
+ assert.equal(out.recent_trainings.find(x=>x.ref===completedSession.id).completion_provenance,'field_session_recorded');
+ assert.equal(out.structured_training_evidence_status,'not_needed');assert.deepEqual(out.structured_training_evidence,[]);
+ const noUseRows=rows.map(row=>JSON.parse(JSON.stringify(row)));for(const row of noUseRows.filter(item=>item.kind==='training'&&item.payload.session?.blocks)){for(const block of row.payload.session.blocks){block.done=false;block.elapsed_ms=0;}}const originalRows=rows.splice(0,rows.length,...noUseRows);let noUseContext;try{noUseContext=await rag.executeTeamKnowledgeTool(db,connector,'get_training_planning_context',{target_date:'2026-09-24',question:'O que devo trabalhar na saída de bola?'},{provider:fakeProvider()});}finally{rows.splice(0,rows.length,...originalRows);}assert.equal(noUseContext.recent_exercise_use_status,'no_recorded_block_evidence');assert.equal(noUseContext.missing_data.recent_exercise_use,true);assert.deepEqual(noUseContext.recent_exercise_use,[],'a completed plan with only untouched blocks does not prove exercise use');
   const backlogContext=await rag.executeTeamKnowledgeTool(withIndexingBacklog({...db}),connector,'get_training_planning_context',{target_date:'2026-09-24',question:'O que devo trabalhar na saída de bola?'},{provider});
   assert.equal(backlogContext.evidence_status,'possibly_partial_sources');assert.equal(backlogContext.missing_data.semantic_indexing_may_be_incomplete,true);assert.equal(backlogContext.semantic_indexing_status,'batch_limit_reached_may_have_more');
   let providerCalls=0;const unavailableProvider={apiKey:'test-only',async fetchImpl(){providerCalls++;throw new TypeError('synthetic provider network failure');}};
  const structuredFallback=await rag.executeTeamKnowledgeTool(db,connector,'get_training_planning_context',{target_date:'2026-09-24',question:'O que devo trabalhar na saída de bola?'},{provider:unavailableProvider});
  assert.equal(structuredFallback.evidence_status,'retrieval_unavailable');assert.equal(structuredFallback.missing_data.semantic_retrieval,true);assert.deepEqual(structuredFallback.semantic_retrieval_statuses,['provider_unavailable','skipped_after_retrieval_failure']);assert.equal(providerCalls,1,'a failed provider is not retried for the second semantic scope in the same request');assert.equal(structuredFallback.semantic_evidence.length,0);assert.equal(structuredFallback.target_training.ref,target);assert.equal(structuredFallback.roster.available_count,1);assert.equal(structuredFallback.roster.unavailable_count,1);assert.equal(structuredFallback.recent_matches.length,5);assert.doesNotMatch(JSON.stringify(structuredFallback),/synthetic provider network failure/);
+ assert.equal(structuredFallback.structured_match_evidence_status,'available');assert.equal(structuredFallback.structured_match_evidence[0].source.ref,matchRows[0].id);assert.equal(structuredFallback.structured_match_evidence[0].source.path,'post_game.analysis.fields.problems');assert.doesNotMatch(JSON.stringify(structuredFallback.structured_match_evidence),/Atleta A/);
+ assert.equal(structuredFallback.structured_training_evidence_status,'available');assert.ok(structuredFallback.structured_training_evidence.some(item=>item.source.ref===completedSession.id&&item.source.path==='review.melhorou'&&item.evidence_type==='coach_evaluation'));
+ assert.match(structuredFallback.guidance,/search_workspace com kinds exercise, termos táticos concretos/);
+ assert.ok(structuredFallback.structured_training_evidence.some(item=>item.source.path==='review.proxima_acao'&&item.evidence_type==='coach_decision'));
+ assert.ok(structuredFallback.structured_training_evidence.every(item=>item.retrieval_method==='bounded_structured_training_read'&&item.excerpt.length<=500));
+ assert.doesNotMatch(JSON.stringify(structuredFallback.structured_training_evidence),/Atleta A|febre|médico/);
+ const withoutProvider=await rag.executeTeamKnowledgeTool(db,connector,'get_training_planning_context',{target_date:'2026-09-24',question:'O que devo trabalhar na saída de bola?'});
+ assert.equal(withoutProvider.semantic_retrieval_statuses[0],'provider_not_configured');assert.equal(withoutProvider.structured_training_evidence_status,'available');
  const privacyAdmin={...db,from(table){const query=db.from(table);if(table!=='workspace_records')return query;const select=query.select.bind(query);query.select=columns=>{if(columns!=='payload')return select(columns);return{eq(){return this;},range(){return this;},then(resolve){return Promise.resolve({data:null,error:new Error('synthetic names read failure')}).then(resolve);}};};return query;}};
  let privacyProviderCalls=0;const privacyProvider={apiKey:'test-only',async fetchImpl(){privacyProviderCalls++;return{ok:true,status:200,json:async()=>({data:[]})};}};
  const privacyFallback=await rag.executeTeamKnowledgeTool(privacyAdmin,connector,'get_training_planning_context',{target_date:'2026-09-24',question:'O que devo trabalhar na saída de bola?'},{provider:privacyProvider});
  assert.equal(privacyFallback.semantic_retrieval_statuses[0],'privacy_metadata_unavailable');assert.equal(privacyFallback.missing_data.semantic_retrieval,true);assert.equal(privacyFallback.target_training.ref,target);assert.equal(privacyFallback.roster.available_count,1);assert.equal(privacyFallback.recent_matches.length,5);assert.equal(privacyProviderCalls,0,'name lookup failure stays fail-closed before calling embeddings');
+ assert.equal(privacyFallback.structured_match_evidence_status,'privacy_metadata_unavailable');assert.deepEqual(privacyFallback.structured_match_evidence,[]);
+ assert.equal(privacyFallback.structured_training_evidence_status,'privacy_metadata_unavailable');assert.deepEqual(privacyFallback.structured_training_evidence,[]);
  const pageCount=kind=>queryPlans.filter(x=>x.operations.some(op=>op.op==='eq'&&op.key==='kind'&&op.value===kind)&&x.operations.some(op=>op.op==='lt'&&op.key==='payload->>data'&&op.value==='2026-09-24')).length;assert.ok(pageCount('match')>=2);const completedTrainingQuery=queryPlans.find(x=>x.operations.some(op=>op.op==='eq'&&op.key==='kind'&&op.value==='training')&&x.operations.some(op=>op.op==='or'));assert.equal(completedTrainingQuery?.operations.find(op=>op.op==='or')?.value,'payload->>status.eq.completed,payload->session->>status.eq.completed');
  const exerciseQuery=queryPlans.find(x=>x.operations.some(op=>op.op==='in'&&op.key==='id'));assert.deepEqual(exerciseQuery.operations.find(op=>op.op==='in').value,[exercise.id]);
  targetTraining.payload.duracao_min=null;targetTraining.payload.blocos=[];
@@ -68,6 +85,8 @@ test('hybrid training context combines exact structured scope and separate cited
  const priorRpcs=calls.length,priorEmbeddings=provider.requests.length,priorStructuredQueries=queryPlans.length,sensitiveQuestion='O que trabalhar com a atleta que teve cãibras?';
  const sensitive=await rag.executeTeamKnowledgeTool(db,connector,'get_training_planning_context',{target_date:'2026-09-24',question:sensitiveQuestion},{provider});
  assert.equal(sensitive.evidence_status,'sensitive_query_not_sent');assert.equal(sensitive.semantic_evidence.length,0);assert.equal(sensitive.roster.unavailable_count,1,'structured availability context remains available');
+ assert.equal(sensitive.structured_match_evidence_status,'not_needed');assert.deepEqual(sensitive.structured_match_evidence,[]);
+ assert.equal(sensitive.structured_training_evidence_status,'not_needed');assert.deepEqual(sensitive.structured_training_evidence,[]);
  assert.equal(calls.length,priorRpcs,'sensitive query skips indexing and vector RPCs');assert.equal(provider.requests.length,priorEmbeddings,'sensitive question never reaches embeddings');assert.ok(queryPlans.length>priorStructuredQueries,'structured training/player reads still run');assert.doesNotMatch(JSON.stringify(sensitive),/cãibras|cibras/i,'the query is not echoed in the response');
 });
 
@@ -75,11 +94,14 @@ test('recent-match hybrid context selects five dated completed matches and combi
  const today=new Date().toISOString().slice(0,10),day=offset=>new Date(Date.parse(`${today}T00:00:00Z`)-offset*86400000).toISOString().slice(0,10);
  const ids=Array.from({length:7},(_,i)=>`80000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`);
   const rows=ids.map((id,i)=>({id,team_id:TEAM,kind:'match',updated_at:`${day(i*3)}T12:00:00Z`,payload:{data:day(i*3),estado:'concluido',adversario:`Adversário ${i+1}`,golos_favor:i,golos_contra:2,...(i===1?{}:{match_events:{events:i===0?[{type:'loss',reason:'pass',zone:'def_c'},{type:'loss',reason:'pressure',zone:'def_c'},{type:'loss',zone:'def_c'},{type:'loss',reason:'other',zone:'def_c'},{type:'recovery',zone:'med_c'},{type:'shot_on'}]:[]}})}}));
- rows.push({id:'80000000-0000-4000-8000-000000000008',team_id:TEAM,kind:'match',updated_at:'v1',payload:{data:day(-1),estado:'concluido',adversario:'Future'}},{id:'80000000-0000-4000-8000-000000000009',team_id:TEAM,kind:'match',updated_at:'v1',payload:{estado:'concluido',adversario:'Sem data'}});
+ rows[0].payload.post_game={analysis:{fields:{summary:'A equipa perdeu apoios na saída curta. '.repeat(25),problems:'Maria Silva ficou sem linha de passe na zona baixa.',hypotheses:'Talvez a distância entre linhas tenha sido excessiva.',positives:'O atleta teve febre e precisou de acompanhamento médico.'}}};
+ rows[2].payload.post_game={analysis:{fields:{interpretation:'O primeiro apoio surgiu tarde após o passe.',player_use:'A utilização no corredor esquerdo trouxe largura à equipa.'}}};
+ rows.push({id:PLAYER,team_id:TEAM,kind:'player',deleted_at:`${day(1)}T10:00:00Z`,payload:{nome:'Maria Silva'}});
+ rows.push({id:'80000000-0000-4000-8000-000000000008',team_id:TEAM,kind:'match',updated_at:'v1',payload:{data:day(-1),estado:'concluido',adversario:'Future',post_game:{analysis:{fields:{summary:'Texto de jogo futuro fora do intervalo.'}}}}},{id:'80000000-0000-4000-8000-000000000009',team_id:TEAM,kind:'match',updated_at:'v1',payload:{estado:'concluido',adversario:'Sem data'}},{id:'80000000-0000-4000-8000-000000000010',team_id:'10000000-0000-4000-8000-000000000099',kind:'match',updated_at:'v1',payload:{data:day(1),estado:'concluido',post_game:{analysis:{fields:{summary:'Texto de outra equipa sem autorização.'}}}}});
   const malformedDate=today.slice(0,8)+'2!',malformed=Array.from({length:101},(_,i)=>({id:`81000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`,team_id:TEAM,kind:'match',updated_at:`invalid-${i}`,payload:{data:malformedDate,estado:'concluido',adversario:'Data inválida'}}));rows.push(...malformed);
  const calls=[],queryLog=[],provider=fakeProvider(),db={from(table){const filters=[],orders=[],operations=[];let limit=null,rangeStart=0,rangeEnd=Infinity;const value=(row,key)=>key.startsWith('payload->>')?row.payload?.[key.slice(10)]:row[key];const q={select(){return this;},eq(k,v){operations.push(['eq',k,v]);filters.push(row=>value(row,k)===v);return this;},lt(k,v){operations.push(['lt',k,v]);filters.push(row=>value(row,k)<v);return this;},is(k,v){filters.push(row=>v===null?row[k]==null:row[k]===v);return this;},order(k,o={}){operations.push(['order',k,o.ascending!==false]);orders.push({k,ascending:o.ascending!==false});return this;},limit(n){operations.push(['limit',n]);limit=n;return this;},range(from,to){operations.push(['range',from,to]);rangeStart=from;rangeEnd=to;return this;},maybeSingle(){return Promise.resolve({data:{metadata:{escalao:'Sub-8'}},error:null});},then(resolve){queryLog.push(operations);let data=(table==='workspace_records'?rows:[]).filter(row=>filters.every(f=>f(row)));for(const order of orders.slice().reverse())data.sort((a,b)=>String(value(a,order.k)||'').localeCompare(String(value(b,order.k)||''))*(order.ascending?1:-1));if(limit!=null)data=data.slice(0,limit);data=data.slice(rangeStart,rangeEnd+1);return Promise.resolve({data,error:null}).then(resolve);}};return q;},async rpc(name,args){calls.push({name,args});if(name==='claim_team_knowledge_jobs')return {data:[]};if(name==='search_team_knowledge_chunks')return {data:[{source_id:ids[0],source_kind:'match',source_path:'post_game.analysis.fields.problems',source_updated_at:rows[0].updated_at,source_date:day(0),match_ref:args.p_match_refs[0],training_ref:null,player_ref:null,category:'match_analysis',evidence_type:'coach_observation',title:'Problema',content:'Perdas na saída curta sob pressão.',metadata:{},similarity:.9,lexical_rank:.4}]};throw Error('unexpected rpc '+name);}};
  const out=await rag.executeTeamKnowledgeTool(db,connector,'get_recent_match_context',{question:'O que correu mal?'},{provider});
-  assert.equal(out.matches.length,5);assert.deepEqual(out.matches.map(x=>x.date),[day(0),day(3),day(6),day(9),day(12)]);assert.deepEqual(out.matches[0].registered_event_counts,{goals_for:0,goals_against:0,shots_on_target:1,shots_off_target:0,corners_for:0,corners_against:0,losses:4,recoveries:1,through_balls:0,striker_foot_balls:0});assert.deepEqual(out.matches[0].losses_by_reason,{'passe errado':1,'pressão adversária':1,'sem motivo':1,'outro':1});assert.deepEqual(out.matches[0].losses_by_zone,{'defesa central':4});assert.deepEqual(out.matches[0].recoveries_by_zone,{'meio-campo central':1});assert.equal(out.matches[0].statistics_provenance,'counted_from_recorded_events');assert.equal(out.matches[1].statistics_provenance,'not_available');assert.equal(out.matches[1].events_available,false);assert.equal(out.matches[1].registered_event_counts,null);assert.equal(out.matches[1].losses_by_reason,null);assert.equal(out.matches[1].losses_by_zone,null);assert.equal(out.matches[1].recoveries_by_zone,null);assert.equal(out.matches[1].recorded_event_count,null);assert.equal(out.matches[2].events_available,true);assert.equal(out.matches[2].recorded_event_count,0);assert.ok(Object.values(out.matches[2].registered_event_counts).every(value=>value===0));assert.equal(out.semantic_evidence.length,1);assert.equal(out.evidence_status,'sources_found');
+  assert.equal(out.matches.length,5);assert.deepEqual(out.matches.map(x=>x.date),[day(0),day(3),day(6),day(9),day(12)]);assert.deepEqual(out.matches[0].registered_event_counts,{goals_for:0,goals_against:0,shots_on_target:1,shots_off_target:0,corners_for:0,corners_against:0,losses:4,recoveries:1,through_balls:0,striker_foot_balls:0});assert.deepEqual(out.matches[0].losses_by_reason,{'passe errado':1,'pressão adversária':1,'sem motivo':1,'outro':1});assert.deepEqual(out.matches[0].losses_by_zone,{'defesa central':4});assert.deepEqual(out.matches[0].recoveries_by_zone,{'meio-campo central':1});assert.equal(out.matches[0].statistics_provenance,'counted_from_recorded_events');assert.equal(out.matches[1].statistics_provenance,'not_available');assert.equal(out.matches[1].events_available,false);assert.equal(out.matches[1].registered_event_counts,null);assert.equal(out.matches[1].losses_by_reason,null);assert.equal(out.matches[1].losses_by_zone,null);assert.equal(out.matches[1].recoveries_by_zone,null);assert.equal(out.matches[1].recorded_event_count,null);assert.equal(out.matches[2].events_available,true);assert.equal(out.matches[2].recorded_event_count,0);assert.ok(Object.values(out.matches[2].registered_event_counts).every(value=>value===0));assert.equal(out.semantic_evidence.length,1);assert.equal(out.evidence_status,'sources_found');assert.equal(out.structured_coach_evidence_status,'not_needed');assert.deepEqual(out.structured_coach_evidence,[]);
  assert.equal(out.missing_data.structured_event_counts,true,'partial event coverage is reported as missing data');
  const pendingContext=await rag.executeTeamKnowledgeTool(withIndexingBacklog({...db}),connector,'get_recent_match_context',{question:'O que correu mal?'},{provider});
  assert.equal(pendingContext.evidence_status,'possibly_partial_sources');assert.equal(pendingContext.missing_data.semantic_indexing_may_be_incomplete,true);assert.equal(pendingContext.semantic_indexing_status,'batch_limit_reached_may_have_more');
@@ -87,6 +109,22 @@ test('recent-match hybrid context selects five dated completed matches and combi
  const unavailableProvider={apiKey:'test-only',async fetchImpl(){throw new TypeError('synthetic provider network failure');}};
  const structuredFallback=await rag.executeTeamKnowledgeTool(db,connector,'get_recent_match_context',{question:'O que correu mal?'},{provider:unavailableProvider});
  assert.equal(structuredFallback.evidence_status,'retrieval_unavailable');assert.equal(structuredFallback.semantic_retrieval_status,'provider_unavailable');assert.equal(structuredFallback.missing_data.semantic_retrieval,true);assert.equal(structuredFallback.matches.length,5);assert.equal(structuredFallback.matches[0].registered_event_counts.losses,4);assert.deepEqual(structuredFallback.semantic_evidence,[]);assert.doesNotMatch(JSON.stringify(structuredFallback),/synthetic provider network failure/);
+ assert.equal(structuredFallback.structured_coach_evidence_status,'available');
+ assert.ok(structuredFallback.structured_coach_evidence.some(item=>item.source.ref===ids[0]&&item.source.path==='post_game.analysis.fields.problems'&&item.evidence_type==='coach_observation'));
+ assert.ok(structuredFallback.structured_coach_evidence.some(item=>item.source.ref===ids[2]&&item.evidence_type==='interpretation'));
+ assert.ok(structuredFallback.structured_coach_evidence.some(item=>item.source.ref===ids[2]&&item.source.path==='post_game.analysis.fields.player_use'));
+ assert.ok(structuredFallback.structured_coach_evidence.some(item=>item.evidence_type==='hypothesis'));
+ assert.ok(structuredFallback.structured_coach_evidence.some(item=>item.source.path==='post_game.analysis.fields.summary'&&item.excerpt_truncated));
+ assert.ok(structuredFallback.structured_coach_evidence.every(item=>item.retrieval_method==='bounded_structured_match_read'&&item.excerpt.length<=700));
+ assert.doesNotMatch(JSON.stringify(structuredFallback.structured_coach_evidence),/Maria|Silva|febre|médico/);
+ assert.doesNotMatch(JSON.stringify(structuredFallback.structured_coach_evidence),/jogo futuro|outra equipa/i);
+ const withoutProvider=await rag.executeTeamKnowledgeTool(db,connector,'get_recent_match_context',{question:'O que correu mal?'});
+ assert.equal(withoutProvider.semantic_retrieval_status,'provider_not_configured');assert.equal(withoutProvider.structured_coach_evidence_status,'available');assert.equal(withoutProvider.missing_data.structured_coach_evidence,false);
+ const sensitiveQuestion=await rag.executeTeamKnowledgeTool(db,connector,'get_recent_match_context',{question:'Como jogar com a atleta que teve febre?'});
+ assert.equal(sensitiveQuestion.semantic_retrieval_status,'sensitive_query_not_sent');assert.equal(sensitiveQuestion.structured_coach_evidence_status,'not_needed');assert.deepEqual(sensitiveQuestion.structured_coach_evidence,[]);
+ const brokenNamesDb={...db,from(table){const query=db.from(table),select=query.select.bind(query);query.select=columns=>columns==='payload'?{eq(){return this;},range(){return this;},then(resolve){return Promise.resolve({data:null,error:new Error('synthetic roster read failure')}).then(resolve);}}:select(columns);return query;}};
+ const blockedText=await rag.executeTeamKnowledgeTool(brokenNamesDb,connector,'get_recent_match_context',{question:'O que correu mal?'});
+ assert.equal(blockedText.structured_coach_evidence_status,'privacy_metadata_unavailable');assert.deepEqual(blockedText.structured_coach_evidence,[]);assert.equal(blockedText.missing_data.structured_coach_evidence,true);
   const matchQueries=queryLog.filter(operations=>operations.some(([op,key,value])=>op==='eq'&&key==='kind'&&value==='match'));assert.ok(matchQueries.length>=3,'continues past malformed rows on later ranges');assert.ok(matchQueries.every(operations=>operations.some(([op])=>op==='range')));const matchesQuery=matchQueries[0];assert.ok(matchesQuery?.some(([op,key,value])=>op==='lt'&&key==='payload->>data'&&value===new Date(Date.parse(`${today}T00:00:00Z`)+86400000).toISOString().slice(0,10)));
  await assert.rejects(rag.executeTeamKnowledgeTool(db,{...connector,scopes:[]},'get_recent_match_context',{question:'falhas'},{provider}),/scope_read_required/);await assert.rejects(rag.executeTeamKnowledgeTool(db,connector,'get_recent_match_context',{question:'falhas',match_count:6},{provider}),/invalid_recent_match_count/);
 });
@@ -100,13 +138,72 @@ test('chunks use an allowlist of coaching text and preserve epistemic provenance
  const event=chunks.find(x=>x.source_path==='match_events.events[0]');assert.equal(event.evidence_type,'registered_fact');assert.equal(event.player_ref,PLAYER);assert.match(event.content,/Passe interior intercetado/);
  assert.ok(chunks.every(x=>!x.content.includes('não indexar')));
  assert.deepEqual(rag.teamKnowledgeTestAPI.chunkRecord({...match(),kind:'player'}),[]);
+ const withPlayerUse=match();withPlayerUse.payload.post_game.analysis.fields.player_use='O treinador observou largura no corredor esquerdo após a entrada.';
+ const playerUseChunk=rag.teamKnowledgeTestAPI.chunkRecord(withPlayerUse).find(x=>x.source_path==='post_game.analysis.fields.player_use');
+ assert.equal(playerUseChunk?.evidence_type,'coach_observation');assert.match(playerUseChunk.content,/largura no corredor esquerdo/);
+});
+
+test('RAG indexes only current coach-written player reports with match and athlete provenance',()=>{
+ const source=match(),other='30000000-0000-4000-8000-000000000004';
+ source.payload.visual_match={roster:[{ref:PLAYER,name:'Maria Silva'}]};
+ source.payload.post_game.player_reports={schema:'vision-match-player-reports@1',revision:4,items:[
+  {player_ref:PLAYER,status:'reported',observation:'Maria Silva ofereceu apoio após passe.',positives:'Criou uma linha de passe curta.',to_improve:'Deve aproximar-se mais cedo.',history:[{observation:'Nota antiga que não deve entrar no índice.'}]},
+  {player_ref:other,status:'not_observed',observation:'Texto ignorado por ausência de observação.'},
+  {player_ref:'invalid',status:'reported',observation:'Texto com UUID inválido.'},
+  {player_ref:other,status:'pending',observation:'Texto apagado da versão atual.'}
+ ]};
+ const chunks=rag.teamKnowledgeTestAPI.chunkRecord(source,{redactNames:['Atleta Externo']}),report=chunks.filter(item=>item.category==='player_match_report');
+ assert.deepEqual(report.map(item=>item.source_path),['post_game.player_reports.items[0].observation','post_game.player_reports.items[0].positives','post_game.player_reports.items[0].to_improve']);
+ assert.ok(report.every(item=>item.match_ref===SOURCE&&item.player_ref===PLAYER&&item.evidence_type==='coach_observation'&&item.source_date==='2026-09-20'));
+ assert.ok(report[0].content.includes('atleta ofereceu apoio após passe.'));
+ assert.doesNotMatch(JSON.stringify(report),/Maria Silva|Nota antiga|Texto ignorado|Texto apagado|UUID inválido/);
+ source.payload.post_game.player_reports.items[0].status='pending';
+ assert.equal(rag.teamKnowledgeTestAPI.chunkRecord(source).some(item=>item.category==='player_match_report'),false,'clearing the current report removes its derived chunks on reindex');
+ source.payload.post_game.player_reports.items[0]={player_ref:PLAYER,status:'reported',observation:'Teve uma lesão muscular durante o jogo.'};
+ assert.equal(rag.teamKnowledgeTestAPI.chunkRecord(source).some(item=>item.category==='player_match_report'),false,'recognized health text is not sent for embedding');
+});
+
+test('RAG indexes coach video evidence with stable clip links but never embeds the video URL',async()=>{
+ const memoryRef='40000000-0000-4000-8000-000000000004',source=match();
+ source.payload.match_evidence={schema:'vision-match-evidence@1',revision:1,moments:[
+  {id:'moment-video-1',url:'https://private.example/video?token=never-embed-this',seconds:83,category:'loss',player_ref:PLAYER,
+   description:'A perda acontece na saída curta sob pressão.',observation:'Maria Silva fecha a linha de passe tarde.',relation_type:'observation',relation_ref:memoryRef},
+  {id:'moment-video-2',url:'https://private.example/medical',seconds:91,category:'individual',
+   description:'Nota com informação de saúde: lesão muscular recente.',observation:'Não deve ser indexada.',relation_type:'none',relation_ref:null}
+ ]};
+ const chunks=rag.teamKnowledgeTestAPI.chunkRecord(source,{redactNames:['Maria Silva']}),moment=chunks.find(x=>x.source_path==='match_evidence.moments[0]');
+ assert.ok(moment);assert.equal(moment.category,'video_evidence');assert.equal(moment.evidence_type,'coach_observation');
+ assert.equal(moment.match_ref,SOURCE);assert.equal(moment.player_ref,PLAYER);assert.match(moment.content,/Perda · segundo 83/);
+ assert.match(moment.content,/fecha a linha de passe tarde/);assert.doesNotMatch(moment.content,/Maria Silva|private\.example|never-embed-this/);
+ assert.equal(moment.metadata.video_moment_ref,'moment-video-1');assert.equal(moment.metadata.video_seconds,83);
+ assert.equal(moment.metadata.video_relation_type,'observation');assert.equal(moment.metadata.video_relation_ref,memoryRef);
+ assert.deepEqual(moment.metadata.related_refs,[{type:'memory',id:memoryRef,field:null,event_ref:'moment-video-1'}]);
+ assert.equal(chunks.some(x=>x.source_path==='match_evidence.moments[1]'),false,'observações de saúde não podem entrar nos embeddings');
+ const player={id:PLAYER,team_id:TEAM,kind:'player',updated_at:'v1',payload:{nome:'Maria Silva',development_goals:{items:[]}}};
+ const db=fakeAdmin([source,player]),provider=fakeProvider();
+ const indexed=await rag.indexPendingTeamKnowledge(db,TEAM,{provider});
+ assert.equal(indexed.indexed_sources,2);assert.equal(indexed.indexed_chunks,chunks.length);
+ const saved=db.calls.find(call=>call.name==='replace_team_knowledge_source').args.p_chunks;
+ const savedMoment=saved.find(item=>item.source_path==='match_evidence.moments[0]');
+ assert.ok(savedMoment);assert.equal(savedMoment.metadata.video_moment_ref,'moment-video-1');
+ assert.doesNotMatch(JSON.stringify(provider.requests),/private\.example|never-embed-this|Maria Silva/);
 });
 
 test('RAG indexes the coach-entered opponent analysis and tactical preparation with distinct provenance',()=>{
  const source=match();source.payload.pre_game={adversario_notas:'O adversário pressiona alto após reposição curta.',adversario_sistema:'1-2-1',adversario_estilo:'pressao_alta',adversario_pontos_fortes:['Reação rápida à perda.'],adversario_vulnerabilidades:['Espaço nas costas dos alas.'],pontos_observar:['Saída pelo corredor esquerdo.'],plano_jogo:'Atrair a pressão e procurar apoio interior.'};
  const chunks=rag.teamKnowledgeTestAPI.chunkRecord(source),vulnerability=chunks.find(item=>item.source_path==='pre_game.adversario_vulnerabilidades[0]'),plan=chunks.find(item=>item.source_path==='pre_game.plano_jogo');
  assert.equal(vulnerability.category,'opponent_analysis');assert.equal(vulnerability.evidence_type,'coach_observation');assert.equal(vulnerability.match_ref,SOURCE);assert.match(vulnerability.content,/Espaço nas costas dos alas/);
+ assert.match(vulnerability.title,/pré-jogo.*por confirmar/);
  assert.equal(plan.category,'match_preparation');assert.equal(plan.evidence_type,'coach_decision');assert.equal(plan.source_date,'2026-09-20');
+ const toObserve=chunks.find(item=>item.source_path==='pre_game.pontos_observar[0]');assert.equal(toObserve.category,'match_preparation');assert.equal(toObserve.evidence_type,'coach_decision');
+});
+
+test('RAG uses post-match opponent observations without duplicating the legacy pre-game text',()=>{
+ const source=match();source.payload.pre_game={adversario_notas:'Nota antiga',adversario_pontos_fortes:['Valor antigo'],plano_jogo:'Preparar apoio.'};source.payload.post_game={opponent_observation:{adversario_notas:'Nota observada depois',adversario_pontos_fortes:['Pressão observada'],adversario_vulnerabilidades:[]}};
+ const chunks=rag.teamKnowledgeTestAPI.chunkRecord(source),opponent=chunks.filter(item=>item.category==='opponent_analysis'&&item.source_path.includes('adversario_'));
+ assert.ok(opponent.some(item=>item.source_path==='post_game.opponent_observation.adversario_notas'&&item.content.includes('Nota observada depois')));
+ assert.equal(opponent.filter(item=>item.content.includes('Nota antiga')||item.content.includes('Valor antigo')).length,0);
+ assert.ok(chunks.some(item=>item.source_path==='pre_game.plano_jogo'));
 });
 
 test('RAG indexes free coach notes on the existing training plan with its training UUID',()=>{
@@ -139,6 +236,35 @@ test('RAG indexes only player development notes, redacts the athlete name and ex
  const withName=match();withName.payload.match_events.events[0].note='Passe intercetado por Maria Silva';const redacted=rag.teamKnowledgeTestAPI.chunkRecord(withName,{redactNames:['Maria Silva']});assert.doesNotMatch(redacted.find(x=>x.source_path==='match_events.events[0]').content,/Maria Silva/);
 });
 
+test('RAG preserves archived player-goal history by stable player UUID without embedding the archived name or sensitive notes',()=>{
+ const exerciseRef='70000000-0000-4000-8000-000000000007',matchRef='60000000-0000-4000-8000-000000000006',trainingRef='50000000-0000-4000-8000-000000000005';
+ const archive={schema:'vision-player-archive@1',player:{ref:PLAYER,name:'Maria Silva',number:8,age_group:'Sub-8'},development_goals:{schema:'vision-player-goals@1',items:[
+  {id:'goal-1',title:'Apoio após passe de Maria Silva',started_at:'2026-09-01',status:'continue',notes:'Antes demorava a apoiar; agora oferece linha de passe cedo.',evidence_refs:[{type:'match',id:matchRef},{type:'training',id:trainingRef},{type:'observation',id:SOURCE}],exercise_refs:[exerciseRef],history:[{title:'Maria Silva espera antes de apoiar',started_at:'2026-09-01',status:'active',notes:'No início precisava de um sinal verbal para apoiar.',updated_at:'2026-09-05T10:00:00.000Z'}]},
+  {id:'goal-2',title:'Objetivo individual',started_at:'2026-09-02',status:'continue',notes:'Acompanhamento de saúde mental e ansiedade.'}
+ ]}};
+ const row={id:SOURCE,team_id:TEAM,kind:'document',updated_at:'v1',payload:{type:'player_archive',title:'Arquivo · Maria Silva',body:JSON.stringify(archive)}};
+ const chunks=rag.teamKnowledgeTestAPI.chunkRecord(row),goalChunks=chunks.filter(chunk=>chunk.category==='player_goal_archive');
+ assert.equal(chunks.find(chunk=>chunk.source_path==='title').content,'Arquivo histórico de atleta: Arquivo histórico de atleta');
+ assert.equal(goalChunks.length,2);const historical=goalChunks.find(chunk=>chunk.source_path.endsWith('.history[0]')),current=goalChunks.find(chunk=>!chunk.source_path.includes('.history['));
+ assert.equal(historical.player_ref,PLAYER);assert.equal(historical.source_date,'2026-09-05');assert.equal(current.player_ref,PLAYER);
+ assert.equal(current.evidence_type,'historical_coach_goal');assert.equal(current.category,'player_goal_archive');
+ assert.deepEqual(current.metadata.related_refs,[
+  {type:'match',id:matchRef,field:null,event_ref:null},{type:'training',id:trainingRef,field:null,event_ref:null},
+  {type:'memory',id:SOURCE,field:null,event_ref:null},{type:'exercise',id:exerciseRef,field:null,event_ref:null}
+ ]);
+ assert.match(current.content,/atleta/);assert.match(historical.content,/sinal verbal/);
+ assert.doesNotMatch(JSON.stringify(chunks),/Maria Silva|ansiedade|saúde mental|Arquivo · Maria/);
+});
+
+test('Head Coach instructions keep archived athlete goals historical',async()=>{
+ const {SERVER_INSTRUCTIONS}=await import('../supabase/functions/vision-coach-mcp/server_instructions.mjs');
+ assert.match(SERVER_INSTRUCTIONS,/search_workspace with kinds exercise, a small limit/);
+ assert.match(SERVER_INSTRUCTIONS,/lexical hit is only an exercise definition, not proof of use/);
+ assert.match(SERVER_INSTRUCTIONS,/player_goal_archive.*historical_coach_goal/);
+ assert.match(SERVER_INSTRUCTIONS,/never present it as a current team priority/);
+ assert.match(SERVER_INSTRUCTIONS,/proof of improvement\/transfer to another athlete/);
+});
+
 test('RAG redacts athlete names and filters health terms in chunk labels as well as text',()=>{
  const training={id:SOURCE,team_id:TEAM,kind:'training',updated_at:'v1',payload:{data:'2026-09-24',session:{blocks:[{exercise_name:'Apoio orientado da Maria Silva',exercise_snapshot:{objetivo:'Apoiar depois do passe.'}}]}}};
  const chunks=rag.teamKnowledgeTestAPI.chunkRecord(training,{redactNames:['Maria Silva']});
@@ -148,7 +274,7 @@ test('RAG redacts athlete names and filters health terms in chunk labels as well
  assert.deepEqual(rag.teamKnowledgeTestAPI.chunkRecord(titledHealth),[],'health-bearing labels must not leak through otherwise safe body text');
 });
 
-test('health privacy filter excludes common cardiovascular, glucose and mental-health wording without blocking tactical high press',()=>{
+test('sensitive-personal-data filter blocks health, neurodevelopmental and identity-related text without blocking tactical high press',()=>{
  const sensitive=[
   'O atleta tem hipertensão e deve evitar esforço intenso.',
   'A tensão arterial foi elevada no controlo médico.',
@@ -187,9 +313,26 @@ test('health privacy filter excludes common cardiovascular, glucose and mental-h
   'The athlete experienced shortness of breath while training.',
   'O relatório clínico assinala dispneia.',
   'The player reported dyspnea during the match.',
+  'O jogador teve uma convulsão durante o jogo.',
+  'The athlete has dyslexia and needs support.',
+  'A atleta tem deficiência auditiva.',
+  'A atleta relatou alterações no ciclo menstrual.',
+  'The player disclosed a pregnancy.',
+  'O atleta está em acompanhamento de anorexia.',
+  'The player disclosed substance abuse.',
+  'Registar consumo de álcool antes do treino.',
+  'The athlete has a neurodevelopmental disorder.',
   'The player has swelling in the knee.',
   'Allergy symptoms after exercise.',
   'Recent COVID infection.',
+  'A atleta sentiu enjoos e foi observada no hospital.',
+  'O relatório indica acompanhamento psicológico regular.',
+  'Realizar uma ressonância magnética ao joelho.',
+  'O atleta está em tratamento oncológico.',
+  'Começou a tomar antibiótico por indicação médica.',
+  'A atleta partilhou informação sobre a sua identidade de género.',
+  'Foi encaminhada para o hospital.',
+  'O atleta teve um internamento no mês passado.',
  ];
  for(const [index,note] of sensitive.entries()){
   const source=match();source.payload.match_events.events[0].note=note;
@@ -199,6 +342,8 @@ test('health privacy filter excludes common cardiovascular, glucose and mental-h
  assert.ok(rag.teamKnowledgeTestAPI.chunkRecord(tactical).some(item=>item.source_path==='post_game.analysis.fields.summary'));
  const tacticalReason=match();tacticalReason.payload.match_events.events[0].note='A pressão alta do adversário obrigou a equipa a jogar longo.';
  assert.ok(rag.teamKnowledgeTestAPI.chunkRecord(tacticalReason).some(item=>item.source_path==='match_events.events[0]'),'pressão tática não é um dado de saúde');
+ const bodyOrientation=match();bodyOrientation.payload.match_events.events[0].note='Trabalhar orientação corporal antes da receção.';
+ assert.ok(rag.teamKnowledgeTestAPI.chunkRecord(bodyOrientation).some(item=>item.source_path==='match_events.events[0]'),'orientação corporal é contexto tático, não orientação sexual');
 });
 
 test('exercise definitions and game-model principles are not labelled as match observations',()=>{
@@ -256,6 +401,13 @@ test('provider adapter validates dimensions and uses multilingual embedding endp
  assert.equal(vectors.length,2);assert.equal(vectors[0].length,1536);assert.equal(provider.requests[0].model,'text-embedding-3-small');assert.equal(provider.requests[0].dimensions,1536);
  assert.equal(provider.requests[0].input[0],'apoio após passe');assert.match(rag.teamKnowledgeTestAPI.vectorLiteral(vectors[0]),/^\[1,0,0/);
  await assert.rejects(rag.teamKnowledgeTestAPI.embed(['texto'],{apiKey:'test',fetchImpl:async()=>({ok:true,status:200,json:async()=>({data:[{index:0,embedding:[1,2]}]})})}),/shape_invalid/);
+ for(const data of [
+  [{index:0,embedding:Array(1536).fill(1)},{index:0,embedding:Array(1536).fill(2)}],
+  [{index:0,embedding:Array(1536).fill(1)},{index:2,embedding:Array(1536).fill(2)}],
+  [{index:0.5,embedding:Array(1536).fill(1)},{index:1,embedding:Array(1536).fill(2)}]
+ ]) await assert.rejects(rag.teamKnowledgeTestAPI.embed(['primeiro','segundo'],{apiKey:'test',fetchImpl:async()=>({ok:true,status:200,json:async()=>({data})})}),/shape_invalid/);
+ const outOfOrder=await rag.teamKnowledgeTestAPI.embed(['primeiro','segundo'],{apiKey:'test',fetchImpl:async()=>({ok:true,status:200,json:async()=>({data:[{index:1,embedding:Array(1536).fill(2)},{index:0,embedding:Array(1536).fill(1)}]})})});
+ assert.equal(outOfOrder[0][0],1);assert.equal(outOfOrder[1][0],2,'valid out-of-order responses are restored to input order');
 });
 
 test('embedding provider requests have a deadline and abort instead of hanging the hybrid context',async()=>{
@@ -283,11 +435,13 @@ test('RAG validates exact team/scope/filters and searches only with the authoriz
  await assert.rejects(rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query:'ok',from:'2026-09-30',to:'2026-09-01'},{provider}),/invalid_knowledge_date_range/);
 });
 
-test('health-related search query stays out of embeddings and returns no echoed text',async()=>{
- const db=fakeAdmin([]),provider=fakeProvider(),query='A atleta tem tonturas e tosse após o treino?';
- const result=await rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query},{provider});
- assert.equal(result.retrieval_status,'sensitive_query_not_sent');assert.equal(result.answer_mode,'structured_data_only');assert.equal(result.evidence_status,'sensitive_query_not_sent');assert.deepEqual(result.results,[]);
- assert.deepEqual(db.calls,[]);assert.deepEqual(db.fromCalls,[]);assert.deepEqual(provider.requests,[]);assert.doesNotMatch(JSON.stringify(result),/tonturas|tosse/i);
+test('sensitive-personal search queries stay out of embeddings and return no echoed text',async()=>{
+ for(const query of ['A atleta tem tonturas e tosse após o treino?','O que fazer com uma jogadora com dislexia?','Como adaptar o treino à menstruação?','O que fazer com um jogador com deficiência auditiva?','A atleta pode treinar após consumo de álcool?','O que significa o exame de ressonância da atleta?','O atleta foi encaminhado para o hospital?','A jogadora tem acompanhamento psiquiátrico?','Como falar sobre a identidade de género da atleta?']){
+  const db=fakeAdmin([]),provider=fakeProvider();
+  const result=await rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query},{provider});
+  assert.equal(result.retrieval_status,'sensitive_query_not_sent',query);assert.equal(result.answer_mode,'structured_data_only');assert.equal(result.evidence_status,'sensitive_query_not_sent');assert.deepEqual(result.results,[]);
+  assert.deepEqual(db.calls,[],query);assert.deepEqual(db.fromCalls,[],query);assert.deepEqual(provider.requests,[],query);assert.doesNotMatch(JSON.stringify(result),/tonturas|tosse|dislexia|menstrua|defici[eê]ncia|álcool|resson|hospital|psiqui|g[eé]nero/i);
+ }
 });
 
 test('athlete names are redacted from RAG query embeddings and lexical search',async()=>{
@@ -311,7 +465,10 @@ test('hybrid search reuses scoped roster names within one MCP request',async()=>
  const db=fakeAdmin([]),provider=fakeProvider();
  await rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query:'O que mudou no jogo?'},{provider});
  await rag.executeTeamKnowledgeTool(db,connector,'search_team_knowledge',{query:'O que melhorar no treino?'},{provider});
- assert.equal(db.fromCalls.filter(call=>call.table==='workspace_records').length,1,'two retrievals in one hybrid operation should read names once');
+ const rosterReads=db.fromCalls.filter(call=>call.table==='workspace_records');
+ assert.equal(rosterReads.length,2,'two retrievals in one hybrid operation should load the active and archived names only once');
+ assert.equal(rosterReads.filter(call=>call.filters.every(filter=>filter({team_id:TEAM,kind:'player'}))).length,1);
+ assert.equal(rosterReads.filter(call=>call.filters.every(filter=>filter({team_id:TEAM,kind:'document',payload:{type:'player_archive'}}))).length,1);
  assert.equal(provider.requests.length,2,'each query still receives its own embedding');
 });
 
@@ -337,6 +494,20 @@ test('indexer replaces source chunks idempotently and only indexes allowlisted p
  assert.equal(db.fromCalls[0].table,'teams');assert.equal(db.fromCalls[1].table,'workspace_records');assert.ok(db.fromCalls[1].filters[0]({team_id:TEAM}));assert.equal(db.fromCalls[1].filters[0]({team_id:'40000000-0000-4000-8000-000000000004'}),false);
 });
 
+test('indexer embeds archived goal history with stable provenance while withholding archived identity and health text',async()=>{
+ const matchRef='60000000-0000-4000-8000-000000000006',archive={schema:'vision-player-archive@1',player:{ref:PLAYER,name:'Maria Silva',number:8,age_group:'Sub-8'},development_goals:{items:[
+  {title:'Apoiar após passar a bola',started_at:'2026-09-01',status:'continue',notes:'O objetivo continua ativo no arquivo.',evidence_refs:[{type:'match',id:matchRef}],exercise_refs:[]},
+  {title:'Nota privada',started_at:'2026-09-02',notes:'O atleta tem hipertensão.'}
+ ]}},row={id:SOURCE,team_id:TEAM,kind:'document',updated_at:'v1',payload:{type:'player_archive',title:'Arquivo · Maria Silva',body:JSON.stringify(archive)}};
+ const db=fakeAdmin([row]),provider=fakeProvider(),result=await rag.indexPendingTeamKnowledge(db,TEAM,{provider,limit:16});
+ assert.equal(result.indexed_sources,1);
+ const indexed=db.calls.find(x=>x.name==='replace_team_knowledge_source').args.p_chunks,goal=indexed.find(chunk=>chunk.category==='player_goal_archive');
+ assert.equal(indexed.length,2);assert.equal(goal.player_ref,PLAYER);assert.equal(goal.category,'player_goal_archive');assert.equal(goal.evidence_type,'historical_coach_goal');
+ assert.deepEqual(goal.metadata.related_refs,[{type:'match',id:matchRef,field:null,event_ref:null}]);
+ const embedded=provider.requests.flatMap(request=>request.input).join('\n');
+ assert.match(embedded,/apoiar após passar a bola/i);assert.doesNotMatch(embedded,/Maria Silva|hipertensão|número 8|Arquivo · Maria/i);
+});
+
 test('indexer redacts names of deleted players from retained match notes without indexing deleted player records',async()=>{
  const deletedPlayer={id:'30000000-0000-4000-8000-000000000004',team_id:TEAM,kind:'player',deleted_at:'2026-09-23T10:00:00.000Z',updated_at:'v2',payload:{nome:'Atleta Apagado'}};
  const source=match();source.payload.post_game.analysis.fields.summary='Atleta Apagado perdeu a bola sob pressão.';
@@ -353,6 +524,28 @@ test('indexer redacts names of deleted players from retained match notes without
  assert.ok(db.fromCalls[1].filters.every(filter=>filter({team_id:TEAM,kind:'player'})));
 });
 
+test('reindex after definitive player removal redacts the name from retained match and video notes using the archive',async()=>{
+ const source=match(),archive={id:'40000000-0000-4000-8000-000000000004',team_id:TEAM,kind:'document',updated_at:'v1',payload:{
+  type:'player_archive',title:'Arquivo histórico',body:JSON.stringify({schema:'vision-player-archive@1',player:{ref:PLAYER,name:'Maria Silva'},development_goals:{items:[]}})
+ }};
+ source.payload.post_game.analysis.fields.summary='Maria Silva perdeu a bola na saída curta.';
+ source.payload.match_evidence={moments:[{id:'archived-player-clip',url:'https://private.example/match',seconds:34,category:'loss',player_ref:PLAYER,description:'Maria Silva perde a bola após a receção.',observation:'Apoio atrasado.'}]};
+ const db=fakeAdmin([source,archive]),provider=fakeProvider();
+ const result=await rag.indexPendingTeamKnowledge(db,TEAM,{provider,limit:16});
+ assert.equal(result.indexed_sources,2);
+ const embedded=provider.requests.flatMap(request=>request.input).join('\n');
+ assert.doesNotMatch(embedded,/Maria Silva|private\.example/);
+ assert.match(embedded,/atleta perdeu a bola na saída curta/i);
+ assert.match(embedded,/atleta perde a bola após a receção/i);
+ const playerQueries=db.fromCalls.filter(call=>call.table==='workspace_records');
+ assert.ok(playerQueries.some(call=>call.filters.every(filter=>filter({team_id:TEAM,kind:'document',payload:{type:'player_archive'}}))));
+ const queryDb=fakeAdmin([archive]),queryProvider=fakeProvider();
+ await rag.executeTeamKnowledgeTool(queryDb,connector,'search_team_knowledge',{query:'O que aconteceu com Maria Silva?'},{provider:queryProvider});
+ const safeQuery=queryProvider.requests.at(-1).input[0];
+ assert.doesNotMatch(safeQuery,/Maria|Silva/);assert.match(safeQuery,/atleta/i);
+ assert.equal(queryDb.calls.find(call=>call.name==='search_team_knowledge_chunks').args.p_query,safeQuery);
+});
+
 test('indexer redacts historical names beyond the first paged roster batch',async()=>{
  const players=Array.from({length:151},(_,i)=>({id:`30000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`,team_id:TEAM,kind:'player',deleted_at:'2026-09-23T10:00:00.000Z',updated_at:`v${i}`,payload:{nome:i===150?'Nome Histórico Longe':'Atleta Apagado '+i}}));
  const source=match();source.payload.post_game.analysis.fields.summary='Nome Histórico Longe falhou o passe.';
@@ -365,7 +558,10 @@ test('indexer redacts historical names beyond the first paged roster batch',asyn
  assert.match(indexedContent,/atleta falhou o passe/i);
  assert.doesNotMatch(indexedContent,/Nome Histórico Longe/i);
  assert.doesNotMatch(provider.requests.flatMap(request=>request.input).join('\n'),/Nome Histórico Longe/i);
- assert.equal(db.fromCalls.filter(call=>call.table==='workspace_records').length,2);
+  const rosterReads=db.fromCalls.filter(call=>call.table==='workspace_records');
+  assert.equal(rosterReads.length,3,'the full active/deleted-player pages and archive names must be loaded');
+  assert.equal(rosterReads.filter(call=>call.filters.every(filter=>filter({team_id:TEAM,kind:'player'}))).length,2);
+  assert.equal(rosterReads.filter(call=>call.filters.every(filter=>filter({team_id:TEAM,kind:'document',payload:{type:'player_archive'}}))).length,1);
 });
 
 test('indexer releases only claimed leases after provider failure so newer revisions can retry immediately',async()=>{
