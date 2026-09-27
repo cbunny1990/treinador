@@ -114,6 +114,73 @@ test('match analysis opens an editable training draft and creates it only after 
  expect(saved.training.blocos).toHaveLength(1);
  expect(saved.training.blocos[0].exercise_ref).toBe(fixture.exerciseRef);
 });
+test('completed match flows through saved memory, cited proposal, coach decision and an explicitly saved training',async({page})=>{
+ await page.goto('/#/calendario');await page.waitForFunction(()=>typeof MatchAnalysisStore!=='undefined'&&typeof TrainingUI!=='undefined'&&typeof go==='function');
+ const fixture=await page.evaluate(async()=>{
+  RemoteWorkspace.scheduleSync=()=>{};
+  const matchSyncId=crypto.randomUUID(),eventId=crypto.randomUUID();
+  const matchId=await DB.criar('jogos',{team_id:DEFAULT_TEAM_ID,sync_id:matchSyncId,data:'2026-09-26',adversario:'Cadeia completa',estado:'concluido',golos_favor:1,golos_contra:0,match_events:{schema:'vision-match-events@1',revision:1,possession:{kind:'unknown',value:null},events:[{id:eventId,type:'loss',at_ms:125000,zone:'def_c',reason:'pass',note:'Passe intercetado'}]},post_game:{}});
+  const exercise=TrainingPlanner.normalizeExercise({team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),workspace_v2:true,nome:'Exercício de apoio da cadeia',escalao:'Sub-8',objetivo:'Passe e apoio',series:1,duracao_serie_min:8});
+  await DB.criar('exercicios',exercise);
+  return{matchId,matchSyncId,eventId,exerciseRef:exercise.sync_id};
+ });
+ await page.evaluate(id=>{go('#/equipa/jogo/'+id);return viewMatch(id);},fixture.matchId);
+ const analysis=page.locator('form[data-form="match-analysis"]');
+ await analysis.locator('[name="field_summary"]').fill('Perda na saída após passe intercetado.');
+ await analysis.locator('[name="field_observations"]').fill('O apoio esteve distante na saída.');
+ await analysis.locator('[name="field_hypotheses"]').fill('A distância pode ter facilitado a interceção.');
+ await analysis.locator('[name="field_next_priority"]').fill('Apoio curto após passe.');
+ await analysis.getByRole('button',{name:'Guardar análise e atualizar memória',exact:true}).click();
+ await expect.poll(()=>page.evaluate(id=>DB.obter('jogos',id).then(row=>row.post_game.analysis?.memory_ref),fixture.matchId)).toBeTruthy();
+ let savedMatch=await page.evaluate(id=>DB.obter('jogos',id),fixture.matchId);
+ const memory=await page.evaluate(async(ref)=>{const rows=await DB.porIndice('memory_items','team_id',DEFAULT_TEAM_ID);return rows.find(row=>row.sync_id===ref);},savedMatch.post_game.analysis.memory_ref);
+ expect(memory).toMatchObject({source:{type:'match',ref_type:'match',ref_id:fixture.matchSyncId},subject_refs:[{type:'match',id:fixture.matchSyncId,relation:'analysis_of'}]});
+ expect(memory.content).toContain('Observação do treinador: O apoio esteve distante na saída.');
+ expect(memory.content).toContain('Hipóteses por confirmar: A distância pode ter facilitado a interceção.');
+ expect(await page.evaluate(()=>DB.porIndice('treinos','team_id',DEFAULT_TEAM_ID).then(rows=>rows.length))).toBe(0);
+
+ // Model the persisted result of prepare_match_analysis: a fresh Head Coach proposal citing the recorded event.
+ await page.evaluate(({matchId,eventId})=>DB.modificar('jogos',matchId,current=>{
+  const analysis=current.post_game.analysis;
+  return{...current,post_game:{...current.post_game,analysis:{...analysis,agent_proposal:{status:'proposed',prepared_by:'Head Coach',prepared_at:'2026-09-26T12:00:00.000Z',source_analysis_revision:analysis.revision,source_events_revision:current.match_events.revision,summary:'Reduzir perdas na saída.',hypotheses:['O apoio pode estar demasiado distante.'],next_priority:'Apoio curto após passe.',evidence_ids:[eventId]}}}};
+ }),fixture);
+ await page.evaluate(id=>viewMatch(id),fixture.matchId);
+ const proposal=page.locator('[data-match-agent-proposal]');
+ await expect(proposal).toContainText('Proposta do Head Coach · Por rever pelo treinador');
+ await expect(proposal).toContainText('2:05 · Perda de bola');
+ await expect(proposal).toContainText('Passe intercetado');
+ await expect(proposal.getByRole('button',{name:'Aceitar proposta'})).toBeVisible();
+ expect(await page.evaluate(()=>DB.porIndice('treinos','team_id',DEFAULT_TEAM_ID).then(rows=>rows.length))).toBe(0);
+ const analysisAfterMemory=page.locator('form[data-form="match-analysis"]');
+ await proposal.getByRole('button',{name:'Copiar prioridade para o campo editável'}).click();
+ await expect(analysisAfterMemory.locator('[name="field_next_priority"]')).toHaveValue('Apoio curto após passe.');
+ await analysisAfterMemory.locator('[name="field_decisions"]').fill('Vou trabalhar apoio curto após passe.');
+ page.once('dialog',dialog=>dialog.accept());
+ await proposal.getByRole('button',{name:'Aceitar proposta'}).click();
+ await expect.poll(()=>page.evaluate(id=>DB.obter('jogos',id).then(row=>row.post_game.analysis.agent_proposal.status),fixture.matchId)).toBe('accepted');
+ savedMatch=await page.evaluate(id=>DB.obter('jogos',id),fixture.matchId);
+ expect(savedMatch.post_game.analysis.agent_proposal.evidence_ids).toEqual([fixture.eventId]);
+ expect(savedMatch.post_game.analysis.agent_proposal.coach_decision).toBe('Vou trabalhar apoio curto após passe.');
+ expect(savedMatch.post_game.analysis.fields.decisions).toBe('Vou trabalhar apoio curto após passe.');
+ expect(savedMatch.post_game.analysis.memory_ref).toBe(memory.sync_id);
+ expect(await page.evaluate(()=>DB.porIndice('treinos','team_id',DEFAULT_TEAM_ID).then(rows=>rows.length))).toBe(0);
+
+ await page.getByRole('link',{name:'Preparar treino desta análise'}).click();
+ const training=page.locator('form[data-form="training-plan"]');
+ await expect(training).toBeVisible();
+ await expect(training.locator('[name="objetivo"]')).toHaveValue('Apoio curto após passe.');
+ await expect(training.locator('[name="notas"]')).toContainText('Vou trabalhar apoio curto após passe.');
+ await expect(training.locator('[name="source_match_ref"]')).toHaveValue(fixture.matchSyncId);
+ expect(await page.evaluate(()=>DB.porIndice('treinos','team_id',DEFAULT_TEAM_ID).then(rows=>rows.length))).toBe(0);
+ await training.locator('[name="exercise_refs"]').check();
+ await training.getByRole('button',{name:'Guardar treino'}).click();
+ await expect(page.getByText(/Ligado ao jogo de/)).toBeVisible();
+ const result=await page.evaluate(async({matchSyncId,exerciseRef})=>{const rows=await DB.porIndice('treinos','team_id',DEFAULT_TEAM_ID);return{rows:rows.map(TrainingPlanner.normalizeTraining),matchSyncId,exerciseRef};},fixture);
+ expect(result.rows).toHaveLength(1);
+ expect(result.rows[0]).toMatchObject({status:'ready',source_match_ref:fixture.matchSyncId,objetivo:'Apoio curto após passe.',notas:expect.stringContaining('Vou trabalhar apoio curto após passe.')});
+ expect(result.rows[0].blocos).toHaveLength(1);
+ expect(result.rows[0].blocos[0].exercise_ref).toBe(fixture.exerciseRef);
+});
 test('video evidence stores a timestamp and edits or deletes only the selected moment',async({page,context})=>{
  await page.goto('/#/calendario');await expect(page.getByRole('heading',{name:'Calendário',exact:true})).toBeVisible();await page.waitForFunction(()=>typeof VisionMatchEvidence!=='undefined'&&typeof go==='function');
  const fixture=await page.evaluate(async()=>{RemoteWorkspace.scheduleSync=()=>{};const sync_id=crypto.randomUUID(),id=await DB.criar('jogos',{team_id:DEFAULT_TEAM_ID,sync_id,data:'2026-09-26',adversario:'Vídeo E2E',estado:'agendado'}),player=crypto.randomUUID();await DB.criar('jogadores',{team_id:DEFAULT_TEAM_ID,sync_id:player,nome:'Atleta do momento',numero:7,plantel_ativo:true,estado_disponibilidade:'disponivel'});const memoryId=await WorkspaceStore.captureObservation({team_id:DEFAULT_TEAM_ID,title:'Observação do jogo',content:'A equipa recuperou e acelerou a transição.',occurred_at:'2026-09-26',refs:[{type:'match',id:sync_id}]});return{id,sync_id,player,memory:(await HeadCoachMemory.get(memoryId)).sync_id};});const id=fixture.id;await page.evaluate(id=>{go('#/equipa/jogo/'+id);return viewMatch(id);},id);await page.setViewportSize({width:390,height:844});
