@@ -1508,6 +1508,88 @@ test("push valida UUIDs de exercício pelo snapshot já lido e não consulta cad
   });
 });
 
+test("treino sincroniza blocos históricos sem restaurar o exercício apagado da mesma equipa", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    const exerciseRef = "89100000-0000-4000-8000-000000000001";
+    const trainingRef = "89100000-0000-4000-8000-000000000002";
+    const deletedAt = "2026-09-24T12:00:00.000Z";
+    remote.rows.push(
+      { id: exerciseRef, team_id: remoteTeamId, kind: "exercise", payload: { nome: "Passe e apoio" }, updated_at: "exercise-v2", deleted_at: deletedAt },
+      { id: trainingRef, team_id: remoteTeamId, kind: "training", payload: { data: "2026-09-25", blocos: [] }, updated_at: "training-v1", deleted_at: null },
+    );
+    useDevice(0);
+    await devices[0].criar("treinos", {
+      team_id: "default", sync_id: trainingRef, remote_team_id: remoteTeamId,
+      remote_updated_at: "training-v1", sync_dirty: true, data: "2026-09-25",
+      blocos: [{ exercise_ref: exerciseRef, exercise_snapshot: { nome: "Passe e apoio" }, duracao_min: 10 }],
+      session: { blocks: [{ exercise_ref: exerciseRef, exercise_snapshot: { nome: "Passe e apoio" }, elapsed_ms: 60_000 }] },
+    });
+    remote.queryLog.length = 0;
+    const result = await RemoteWorkspace._syncRecords(remoteTeamId, "coach", remote.rows, remote.mediaRows);
+    assert.equal(result.pushed, 1);
+    assert.deepEqual(result.conflicts, []);
+    const savedTraining = remote.rows.find((row) => row.id === trainingRef);
+    assert.equal(savedTraining.payload.blocos[0].exercise_ref, exerciseRef);
+    assert.equal(savedTraining.payload.session.blocks[0].exercise_ref, exerciseRef);
+    assert.equal(savedTraining.payload.blocos[0].exercise_snapshot.nome, "Passe e apoio");
+    assert.equal(remote.rows.find((row) => row.id === exerciseRef).deleted_at, deletedAt);
+    assert.equal((await devices[0].listar("exercicios")).length, 0);
+    assert.equal(remote.queryLog.filter((query) => query.table === "workspace_records"
+      && query.action === "select"
+      && query.filters.some(([op, key]) => op === "eq" && key === "id")
+      && query.filters.some(([op, key]) => op === "eq" && key === "kind")).length, 0);
+    const repeated = await RemoteWorkspace._syncRecords(remoteTeamId, "coach", remote.rows, remote.mediaRows);
+    assert.equal(repeated.pushed, 0);
+    assert.deepEqual(repeated.conflicts, []);
+    useDevice(1);
+    const received = await RemoteWorkspace._syncRecords(remoteTeamId, "coach", remote.rows, remote.mediaRows);
+    assert.equal(received.pulled, 1);
+    assert.equal((await devices[1].listar("treinos"))[0].blocos[0].exercise_ref, exerciseRef);
+    assert.equal((await devices[1].listar("exercicios")).length, 0);
+  });
+});
+
+test("treino revalida exercício apagado ausente do delta e recusa UUID ausente ou de outra equipa", async () => {
+  const team = "89100000-0000-4000-8000-000000000010";
+  const deletedRef = "89100000-0000-4000-8000-000000000011";
+  const missingRef = "89100000-0000-4000-8000-000000000012";
+  const originalInit = RemoteWorkspace.init;
+  const queries = [];
+  RemoteWorkspace.init = async () => ({ from(table) {
+    assert.equal(table, "workspace_records");
+    const filters = [];
+    const query = {
+      select() { return this; },
+      eq(key, value) { filters.push([key, value]); return this; },
+      is() { throw new Error("Um bloco histórico não pode exigir exercício ativo."); },
+      async maybeSingle() {
+        queries.push(filters);
+        const valid = filters.some(([key, value]) => key === "id" && value === deletedRef)
+          && filters.some(([key, value]) => key === "team_id" && value === team)
+          && filters.some(([key, value]) => key === "kind" && value === "exercise");
+        return { data: valid ? { id: deletedRef } : null, error: null };
+      },
+    };
+    return query;
+  } });
+  const training = (ref) => ({ blocos: [{ exercise_ref: ref, exercise_snapshot: { nome: "Exercício preservado" } }] });
+  try {
+    const context = { recordRows: new Map(), allowRemoteLookup: true };
+    const payload = await RemoteWorkspace._payloadForRemote("treinos", training(deletedRef), team, context);
+    assert.equal(payload.blocos[0].exercise_ref, deletedRef);
+    assert.equal(payload.blocos[0].exercise_snapshot.nome, "Exercício preservado");
+    assert.equal(queries.length, 1);
+    await assert.rejects(RemoteWorkspace._payloadForRemote("treinos", training(missingRef), team, context),
+      (error) => error.reason === "subject_uuid_not_in_team");
+    await assert.rejects(RemoteWorkspace._payloadForRemote("treinos", training(deletedRef), team, {
+      recordRows: new Map([[deletedRef, { id: deletedRef, team_id: "other-team", kind: "exercise", deleted_at: "2026-09-24" }]]),
+    }), (error) => error.reason === "subject_uuid_not_in_team");
+    await assert.rejects(RemoteWorkspace._payloadForRemote("treinos", training(deletedRef), team, {
+      recordRows: new Map([[deletedRef, { id: deletedRef, team_id: team, kind: "player", deleted_at: "2026-09-24" }]]),
+    }), (error) => error.reason === "subject_uuid_not_in_team");
+  } finally { RemoteWorkspace.init = originalInit; }
+});
+
 test("sync reutiliza o snapshot quando está limpo e só volta a ler a tabela para rever conflitos", async () => {
   await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
     useDevice(0);
