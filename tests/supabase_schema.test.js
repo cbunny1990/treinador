@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const migrationDir = path.join(__dirname, "..", "supabase", "migrations");
+const learningSeasonSql = fs.readFileSync(path.join(migrationDir, "20260927100000_learning_season_plan.sql"), "utf8");
 const sql = fs.readdirSync(migrationDir)
   .filter((name) => name.endsWith(".sql"))
   .sort()
@@ -27,8 +28,8 @@ const mcpSource = fs.readFileSync(path.join(__dirname, "..", "supabase", "functi
 const supabaseConfig = fs.readFileSync(path.join(__dirname, "..", "supabase", "config.toml"), "utf8");
 
 test("Formação: tabelas learning_* com RLS e sem referências a tabelas existentes", () => {
-  for (const table of ["learning_age_groups", "learning_modules", "learning_items", "learning_guides", "learning_sessions"])
-    assert.match(sql, new RegExp(`alter table public\\.${table} enable row level security`));
+  for (const table of ["learning_age_groups", "learning_modules", "learning_items", "learning_guides", "learning_sessions", "learning_season_plans", "learning_plan_weeks"])
+    assert.match(`${sql}\n${learningSeasonSql}`, new RegExp(`alter table public\\.${table} enable row level security`));
   assert.match(sql, /unique \(owner_id, url_normalized\)/);
   assert.doesNotMatch(sql, /learning_[a-z_]+[^;]*references public\.(teams|jogadores|treinos|workspace_records)/);
 });

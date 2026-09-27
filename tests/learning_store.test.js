@@ -4,7 +4,7 @@ const {createStore}=require("../js/learning_store.js");
 function fake(result={data:[],error:null},user="u1"){
   const calls=[];
   const q=table=>{const c={table,ops:[]};calls.push(c);const p={};
-    for(const op of ["select","eq","in","order","update","maybeSingle"])p[op]=(...a)=>{c.ops.push([op,...a]);return p;};
+    for(const op of ["select","eq","in","order","limit","update","maybeSingle"])p[op]=(...a)=>{c.ops.push([op,...a]);return p;};
     p.then=(res,rej)=>Promise.resolve(result).then(res,rej);return p;};
   return{calls,remote:{init:async()=>({from:q}),getSession:async()=>user?{user:{id:user}}:null}};
 }
@@ -27,4 +27,23 @@ test("sem sessão dá mensagem clara em pt-PT",async()=>{
 });
 test("erro do Supabase é propagado",async()=>{
   await assert.rejects(()=>createStore(fake({data:null,error:new Error("boom")}).remote).listAgeGroups(),/boom/);
+});
+test("listLibrary filtra treinos aprovados pelo módulo treinos-exemplo",async()=>{
+  const f=fake({data:[{id:"mod1",slug:"treinos-exemplo"}],error:null});
+  await createStore(f.remote).listLibrary("sub8");
+  assert.equal(f.calls[0].table,"learning_modules");
+  assert.ok(f.calls[0].ops.some(o=>o[0]==="eq"&&o[1]==="age_group_code"&&o[2]==="sub8"));
+  assert.equal(f.calls[1].table,"learning_sessions");
+  assert.ok(f.calls[1].ops.some(o=>o[0]==="eq"&&o[1]==="module_id"&&o[2]==="mod1"));
+  assert.ok(f.calls[1].ops.some(o=>o[0]==="eq"&&o[1]==="status"&&o[2]==="aprovado"));
+  assert.ok(f.calls[1].ops.some(o=>o[0]==="order"&&o[1]==="library_code"));
+});
+test("getSeasonPlan sem plano devolve estrutura vazia",async()=>{
+  const f=fake({data:null,error:null});
+  assert.deepEqual(await createStore(f.remote).getSeasonPlan("sub8"),{plan:null,weeks:[]});
+  assert.equal(f.calls[0].table,"learning_season_plans");
+  assert.ok(f.calls[0].ops.some(o=>o[0]==="eq"&&o[1]==="age_group_code"&&o[2]==="sub8"));
+  assert.ok(f.calls[0].ops.some(o=>o[0]==="eq"&&o[1]==="status"&&o[2]==="aprovado"));
+  assert.ok(f.calls[0].ops.some(o=>o[0]==="order"&&o[1]==="start_date"&&o[2].ascending===false));
+  assert.ok(f.calls[0].ops.some(o=>o[0]==="limit"&&o[1]===1));
 });

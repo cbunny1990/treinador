@@ -19,6 +19,8 @@ async function withDb(fn) {
       select set_config('request.jwt.claim.role','service_role',false);`);
     const migration = path.join(__dirname, "..", "supabase", "migrations", "20260926120000_learning_tables.sql");
     if (fs.existsSync(migration)) await db.exec(fs.readFileSync(migration, "utf8"));
+    const seasonMigration = path.join(__dirname, "..", "supabase", "migrations", "20260927100000_learning_season_plan.sql");
+    if (fs.existsSync(seasonMigration)) await db.exec(fs.readFileSync(seasonMigration, "utf8"));
     await fn(db);
   } finally { await db.close(); }
 }
@@ -56,4 +58,30 @@ test("só um guia aprovado por módulo e dono", async () => withDb(async db => {
   const ins = "insert into public.learning_guides(module_id,body_md,status) values($1,'# g','aprovado')";
   await db.query(ins, [mod]);
   await assert.rejects(() => db.query(ins, [mod]), /duplicate key|unique/i);
+}));
+
+test("biblioteca: library_code único por dono", async () => withDb(async db => {
+  await asUser(db, A);
+  const mod = (await db.query("select id from public.learning_modules where slug='treinos-exemplo'")).rows[0].id;
+  const ins = "insert into public.learning_sessions(module_id,title,objective,library_code,focus,season_block,status) values($1,'T','O','T01','condução',2,'aprovado')";
+  await db.query(ins, [mod]);
+  await assert.rejects(() => db.query(ins, [mod]), /duplicate key|unique/i);
+  await db.query("reset role");
+  await asUser(db, B);
+  await db.query(ins, [mod]);
+}));
+
+test("plano: semanas únicas, cascade e RLS", async () => withDb(async db => {
+  await asUser(db, A);
+  const p = (await db.query("insert into public.learning_season_plans(age_group_code,season_label,title,start_date,end_date,status) values('sub8','2026/27','Época','2026-09-07','2027-07-30','aprovado') returning id")).rows[0].id;
+  const w = "insert into public.learning_plan_weeks(plan_id,week_no,starts_on,block_no,block_title,objective) values($1,1,'2026-09-07',1,'Adaptação','Conhecer o grupo')";
+  await db.query(w, [p]);
+  await assert.rejects(() => db.query(w, [p]), /duplicate key|unique/i);
+  await db.query("reset role");
+  await asUser(db, B);
+  assert.equal((await db.query("select * from public.learning_plan_weeks")).rows.length, 0);
+  await db.query("reset role");
+  await asUser(db, A);
+  await db.query("delete from public.learning_season_plans where id=$1", [p]);
+  assert.equal((await db.query("select * from public.learning_plan_weeks")).rows.length, 0);
 }));
