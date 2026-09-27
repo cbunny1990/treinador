@@ -1,6 +1,7 @@
 "use strict";
 (function(root){
   const L=root.Learning||require("./learning.js");
+  const D=root.LearningDiagram||(typeof require==="function"?require("./learning_diagram.js"):null);
   // Mirrors the local HTML escape helper in training_session_ui.js.
   const esc=x=>String(x??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
   const safeUrl=x=>{try{const u=new URL(String(x));return /^https?:$/.test(u.protocol)?u.href:null;}catch{return null;}};
@@ -37,7 +38,18 @@
   function renderSession(s){
     const phase={inicio:"Início",meio:"Meio",fim:"Fim"};
     const used=Array.isArray(s.usedInWeeks)?s.usedInWeeks:[];
-    return `<p><a href="#/formacao">← Formação</a></p><article class="learning-session"><h2>${esc(s.title)}</h2>${s.library_code?`<p><strong>Código:</strong> ${esc(s.library_code)}</p>`:""}${s.focus?`<p><strong>Foco:</strong> ${esc(s.focus)}</p>`:""}${used.length?`<p><strong>Usado nas semanas:</strong> ${used.map(esc).join(", ")}</p>`:""}<p><strong>Objetivo:</strong> ${esc(s.objective)}</p><p><strong>Pilares:</strong> ${(Array.isArray(s.pillars)?s.pillars:[]).map(esc).join(" · ")}</p><p><strong>Duração:</strong> ${esc(s.duration_min)} min · <strong>Fase:</strong> ${esc(phase[s.season_phase]||"")} da época</p><p><strong>Material:</strong> ${esc(s.equipment)}</p><h3>Porquê este treino</h3><p>${esc(s.why)}</p>${(Array.isArray(s.exercises)?s.exercises:[]).map(e=>`<section class="panel learning-exercise"><h3>${esc(e.fase)}</h3><p><strong>Organização:</strong> ${esc(e.organizacao)}</p><p><strong>Regras:</strong> ${esc(e.regras)}</p><p><strong>Variantes:</strong> ${esc(e.variantes)}</p><h4>Pontos de ensino</h4>${list(e.pontos_ensino)}<h4>Erros comuns</h4>${list(e.erros_comuns)}</section>`).join("")}${controls(s,"learning_sessions")}</article>`;
+    const exercises=Array.isArray(s.exercises)?s.exercises:[],hasV2=exercises.some(e=>["espaco","jogadores","duracao_min","material","preparacao","passos","diagrama"].some(key=>e?.[key]!=null));
+    const level=String(s.library_code||"").match(/^T(\d{1,2})$/i)?.[1];
+    const material=items=>Array.isArray(items)&&items.length?`<ul>${items.map(entry=>`<li>${esc(entry.item)} · ${esc(entry.qtd)}</li>`).join("")}</ul>`:"<p>Sem material indicado.</p>";
+    const numbered=items=>`<ol>${(Array.isArray(items)?items:[]).map(item=>`<li>${esc(item)}</li>`).join("")}</ol>`;
+    const exerciseHtml=e=>{
+      const modern=["espaco","jogadores","duracao_min","material","preparacao","passos","diagrama"].some(key=>e?.[key]!=null);
+      if(!modern)return `<section class="panel learning-exercise"><h3>${esc(e.fase)}</h3><p><strong>Organização:</strong> ${esc(e.organizacao)}</p><p><strong>Regras:</strong> ${esc(e.regras)}</p><p><strong>Variantes:</strong> ${esc(e.variantes)}</p><h4>Pontos de ensino</h4>${list(e.pontos_ensino)}<h4>Erros comuns</h4>${list(e.erros_comuns)}</section>`;
+      const diagram=D?.render(e.diagrama,{title:e.fase})||"";
+      return `<section class="panel learning-exercise"><h3>${esc(e.fase)}</h3>${diagram?`<figure class="learning-diagram">${diagram}${e.diagrama?.legenda?`<figcaption class="learning-diagram-caption">${esc(e.diagrama.legenda)}</figcaption>`:""}</figure>`:""}<p><strong>Espaço:</strong> ${esc(e.espaco)} · <strong>Jogadores:</strong> ${esc(e.jogadores)} · <strong>Duração:</strong> ${esc(e.duracao_min)} min</p><h4>Material</h4>${material(e.material)}<h4>Como preparar</h4>${numbered(e.preparacao)}<h4>Passo a passo</h4>${numbered(e.passos)}<p><strong>Organização:</strong> ${esc(e.organizacao)}</p><p><strong>Regras:</strong> ${esc(e.regras)}</p><h4>Pontos de ensino</h4>${list(e.pontos_ensino)}<h4>Erros comuns</h4>${list(e.erros_comuns)}<h4>Variantes</h4>${list(Array.isArray(e.variantes)?e.variantes:[e.variantes])}</section>`;
+    };
+    const sessionMaterial=hasV2?L.aggregateMaterial(exercises):[];
+    return `<p><a href="#/formacao">← Formação</a></p><article class="learning-session"><h2>${esc(s.title)}</h2>${level?`<p><strong>Nível ${esc(Number(level))} de 30</strong></p>`:""}${s.library_code?`<p><strong>Código:</strong> ${esc(s.library_code)}</p>`:""}${s.focus?`<p><strong>Foco:</strong> ${esc(s.focus)}</p>`:""}${used.length?`<p><strong>Usado nas semanas:</strong> ${used.map(esc).join(", ")}</p>`:""}${s.progression?`<h3>Progressão</h3><p>${esc(s.progression)}</p>`:""}<p><strong>Objetivo:</strong> ${esc(s.objective)}</p><p><strong>Pilares:</strong> ${(Array.isArray(s.pillars)?s.pillars:[]).map(esc).join(" · ")}</p><p><strong>Duração:</strong> ${esc(s.duration_min)} min · <strong>Fase:</strong> ${esc(phase[s.season_phase]||"")} da época</p><p><strong>Material:</strong> ${esc(s.equipment)}</p>${hasV2?`<h3>Material para o treino</h3>${material(sessionMaterial)}`:""}<h3>Porquê este treino</h3><p>${esc(s.why)}</p>${exercises.map(exerciseHtml).join("")}${controls(s,"learning_sessions")}</article>`;
   }
   function renderSeasonPlan(plan,weeks,sessionsById={},todayISO=new Date().toISOString().slice(0,10)){
     if(!plan)return `<p><a href="#/formacao">← Formação</a></p><h2>Plano da época</h2><p>Ainda não há plano da época aprovado.</p>`;
@@ -49,9 +61,10 @@
     }).join("")}</div></section>`).join("")}`;
   }
   function renderLibrary(group,sessions,filters={},focusOptions=[]){
-    const rows=L.filterLibrary(sessions,filters),pillars=[...new Set((sessions||[]).flatMap(s=>Array.isArray(s.pillars)?s.pillars:[]))].sort((a,b)=>String(a).localeCompare(String(b)));
+    const level=s=>{const value=String(s.library_code||"").match(/^T(\d{1,2})$/i);return value?Number(value[1]):Number.MAX_SAFE_INTEGER;};
+    const rows=L.filterLibrary(sessions,filters).sort((a,b)=>level(a)-level(b)||String(a.library_code||"").localeCompare(String(b.library_code||""))),pillars=[...new Set((sessions||[]).flatMap(s=>Array.isArray(s.pillars)?s.pillars:[]))].sort((a,b)=>String(a).localeCompare(String(b)));
     const select=(key,label,values)=>`<label>${label}<select data-learning-filter="${key}"><option value="">Todos</option>${values.map(value=>`<option value="${esc(value)}" ${String(filters[key]??"")===String(value)?"selected":""}>${esc(value)}</option>`).join("")}</select></label>`;
-    return `<p><a href="#/formacao/${encodeURIComponent(group.code)}">← ${esc(group.name)}</a></p><h2>Biblioteca de treinos</h2><div class="learning-library-filters">${select("pillar","Pilar",pillars)}${select("block","Bloco",[...new Set((sessions||[]).map(s=>s.season_block).filter(Boolean))].sort((a,b)=>a-b))}${select("focus","Foco",focusOptions)}</div>${rows.length?`<div class="learning-items">${rows.map(s=>`<a class="panel learning-library-item" href="#/formacao/treino/${encodeURIComponent(s.id)}"><strong>${esc(s.library_code)}</strong> · ${esc(s.title)}<p>${esc(s.focus)} · ${(Array.isArray(s.pillars)?s.pillars:[]).map(esc).join(" · ")} · ${esc(s.duration_min)} min · Bloco ${esc(s.season_block)}</p></a>`).join("")}</div>`:"<p>Não há treinos aprovados para estes filtros.</p>"}`;
+    return `<p><a href="#/formacao/${encodeURIComponent(group.code)}">← ${esc(group.name)}</a></p><h2>Biblioteca de treinos</h2><div class="learning-library-filters">${select("pillar","Pilar",pillars)}${select("block","Bloco",[...new Set((sessions||[]).map(s=>s.season_block).filter(Boolean))].sort((a,b)=>a-b))}${select("focus","Foco",focusOptions)}</div>${rows.length?`<div class="learning-items">${rows.map(s=>{const n=level(s);return `<a class="panel learning-library-item" href="#/formacao/treino/${encodeURIComponent(s.id)}"><strong>${esc(s.library_code)}</strong> · ${esc(s.title)}${n<31?`<p>Nível ${n}</p>`:""}<p>${esc(s.focus)} · ${(Array.isArray(s.pillars)?s.pillars:[]).map(esc).join(" · ")} · ${esc(s.duration_min)} min · Bloco ${esc(s.season_block)}</p></a>`;}).join("")}</div>`:"<p>Não há treinos aprovados para estes filtros.</p>"}`;
   }
   function syncNav(){if(typeof document!=="undefined")document.querySelectorAll('[data-tab="formacao"]').forEach(a=>a.hidden=!L.isEnabled());}
   let bound=false;

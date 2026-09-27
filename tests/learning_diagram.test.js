@@ -30,6 +30,7 @@ test('setas com passo mostram número; legenda com símbolo e nome',()=>{
   assert.match(s,/data-step="2"[\s\S]*>2</);
   assert.match(s,/data-legend="jogador_a"[\s\S]*Equipa A/);
   assert.match(s,/data-legend="passe"[\s\S]*Passe/);
+  assert.match(s,/data-legend="step"[\s\S]*N.º = passo a passo/);
 });
 test('legenda só com tipos usados; sem diagrama → vazio',()=>{
   const s=D.render({campo:{largura:10,comprimento:10},elementos:[{tipo:'cone',x:1,y:1}],setas:[]},{title:'t'});

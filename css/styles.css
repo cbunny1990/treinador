@@ -361,3 +361,7 @@ tr:last-child td{border-bottom:0}
 .learning-current-week{border:2px solid var(--accent-2);scroll-margin-top:20px}
 .learning-break{background:#f1f5f9;color:#64748b}
 .learning-library-item{display:block;text-decoration:none}
+.learning-diagram svg{display:block;width:100%;height:auto;max-width:420px;margin:0 auto}
+.learning-diagram-caption{margin-top:10px;line-height:1.45}
+.learning-exercise ol{padding-left:24px;line-height:1.6}
+.learning-exercise li{padding-left:3px;margin:4px 0}

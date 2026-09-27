@@ -46,3 +46,7 @@ test("filtros da biblioteca",()=>{
   assert.deepEqual(L.filterLibrary(s,{block:1}).map(x=>x.library_code),["T01"]);
   assert.deepEqual(L.focuses(s),["drible","jogo"]);
 });
+test("material agregado usa a maior quantidade por item",()=>{
+  const m=L.aggregateMaterial([{material:[{item:'cones',qtd:8},{item:'bolas',qtd:6}]},{material:[{item:'Cones ',qtd:12},{item:'coletes',qtd:4}]},{}]);
+  assert.deepEqual(m,[{item:'cones',qtd:12},{item:'bolas',qtd:6},{item:'coletes',qtd:4}]);
+});
