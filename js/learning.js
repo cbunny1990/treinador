@@ -49,7 +49,16 @@
       .slice().sort((a,b)=>String(a.library_code||"").localeCompare(String(b.library_code||"")));
   }
   function focuses(sessions){return [...new Set((sessions||[]).map(session=>session?.focus).filter(focus=>typeof focus==="string"&&focus.length>0))].sort((a,b)=>a.localeCompare(b));}
+  function aggregateMaterial(exercises){
+    const materials=new Map();
+    for(const exercise of Array.isArray(exercises)?exercises:[])for(const entry of Array.isArray(exercise?.material)?exercise.material:[]){
+      const item=String(entry?.item??"").trim(),key=item.toLocaleLowerCase("pt-PT").replace(/\s+/g," "),qtd=Number(entry?.qtd);
+      if(!item||!Number.isFinite(qtd)||qtd<0)continue;
+      if(!materials.has(key))materials.set(key,{item,qtd});else materials.get(key).qtd=Math.max(materials.get(key).qtd,qtd);
+    }
+    return [...materials.values()];
+  }
   const BLOCKS=[{id:"jogador",title:"O jogador"},{id:"ensinar",title:"O que ensinar"},{id:"treinador",title:"O treinador"}];
-  const api={FLAG_KEY,isEnabled,setEnabled,normalizeUrl,youtubeId,embedUrl,isVisible,byKind,progress,currentWeek,groupWeeksByBlock,filterLibrary,focuses,BLOCKS};
+  const api={FLAG_KEY,isEnabled,setEnabled,normalizeUrl,youtubeId,embedUrl,isVisible,byKind,progress,currentWeek,groupWeeksByBlock,filterLibrary,focuses,aggregateMaterial,BLOCKS};
   root.Learning=api;if(typeof module!=="undefined"&&module.exports)module.exports=api;
 })(globalThis);

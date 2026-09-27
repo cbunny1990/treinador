@@ -96,13 +96,14 @@
   <script src="js/agent_contract.js"></script>
   <script src="js/learning.js"></script>
   <script src="js/learning_store.js"></script>
+  <script src="js/learning_diagram.js"></script>
   <script src="js/learning_ui.js"></script>
   <script src="js/app.js"></script>
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
         let hadController = !!navigator.serviceWorker.controller;
-        const serviceWorkerVersion = 209;
+        const serviceWorkerVersion = 210;
         const registration = await navigator.serviceWorker.register("sw.js?v="+serviceWorkerVersion).catch(() => null);
         if(!registration) return;
         registration.update().catch(() => {});

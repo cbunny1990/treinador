@@ -34,6 +34,10 @@ test("Formação: tabelas learning_* com RLS e sem referências a tabelas existe
   assert.doesNotMatch(sql, /learning_[a-z_]+[^;]*references public\.(teams|jogadores|treinos|workspace_records)/);
 });
 
+test("Formação v2 adiciona a progressão dos treinos sem remover dados", () => {
+  assert.match(sql, /add column if not exists progression text/i);
+});
+
 test("schema remoto ativa RLS nas tabelas privadas", () => {
   for (const table of ["teams","team_members","workspace_records","media_assets","activity_log","agent_authorizations"]) {
     assert.match(sql, new RegExp("alter table public\\." + table + " enable row level security", "i"));
