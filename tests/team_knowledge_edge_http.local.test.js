@@ -199,7 +199,10 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     });
     assert.equal(initialize.status, 200, await initialize.clone().text());
     const initialized = await initialize.json();
-    assert.equal(initialized.result.serverInfo.version, "1.14.9");
+    const source = fs.readFileSync(path.join(__dirname, "..", "supabase", "functions", "vision-coach-mcp", "index.ts"), "utf8");
+    const declaredVersion = source.match(/^const SERVER_VERSION = "([^"]+)";$/m)?.[1];
+    assert.ok(declaredVersion, "A versão do MCP tem de estar declarada no código da função.");
+    assert.equal(initialized.result.serverInfo.version, declaredVersion);
     assert.match(initialized.result.instructions, /get_training_planning_context/);
     assert.match(initialized.result.instructions, /get_recent_match_context/);
     assert.match(initialized.result.instructions, /roster and availability, use list_players/i);
@@ -533,6 +536,37 @@ test("MCP HTTP expõe RAG e declara provider ausente sem enviar texto externo", 
     const downloadedImage = await fetch(downloadUrl, { redirect: "error" });
     assert.equal(downloadedImage.status, 200);
     assert.equal(await imageHash(new Uint8Array(await downloadedImage.arrayBuffer())), exerciseImageMeta.sha256);
+
+    const reportedMatchRef = uuid();
+    const reportedMatch = await admin.from("workspace_records").insert({
+      id: reportedMatchRef, team_id: teams[0], kind: "match", actor_type: "human",
+      payload: {
+        data: "2026-08-15", estado: "concluido", golos_favor: 9,
+        callup: { player_ids: [currentPlayerRef] },
+        match_events: { schema: "vision-match-events@1", revision: 1, events: [
+          { id: uuid(), type: "goal_for", at_ms: 60_000, player_ref: currentPlayerRef },
+          { id: uuid(), type: "goal_for", at_ms: 120_000 },
+        ] },
+        post_game: { player_reports: { schema: "vision-match-player-reports@1", revision: 1, items: [
+          { player_ref: currentPlayerRef, status: "reported", observation: "Criou apoio após passe.", positives: "Ofereceu linha de passe.", to_improve: "Orientar a receção.", history: [] },
+        ] } },
+      },
+    });
+    assert.ifError(reportedMatch.error);
+    const matchReportResponse = await mcpRequest(token, "tools/call", {
+      name: "get_match_report", arguments: { id: reportedMatchRef, report_type: "post_match" },
+    });
+    assert.equal(matchReportResponse.status, 200);
+    const matchReport = JSON.parse((await matchReportResponse.json()).result.content[0].text);
+    assert.equal(matchReport.player_reports.items[0].observation, "Criou apoio após passe.");
+    assert.deepEqual(matchReport.player_reports.pending_player_refs, []);
+    const playerReportResponse = await mcpRequest(token, "tools/call", {
+      name: "get_player_report", arguments: { id: currentPlayerRef, from_date: "2026-08-01", to_date: "2026-08-31" },
+    });
+    assert.equal(playerReportResponse.status, 200);
+    const playerReport = JSON.parse((await playerReportResponse.json()).result.content[0].text);
+    assert.equal(playerReport.goal_for.summary.total_attributed_goals, 1);
+    assert.equal(playerReport.goal_for.summary.matches_with_event_lists, 1);
 
     const rejectedToken = `vcmcp_${crypto.randomBytes(32).toString("base64url")}`;
     const rejected = await mcpRequest(rejectedToken, "tools/list");
