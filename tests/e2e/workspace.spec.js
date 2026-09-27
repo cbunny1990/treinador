@@ -1488,6 +1488,84 @@ test("conflito de eliminação offline mostra versões e exige uma escolha expl�
   await expect.poll(() => page.evaluate(() => window.__identityRecovery)).toEqual(["jogos", "12", "match-stable", "local-v2", "v2"]);
 });
 
+test("conflito de atividade permite comparar e arquivar a versão local antes de aceitar a remota", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => typeof RemoteWorkspace !== "undefined" && typeof router === "function");
+  await page.evaluate(() => {
+    const syncId = "72000000-0000-4000-8000-000000000001";
+    RemoteWorkspace.status = async () => ({ configured: true, signedIn: true,
+      email: "treinador@example.test", remoteTeamId: "team-test",
+      conflicts: [{ store: "activity_items", local_id: 24, sync_id: syncId,
+        reason: "duplicate_identity", remote_updated_at: "2026-09-25T12:00:00Z" }] });
+    RemoteWorkspace.getConfig = () => ({ url: "https://example.supabase.co", publishableKey: "sb_publishable_test" });
+    RemoteWorkspace.listTeams = async () => [{ id: "team-test", name: "Equipa de teste" }];
+    MCPConnectors.list = async () => [];
+    RemoteWorkspace.readActivityIdentityConflict = async () => ({
+      sync_id: syncId, local_id: 24, local_updated_at: "local-v1",
+      local: { summary: "Atividade local" }, remote: { summary: "Atividade remota" },
+    });
+    RemoteWorkspace.resolveActivityIdentityConflict = async review => {
+      window.__activityConflictDecision = { sync_id: review.sync_id, local_id: review.local_id };
+      return { conflicts: [], archive_id: 51 };
+    };
+    go("#/definicoes");
+  });
+  const card = page.locator('[data-conflict-card="72000000-0000-4000-8000-000000000001"]');
+  await expect(page.getByText(/1 alteração requer escolha do treinador/)).toBeVisible();
+  await expect(card.getByText(/Próximo passo: compara as duas atividades/)).toBeVisible();
+  await card.getByRole("button", { name: "Comparar atividades" }).click();
+  await expect(card.locator('[data-activity-conflict-review] pre').first()).toContainText("Atividade local");
+  await expect(card.locator('[data-activity-conflict-review] pre').last()).toContainText("Atividade remota");
+  page.on("dialog", dialog => dialog.accept());
+  await card.getByRole("button", { name: "Guardar cópia local e aceitar atividade remota" }).click();
+  await expect.poll(() => page.evaluate(() => window.__activityConflictDecision)).toEqual({
+    sync_id: "72000000-0000-4000-8000-000000000001", local_id: 24,
+  });
+});
+
+test("duas decisões simultâneas sobre a mesma atividade não duplicam o arquivo IndexedDB", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => typeof DB !== "undefined" && typeof RemoteWorkspace !== "undefined");
+  const result = await page.evaluate(async () => {
+    const team = "75000000-0000-4000-8000-000000000001";
+    const syncId = "76000000-0000-4000-8000-000000000001";
+    RemoteWorkspace.scheduleSync = () => {};
+    RemoteWorkspace.syncNow = async () => ({ conflicts: [] });
+    RemoteWorkspace._localIdForRemoteRef = async () => null;
+    const localId = await DB.criar("activity_items", {
+      team_id: DEFAULT_TEAM_ID, remote_team_id: team, sync_id: syncId,
+      actor: "human", actor_label: "Treinador", action: "edited", summary: "Cópia local",
+      metadata: {}, created_at: "2026-09-25T12:00:00Z",
+    });
+    const remote = { id: syncId, team_id: team, actor_type: "human", actor_label: "Treinador",
+      action: "edited", summary: "Cópia remota", metadata: {}, created_at: "2026-09-25T12:00:00Z" };
+    const config = JSON.parse(localStorage.getItem("treinador.remote.supabase.v1") || "{}");
+    localStorage.setItem("treinador.remote.supabase.v1", JSON.stringify({ ...config, remoteTeamId: team,
+      conflicts: [{ store: "activity_items", reason: "duplicate_identity", sync_id: syncId,
+        local_id: localId, remote_updated_at: remote.created_at }] }));
+    RemoteWorkspace.init = async () => ({ from(table) {
+      if (table !== "activity_log") throw new Error("Tabela inesperada: " + table);
+      return { select() { return this; }, eq() { return this; },
+        async maybeSingle() { return { data: { ...remote }, error: null }; } };
+    } });
+    const review = await RemoteWorkspace.readActivityIdentityConflict(syncId, localId);
+    const decisions = await Promise.allSettled([
+      RemoteWorkspace.resolveActivityIdentityConflict(review),
+      RemoteWorkspace.resolveActivityIdentityConflict(review),
+    ]);
+    const archives = (await DB.listar("workspace_documents")).filter((row) =>
+      row.type === "sync_conflict_archive" && row.remote_team_id === team);
+    const activity = await DB.obter("activity_items", localId);
+    return { fulfilled: decisions.filter((item) => item.status === "fulfilled").length,
+      rejected: decisions.filter((item) => item.status === "rejected").length,
+      archives: archives.length, archiveSyncIds: archives.map((item) => item.sync_id),
+      summary: activity.summary, dirty: activity.sync_dirty };
+  });
+  expect(result).toMatchObject({ fulfilled: 1, rejected: 1, archives: 1,
+    summary: "Cópia remota", dirty: false });
+  expect(result.archiveSyncIds[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+});
+
 test("conflito bloqueado orienta para a equipa e liga ao registo local sem transbordo móvel", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");

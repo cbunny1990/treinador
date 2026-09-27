@@ -190,6 +190,7 @@ function sourceFields(row){
     const leaves=[];extractTextLeaves({title:p.title,body:p.body,principles:p.principles,attacking:p.attacking,defending:p.defending,transitions:p.transitions},'',leaves);
     for(const item of leaves)add(item.path,'Princípio do modelo de jogo',item.text,'game_model_principle',{category:'game_model',source_date:null});
   } else if(kind==='document'){
+    if(p.type==='sync_conflict_archive')return fields;
     const archivedPlayer=p.type==='player_archive';
     add('title',archivedPlayer?'Arquivo histórico de atleta':'Documento · '+text(p.title,180),archivedPlayer?'Arquivo histórico de atleta':p.title,'coach_observation',{category:archivedPlayer?'player_archive':text(p.type,80)||'document',source_date:isoDate(p.target_date)});
     let body=p.body;

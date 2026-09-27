@@ -13,6 +13,7 @@ var remoteSyncFailed = false;
 var renderedViewRoute = null;
 var skipNextRemoteSync = false;
 var pendingIndependentConflictPreviews = null;
+var pendingActivityConflictReviews = new Map();
 var viewRenderSequence = 0;
 var userScrollIntentSequence = 0;
 var lastUserScrollIntentAt = -Infinity;
@@ -908,6 +909,7 @@ async function viewDocuments(options){
 async function viewDocumentForm(id){
   var doc=id?await WorkspaceStore.getDocument(id):null;
   if(doc?.type==="player_archive")return go("#/equipa/arquivo-atletas");
+  if(doc?.type==="sync_conflict_archive")return go("#/planos/"+doc.id);
   var typeOpts=WORKSPACE_EDITABLE_DOC_TYPES.map(function(type){
     return '<option value="'+type+'" '+((doc&&doc.type||"training_plan")===type?"selected":"")+'>'+esc(docTypeLabel(type))+'</option>';
   }).join("");
@@ -952,7 +954,7 @@ async function viewDocument(id){
   }
   audit+='<span class="meta">· '+fmtDate(doc.updated_at)+'</span></div>';
   html+=audit;
-  html+='<div class="toolbar" style="margin-top:18px"><a class="btn" href="#/planos/'+id+'/editar">Editar</a><a class="btn secondary" href="#/media/novo/document/'+id+'">Associar media</a><button class="btn danger" data-action="delete-document" data-id="'+id+'">Apagar</button></div></section>';
+  html+='<div class="toolbar" style="margin-top:18px">'+(doc.type==="sync_conflict_archive"?'':'<a class="btn" href="#/planos/'+id+'/editar">Editar</a>')+'<a class="btn secondary" href="#/media/novo/document/'+id+'">Associar media</a><button class="btn danger" data-action="delete-document" data-id="'+id+'">Apagar</button></div></section>';
   html+='<section class="section"><div class="section-head"><div><h2>Media associado</h2><p>'+media.length+' item(ns)</p></div></div>'+renderMediaCards(media)+'</section>';
   setView(doc.title,html,"Planos");
 }
@@ -1062,10 +1064,12 @@ function remoteConflictCardHTML(conflict){
   if(['remote_team_unknown','subject_other_team','storage_path_team_mismatch'].includes(conflict.reason))html+='<div class="notice section"><strong>Próximo passo: confirmar a equipa do workspace</strong><p>Em Definições, seleciona a equipa proprietária deste registo ou ficheiro. Se a equipa de origem continuar desconhecida, pede ao responsável do workspace que confirme a pertença. O conflito mantém-se até a origem ser confirmada.</p><a class="btn secondary" href="#/definicoes?focus=workspace">Abrir seleção do workspace</a></div>';
   else if(conflict.reason==='subject_uuid_not_in_team')html+='<p class="hint">Próximo passo: verifica a referência local deste registo e pede ao responsável do workspace que confirme qual é o registo de origem. Não alteres a equipa para tentar resolver esta referência.</p>';
   else if(conflict.reason==='storage_signed_url_failed')html+='<p class="hint">Próximo passo: volta a sincronizar quando houver ligação. O ficheiro continua privado e a tentativa será repetida.</p>';
+  else if(conflict.reason==='duplicate_identity'&&conflict.store==='activity_items')html+='<p class="hint" data-conflict-next-step>Próximo passo: compara as duas atividades. O histórico remoto não pode ser alterado; podes guardar a cópia local num documento partilhado e aceitar a atividade remota.</p>';
   else if(!['version_mismatch','delete_version_mismatch','remote_deleted_local_dirty','invalid_local_sync_id'].includes(conflict.reason)&&!(conflict.reason==='duplicate_identity'&&conflict.store!=='activity_items'&&conflict.store!=='media_items'))html+='<p class="hint" data-conflict-next-step>Próximo passo: pede revisão ao responsável do workspace com o código <code>'+esc(conflict.reason||'unknown')+'</code>. Mantém as duas versões; esta ocorrência não tem uma correção segura automática.</p>';
   html+='<p class="meta">Código do motivo: <code data-conflict-reason>'+esc(conflict.reason||'unknown')+'</code></p>';
   html+='<details class="section"><summary>Detalhes técnicos</summary><p class="meta">Tipo: '+esc(stores[conflict.store]||conflict.store||'desconhecido')+' · ID remoto: '+esc(conflict.sync_id||'indisponível')+' · versão local vista: '+esc(conflict.expected_updated_at||'sem versão')+' · versão remota: '+esc(conflict.remote_updated_at||'indisponível')+'</p></details>';
   if(conflict.reason==='version_mismatch')html+='<button class="btn secondary" type="button" data-action="review-version-conflict" data-sync-id="'+esc(conflict.sync_id)+'" data-store="'+esc(conflict.store)+'">Comparar versões</button><div class="conflict-review section" data-conflict-review hidden></div>';
+  if(conflict.reason==='duplicate_identity'&&conflict.store==='activity_items')html+='<button class="btn secondary" type="button" data-action="review-activity-conflict" data-sync-id="'+esc(conflict.sync_id)+'" data-local-id="'+esc(conflict.local_id)+'">Comparar atividades</button><div class="conflict-review section" data-activity-conflict-review hidden></div>';
   if(conflict.reason==='invalid_local_sync_id'||(conflict.reason==='duplicate_identity'&&conflict.store!=='activity_items'&&conflict.store!=='media_items'))html+='<button class="btn secondary" type="button" data-action="find-invalid-id-match" data-local-id="'+esc(conflict.local_id)+'" data-store="'+esc(conflict.store)+'">Procurar correspondência exata</button><div class="conflict-review section" data-identity-recovery hidden></div>';
   if(conflict.reason==='delete_version_mismatch')html+='<div class="toolbar"><button class="btn secondary" type="button" data-action="resolve-delete-conflict" data-sync-id="'+esc(conflict.sync_id)+'" data-resolution="keep_remote">Manter versão remota</button><button class="btn secondary" type="button" data-action="resolve-delete-conflict" data-sync-id="'+esc(conflict.sync_id)+'" data-resolution="delete_remote">Confirmar eliminação remota</button></div>';
   if(conflict.reason==='remote_deleted_local_dirty')html+='<div class="toolbar"><button class="btn secondary" type="button" data-action="restore-local-conflict" data-sync-id="'+esc(conflict.sync_id)+'">Restaurar edição local no remoto</button></div>';
@@ -1073,7 +1077,7 @@ function remoteConflictCardHTML(conflict){
 }
 function remoteConflictQueueHTML(conflicts){
   if(!conflicts||!conflicts.length)return '';
-  var decisions=conflicts.filter(function(item){return ['version_mismatch','delete_version_mismatch','remote_deleted_local_dirty'].includes(item.reason);}).length;
+  var decisions=conflicts.filter(function(item){return ['version_mismatch','delete_version_mismatch','remote_deleted_local_dirty'].includes(item.reason)||(item.reason==='duplicate_identity'&&item.store==='activity_items');}).length;
   var versionConflicts=conflicts.filter(function(item){return item.reason==='version_mismatch';}).length;
   var retry=conflicts.filter(function(item){return item.reason==='storage_signed_url_failed';}).length;
   var investigate=conflicts.length-decisions-retry;
@@ -1105,6 +1109,12 @@ function remoteConflictBatchReviewHTML(result){
   if(safe.length||manual.length){var decisionCount=safe.length+manual.length,decisionLabel=decisionCount===1?'1 decisão':decisionCount+' decisões';html+='<button class="btn accent" type="button" data-action="resolve-independent-conflict-batch">Aplicar e sincronizar '+esc(decisionLabel)+'</button>';}
   else html+='<p class="notice section">Não há resoluções sem sobreposição. Abre cada conflito para escolher explicitamente os campos.</p>';
   return html;
+}
+function activityConflictReviewHTML(review){
+  var key=review.sync_id+'|'+review.local_id;
+  return '<div class="notice"><strong>Atividades com o mesmo identificador</strong><p>Revê o texto, a origem e a data. O histórico remoto é imutável. Se confirmares, a cópia deste dispositivo fica guardada em Documentos de trabalho e o registo ativo passa a corresponder ao workspace remoto.</p></div>'+
+    '<div class="grid cols-2"><section><h4>Neste dispositivo</h4><pre class="conflict-preview">'+esc(JSON.stringify(review.local,null,2))+'</pre></section><section><h4>No workspace remoto</h4><pre class="conflict-preview">'+esc(JSON.stringify(review.remote,null,2))+'</pre></section></div>'+
+    '<button class="btn accent" type="button" data-action="resolve-activity-conflict" data-review-key="'+esc(key)+'">Guardar cópia local e aceitar atividade remota</button>';
 }
 function remoteConflictReviewHTML(versions){
   var merge=versions.merge_suggestion;
@@ -1457,6 +1467,22 @@ app.addEventListener("click",async function(event){
     catch(error){alert("Não foi possível procurar uma correspondência: "+error.message);}
     finally{target.disabled=false;}
     return;
+  }
+  if(action==="review-activity-conflict"){
+    target.disabled=true;
+    try{var activityReview=await RemoteWorkspace.readActivityIdentityConflict(target.dataset.syncId,target.dataset.localId);var activityKey=activityReview.sync_id+'|'+activityReview.local_id;pendingActivityConflictReviews.set(activityKey,activityReview);var activityBox=target.closest('[data-conflict-card]').querySelector('[data-activity-conflict-review]');activityBox.innerHTML=activityConflictReviewHTML(activityReview);activityBox.hidden=false;}
+    catch(error){alert("Não foi possível comparar as atividades: "+error.message);}
+    finally{target.disabled=false;}
+    return;
+  }
+  if(action==="resolve-activity-conflict"){
+    var reviewedActivity=pendingActivityConflictReviews.get(target.dataset.reviewKey);
+    if(!reviewedActivity){alert("Compara novamente as duas atividades antes de decidir.");return;}
+    if(!confirm("Guardar a versão local num documento partilhado e usar a atividade remota neste dispositivo? A decisão será recusada se alguma versão tiver mudado."))return;
+    target.disabled=true;
+    try{var activityResult=await RemoteWorkspace.resolveActivityIdentityConflict(reviewedActivity);pendingActivityConflictReviews.delete(target.dataset.reviewKey);alert("Cópia local guardada em Documentos de trabalho. "+(activityResult.conflicts?.length?"Restam conflitos para rever.":"Atividade sincronizada."));return router();}
+    catch(error){pendingActivityConflictReviews.delete(target.dataset.reviewKey);alert("Não foi possível resolver a atividade: "+error.message+" Compara novamente antes de decidir.");return router();}
+    finally{target.disabled=false;}
   }
   if(action==="confirm-invalid-id-match"){
     if(!confirm("Ligar a cópia local a este registo remoto? As duas versões foram comparadas. Se a versão remota tiver mudado, a sincronização vai abrir uma comparação normal e não a substituirá silenciosamente."))return;

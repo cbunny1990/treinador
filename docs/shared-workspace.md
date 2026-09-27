@@ -32,6 +32,8 @@ Pesquisa e histórico (`#/pesquisa`), Semana e evolução (`#/evolucao`) e Époc
 
 Quando existem conflitos de sincronização, o cartão **Conflitos de sincronização** do Workspace abre a fila de revisão na mesma página. Os casos com duas versões oferecem comparação por campo; identidades duplicadas de registos pesquisáveis oferecem procura por chave externa exata antes de qualquer ligação. Casos sem chave segura continuam preservados e pedem revisão manual. A revisão nunca executa automaticamente uma decisão do treinador.
 
+Quando uma atividade local imutável usa a mesma UUID de uma atividade remota com conteúdo diferente, a fila permite comparar as duas. O treinador pode confirmar a aceitação da versão remota; antes de substituir a cópia local, a app guarda-a como **Arquivo de conflito** nos Documentos de trabalho da mesma equipa. Uma nova leitura confirma UUID, equipa e versões de ambas as atividades; se alguma mudou, a decisão é recusada. O arquivo sincroniza como documento e fica fora do RAG semântico. Esta ação não reescreve nem duplica o histórico remoto de atividades.
+
 O painel operacional apresenta até quatro observações ativas mais recentes, com data, origem, excerto e ligação à ficha completa. Memórias arquivadas e outros tipos de memória não aparecem neste cartão; a pesquisa abre o histórico completo.
 
 Chat embutido, OpenRouter, gerador de treino IA, biblioteca antiga de exercícios e dashboard Head Coach antigo foram removidos do produto ativo.

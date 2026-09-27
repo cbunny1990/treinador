@@ -1390,6 +1390,157 @@ function createDeviceDatabase() {
   };
 }
 
+test("conflito de atividade só aceita a versão remota após comparação e arquivo local", async () => {
+  const original = {
+    init: RemoteWorkspace.init, syncNow: RemoteWorkspace.syncNow,
+    localIdForRemoteRef: RemoteWorkspace._localIdForRemoteRef,
+    DB: globalThis.DB, DEFAULT_TEAM_ID: globalThis.DEFAULT_TEAM_ID,
+    localStorage: globalThis.localStorage,
+  };
+  const team = "71000000-0000-4000-8000-000000000001";
+  const syncId = "72000000-0000-4000-8000-000000000001";
+  const db = createDeviceDatabase();
+  db.criarWorkspaceDocumentSeAusente = async (input) => {
+    const existing = (db.stores.get("workspace_documents") || []).find((row) =>
+      row.team_id === input.team_id && row.type === input.type && row.sync_id === input.sync_id);
+    return existing ? { id: existing.id, created: false }
+      : { id: await db.criar("workspace_documents", input), created: true };
+  };
+  const localId = await db.criar("activity_items", {
+    team_id: "default", remote_team_id: team, sync_id: syncId, sync_dirty: true,
+    sync_local_updated_at: "local-v1", actor: "human", actor_label: "Treinador",
+    action: "edited", summary: "Versão local", entity_type: "match", entity_id: 17,
+    metadata: { note: "Observação local" }, created_at: "2026-09-25T12:00:00Z",
+  });
+  const remote = {
+    id: syncId, team_id: team, actor_type: "human", actor_label: "Treinador",
+    action: "edited", summary: "Versão remota", entity_type: "match", entity_ref: "match-remote",
+    metadata: { note: "Observação remota" }, created_at: "2026-09-25T12:00:00Z",
+  };
+  let syncCalls = 0;
+  globalThis.DEFAULT_TEAM_ID = "default";
+  globalThis.DB = db;
+  globalThis.localStorage = { getItem: () => JSON.stringify({ remoteTeamId: team,
+    conflicts: [{ store: "activity_items", reason: "duplicate_identity", sync_id: syncId,
+      local_id: localId, remote_updated_at: remote.created_at }] }), setItem() {} };
+  RemoteWorkspace.init = async () => ({ from(table) {
+    assert.equal(table, "activity_log");
+    const filters = [];
+    return { select() { return this; }, eq(key, value) { filters.push([key, value]); return this; },
+      async maybeSingle() {
+        assert.deepEqual(filters, [["id", syncId], ["team_id", team]]);
+        return { data: { ...remote }, error: null };
+      } };
+  } });
+  RemoteWorkspace._localIdForRemoteRef = async () => 17;
+  RemoteWorkspace.syncNow = async () => { syncCalls++; return { conflicts: [] }; };
+  try {
+    await assert.rejects(RemoteWorkspace.readActivityIdentityConflict(syncId, "undefined"), /mudou/);
+    const review = await RemoteWorkspace.readActivityIdentityConflict(syncId, localId);
+    assert.equal(review.local.summary, "Versão local");
+    assert.equal(review.remote.summary, "Versão remota");
+    remote.summary = "Mudou após comparação";
+    await assert.rejects(RemoteWorkspace.resolveActivityIdentityConflict(review), /mudou desde a comparação/);
+    assert.equal((await db.listar("workspace_documents")).length, 0);
+    remote.summary = "Versão remota";
+    const originalModify = db.modificar.bind(db);
+    let failOnce = true;
+    db.modificar = async (...args) => {
+      if (args[0] === "activity_items" && failOnce) {
+        failOnce = false;
+        throw new Error("gravação local interrompida");
+      }
+      return originalModify(...args);
+    };
+    await assert.rejects(RemoteWorkspace.resolveActivityIdentityConflict(review), /gravação local interrompida/);
+    assert.equal((await db.listar("workspace_documents")).length, 1,
+      "a cópia local já arquivada permite repetir a decisão sem duplicar documentos");
+    const resolved = await RemoteWorkspace.resolveActivityIdentityConflict(review);
+    assert.equal(syncCalls, 1);
+    assert.equal(resolved.conflicts.length, 0);
+    const [archive] = await db.listar("workspace_documents");
+    assert.equal(archive.id, resolved.archive_id);
+    assert.equal(archive.type, "sync_conflict_archive");
+    assert.equal(JSON.parse(archive.body).local.summary, "Versão local");
+    assert.equal(archive.remote_team_id, team);
+    assert.match(archive.sync_id, /^[0-9a-f-]{36}$/i);
+    const saved = await db.obter("activity_items", localId);
+    assert.equal(saved.summary, "Versão remota");
+    assert.equal(saved.sync_dirty, false);
+    assert.equal(saved.entity_id, 17);
+    await assert.rejects(RemoteWorkspace.resolveActivityIdentityConflict(review), /já mudou|já mudou ou pertence/);
+    assert.equal((await db.listar("workspace_documents")).length, 1);
+  } finally {
+    RemoteWorkspace.init = original.init;
+    RemoteWorkspace.syncNow = original.syncNow;
+    RemoteWorkspace._localIdForRemoteRef = original.localIdForRemoteRef;
+    globalThis.DB = original.DB;
+    globalThis.DEFAULT_TEAM_ID = original.DEFAULT_TEAM_ID;
+    globalThis.localStorage = original.localStorage;
+  }
+});
+
+test("duas resoluções simultâneas da mesma atividade criam um único arquivo", async () => {
+  const original = {
+    init: RemoteWorkspace.init, syncNow: RemoteWorkspace.syncNow,
+    localIdForRemoteRef: RemoteWorkspace._localIdForRemoteRef,
+    DB: globalThis.DB, DEFAULT_TEAM_ID: globalThis.DEFAULT_TEAM_ID,
+    localStorage: globalThis.localStorage,
+  };
+  const team = "73000000-0000-4000-8000-000000000001";
+  const syncId = "74000000-0000-4000-8000-000000000001";
+  const db = createDeviceDatabase();
+  const localId = await db.criar("activity_items", {
+    team_id: "default", remote_team_id: team, sync_id: syncId, sync_dirty: true,
+    sync_local_updated_at: "local-v1", actor: "human", actor_label: "Treinador",
+    action: "edited", summary: "Versão local", metadata: {}, created_at: "2026-09-25T12:00:00Z",
+  });
+  db.criarWorkspaceDocumentSeAusente = async (input) => {
+    const existing = (db.stores.get("workspace_documents") || []).find((row) =>
+      row.team_id === input.team_id && row.type === input.type && row.sync_id === input.sync_id);
+    return existing ? { id: existing.id, created: false }
+      : { id: await db.criar("workspace_documents", input), created: true };
+  };
+  const originalList = db.listar.bind(db);
+  db.listar = async (store) => {
+    const snapshot = await originalList(store);
+    if (store === "workspace_documents") await new Promise((resolve) => setTimeout(resolve, 10));
+    return snapshot;
+  };
+  const remote = { id: syncId, team_id: team, actor_type: "human", actor_label: "Treinador",
+    action: "edited", summary: "Versão remota", metadata: {}, created_at: "2026-09-25T12:00:00Z" };
+  globalThis.DB = db;
+  globalThis.DEFAULT_TEAM_ID = "default";
+  globalThis.localStorage = { getItem: () => JSON.stringify({ remoteTeamId: team,
+    conflicts: [{ store: "activity_items", reason: "duplicate_identity", sync_id: syncId, local_id: localId }] }), setItem() {} };
+  RemoteWorkspace.init = async () => ({ from(table) {
+    assert.equal(table, "activity_log");
+    return { select() { return this; }, eq() { return this; }, async maybeSingle() { return { data: { ...remote }, error: null }; } };
+  } });
+  RemoteWorkspace._localIdForRemoteRef = async () => null;
+  RemoteWorkspace.syncNow = async () => ({ conflicts: [] });
+  try {
+    const review = await RemoteWorkspace.readActivityIdentityConflict(syncId, localId);
+    const results = await Promise.allSettled([
+      RemoteWorkspace.resolveActivityIdentityConflict(review),
+      RemoteWorkspace.resolveActivityIdentityConflict(review),
+    ]);
+    assert.equal(results.filter((item) => item.status === "fulfilled").length, 1);
+    assert.equal(results.filter((item) => item.status === "rejected").length, 1);
+    const archives = await db.listar("workspace_documents");
+    assert.equal(archives.length, 1);
+    assert.equal(archives[0].external_key, `activity-conflict:${syncId}:local-v1`);
+    assert.equal((await db.obter("activity_items", localId)).summary, "Versão remota");
+  } finally {
+    RemoteWorkspace.init = original.init;
+    RemoteWorkspace.syncNow = original.syncNow;
+    RemoteWorkspace._localIdForRemoteRef = original.localIdForRemoteRef;
+    globalThis.DB = original.DB;
+    globalThis.DEFAULT_TEAM_ID = original.DEFAULT_TEAM_ID;
+    globalThis.localStorage = original.localStorage;
+  }
+});
+
 async function withTwoDeviceSync(run, options = {}) {
   const originalInit = RemoteWorkspace.init;
   const originalDB = globalThis.DB;
