@@ -85,7 +85,7 @@ test('report MCP enforces scope, team isolation and one exact match identity',as
  assert.equal(f.calls.length,0);
 });
 
-test('training report MCP reads current exercise and approved image metadata without writing',async()=>{
+test('training report MCP keeps legacy fallback and saved exercise snapshots without writing',async()=>{
  const trainingId='11111111-1111-4111-8111-111111111111';
  const exerciseId='22222222-2222-4222-8222-222222222222';
  const playerId='33333333-3333-4333-8333-333333333333';
@@ -104,7 +104,38 @@ test('training report MCP reads current exercise and approved image metadata wit
  assert.equal(out.planned_blocks[0].exercise_name,'Passe em triângulo');
  assert.equal(out.planned_blocks[0].setup,'Três cones');
  assert.equal(out.planned_blocks[0].approved_image.sha256,'approved-sha');
+ assert.equal(out.planned_blocks[0].content_source,'current_exercise');
  assert.equal(out.missing_data.execution,true);
+ const block=rows[0].payload.blocos[0];
+ block.exercise_name='Nome do plano';
+ block.exercise_snapshot={schema:'vision-coach-exercise-snapshot@1',exercise_ref:exerciseId,nome:'Exercício aprovado no plano',montagem:'Montagem original',passos:['Primeiro passe','Depois apoio'],visual:{external_key:'exercise-passar-apoiar-terceiro-homem',removed:false,storage_path:null,image:null,url:'assets/exercises/approved-20260922/02_passar_apoiar_terceiro_homem.png'}};
+ rows[1].payload.nome='Nome alterado na biblioteca';
+ rows[1].payload.montagem='Montagem alterada';
+ let historical=await api.executeReportTool(admin,c,'get_training_report',{id:trainingId});
+ assert.equal(historical.planned_blocks[0].exercise_name,'Exercício aprovado no plano');
+ assert.equal(historical.planned_blocks[0].setup,'Montagem original');
+ assert.deepEqual(historical.planned_blocks[0].steps,['Primeiro passe','Depois apoio']);
+ assert.equal(historical.planned_blocks[0].content_source,'saved_snapshot');
+ assert.equal(historical.planned_blocks[0].approved_image.sha256,'b9dcf40f03a6bc7f1ac51874b0880858d7cc99e7908c394e1262174792b08c27');
+ assert.equal(historical.planned_blocks[0].approved_image.asset_path,block.exercise_snapshot.visual.url);
+ rows[1].deleted_at='2026-09-25T10:00:00Z';
+ historical=await api.executeReportTool(admin,c,'get_training_report',{id:trainingId});
+ assert.equal(historical.planned_blocks[0].exercise_missing,true);
+ assert.equal(historical.planned_blocks[0].exercise_name,'Exercício aprovado no plano');
+ assert.equal(historical.planned_blocks[0].approved_image.asset_path,block.exercise_snapshot.visual.url);
+ block.exercise_snapshot.visual={external_key:'exercise-passar-apoiar-terceiro-homem',removed:false,storage_path:'teams/team-a/exercises/original.png',image:{sha256:'private-original-sha',width:1200,height:900},url:null};
+ historical=await api.executeReportTool(admin,c,'get_training_report',{id:trainingId});
+ assert.equal(historical.planned_blocks[0].approved_image.sha256,'private-original-sha');
+ assert.equal(historical.planned_blocks[0].approved_image.source,'private_storage');
+ assert.equal(Object.hasOwn(historical.planned_blocks[0].approved_image,'asset_path'),false);
+ assert.equal(JSON.stringify(historical).includes('teams/team-a/exercises'),false);
+ block.exercise_snapshot.visual.removed=true;
+ historical=await api.executeReportTool(admin,c,'get_training_report',{id:trainingId});
+ assert.equal(historical.planned_blocks[0].approved_image,null);
+ delete block.exercise_snapshot;
+ historical=await api.executeReportTool(admin,c,'get_training_report',{id:trainingId});
+ assert.equal(historical.planned_blocks[0].content_source,'unavailable');
+ assert.equal(historical.planned_blocks[0].exercise_name,'Nome do plano');
  assert.equal(writes,0);
  await assert.rejects(api.executeReportTool(admin,{...c,team_id:'team-b'},'get_training_report',{id:trainingId}),/training_not_found/);
  await assert.rejects(api.executeReportTool(admin,c,'get_training_report',{id:'local-1'}),/invalid_training_uuid/);
