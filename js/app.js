@@ -794,12 +794,8 @@ async function archivedMatchPlayerNames(match,allPlayers){
   [...(match.visual_match?.roster||[]),...(match.availability_snapshot?.players||[])].forEach(function(p){if(p.ref&&p.name)known.add(String(p.ref));});
   var missing=new Set(VisionMatchPlayerReports.called(match).filter(function(ref){return !known.has(ref);}));
   if(!missing.size)return new Map();
-  var names=new Map(),ambiguous=new Set(),archives=await WorkspaceStore.listDocuments(DEFAULT_TEAM_ID,{includeArchived:true,type:"player_archive"});
-  archives.forEach(function(doc){
-    try{var archive=PlayerArchive.state(doc),ref=String(archive.player?.ref||""),name=String(archive.player?.name||"").trim();if(!missing.has(ref)||!name||archive.team_id!==DEFAULT_TEAM_ID||ambiguous.has(ref))return;if(names.has(ref)){names.delete(ref);ambiguous.add(ref);}else names.set(ref,name);}
-    catch(_){/* An invalid archive cannot establish a player's identity. */}
-  });
-  return names;
+  var archives=await WorkspaceStore.listDocuments(DEFAULT_TEAM_ID,{includeArchived:true,type:"player_archive"});
+  return new Map(Array.from(PlayerArchive.identitiesForRefs(DEFAULT_TEAM_ID,missing,archives),function(entry){return [entry[0],entry[1].name];}));
 }
 function matchPlayerReportsSection(match,allPlayers,id,archivedNames){
   if(match.estado!=="concluido")return "";

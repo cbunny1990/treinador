@@ -107,6 +107,11 @@ test('relatório de convocado eliminado usa nome do arquivo da mesma equipa sem 
  await expect(report).not.toContainText('Nome de outra equipa');
  await expect(report).not.toContainText(fixture.ref);
  await expect(page.locator('#match-player-reports')).toContainText('0 de 1 concluídos · 1 por preencher');
+ const printable=await page.evaluate(async id=>({sheet:await ReportExporter.render('match-sheet',id),report:await ReportExporter.render('match-report',id)}),fixture.matchId);
+ expect(printable.sheet).toContain('Convocado arquivado');
+ expect(printable.report).toContain('Convocado arquivado · Por preencher');
+ expect(printable.sheet).not.toContain('Nome de outra equipa');
+ expect(printable.report).not.toContain('Atleta · '+fixture.ref);
  await expect.poll(()=>page.evaluate(id=>DB.obter('jogadores',id),fixture.playerId)).toBeUndefined();
  page.on('dialog',dialog=>dialog.accept());
  await report.getByRole('button',{name:'Não observado'}).click();
