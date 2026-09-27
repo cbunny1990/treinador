@@ -318,7 +318,6 @@ tr:last-child td{border-bottom:0}
 .pitch-zone-grid{position:absolute;inset:0;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);pointer-events:none}
 .pitch-zone-grid span{border:1px dashed #ffffff24}
 .team-goal-detail,.team-week-detail{margin-top:12px;padding-top:10px;border-top:1px solid #e2e8f0}
-.evolution-open-button{min-height:44px}
 .evolution-editor{scroll-margin-top:90px}
 .evolution-editor summary{min-height:44px;padding:12px 0;font-weight:800;cursor:pointer}
 .evolution-editor .form{margin-top:12px}
