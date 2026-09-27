@@ -25,3 +25,4 @@ jobs:
       - run: node ./node_modules/@playwright/test/cli.js install --with-deps webkit
       - run: npm run test:e2e:webkit-photo
       - run: npm run test:e2e:webkit-scroll
+      - run: npm run test:e2e:webkit-evolution

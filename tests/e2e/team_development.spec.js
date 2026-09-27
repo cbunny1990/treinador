@@ -25,6 +25,22 @@ test('evolução móvel começa numa tarefa e guarda um objetivo sem exigir camp
  expect(saved.evaluation).toBe('');
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
+test('desktop shows saved weeks first and opens the editor only on request',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});
+ await page.goto('/#/evolucao');
+ const editor=page.locator('[data-evolution-editor="week"]');
+ await expect(editor).not.toHaveAttribute('open','');
+ await expect(page.getByText('Ainda não há semanas planeadas.')).toBeVisible();
+ await editor.locator('> summary').click();
+ await editor.locator('[name="objective"]').fill('Apoio após passe');
+ await editor.getByRole('button',{name:'Guardar semana'}).click();
+ await expect(page.getByText('Apoio após passe',{exact:true})).toBeVisible();
+ await expect(editor).not.toHaveAttribute('open','');
+ await page.locator('[data-action="edit-team-record"][data-kind="week"]').click();
+ await expect(editor).toHaveAttribute('open','');
+ await expect(editor.locator('[name="objective"]')).toHaveValue('Apoio após passe');
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
 test('team development projects historical match and training records through cursors',async({page})=>{
  await page.goto('/');await page.waitForFunction(()=>typeof router==='function'&&typeof TeamDevelopment!=='undefined');
  await page.evaluate(async()=>{RemoteWorkspace.scheduleSync=()=>{};const payload=Array.from({length:80},(_,i)=>({event:i,note:'large evolution payload should not stay in memory '.repeat(4)}));for(let i=0;i<50;i++){const date=new Date(Date.UTC(2034,0,1+i)).toISOString().slice(0,10);await DB.criar('treinos',{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:date,objetivo:'Evolução treino '+i,blocos:payload,session:{status:i===49?'completed':'not_started',events:payload},status:i===49?'completed':'ready'});await DB.criar('jogos',{team_id:DEFAULT_TEAM_ID,sync_id:crypto.randomUUID(),data:date,adversario:'Evolução jogo '+i,visual_match:{status:i===49?'completed':'not_started',events:payload},notas:JSON.stringify(payload),estado:i===49?'concluido':'agendado'});}window.evolutionCursorCounts={trainings:0,matches:0};const cursor=DB.percorrerIndice.bind(DB);DB.percorrerIndice=function(store,...args){return cursor(store,...args).then(count=>{if(store==='treinos')window.evolutionCursorCounts.trainings=count;if(store==='jogos')window.evolutionCursorCounts.matches=count;return count;});};const read=DB.porIndice.bind(DB);DB.porIndice=function(store,...args){if(store==='treinos'||store==='jogos')throw new Error('A evolução tentou carregar o histórico completo: '+store);return read(store,...args);};location.hash='#/evolucao';});

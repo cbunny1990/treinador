@@ -1398,13 +1398,17 @@ test("Workspace espera pelo fim do gesto de scroll antes de redesenhar dados rec
     window.dispatchEvent(new CustomEvent("visioncoach:sync-complete", {
       detail: { pulled: 1, pushed: 0, conflicts: [], deleted: 0 },
     }));
+    window.__scrollGestureProbe = new Promise(resolve => {
+      setTimeout(() => {
+        const beforeSecond = window.__scrollRefreshBuilds;
+        window.dispatchEvent(new Event("touchmove", { bubbles: true }));
+        setTimeout(() => resolve({ beforeSecond, afterSecond: window.__scrollRefreshBuilds }), 260);
+      }, 180);
+    });
   });
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(640);
-  await page.waitForTimeout(180);
-  expect(await page.evaluate(() => window.__scrollRefreshBuilds)).toBe(0);
-  await page.evaluate(() => window.dispatchEvent(new Event("touchmove", { bubbles: true })));
-  await page.waitForTimeout(260);
-  expect(await page.evaluate(() => window.__scrollRefreshBuilds)).toBe(0);
+  const gestureProbe = await page.evaluate(() => window.__scrollGestureProbe);
+  expect(gestureProbe).toEqual({ beforeSecond: 0, afterSecond: 0 });
   await expect.poll(() => page.evaluate(() => window.__scrollRefreshBuilds), { timeout: 2000 }).toBe(1);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(640);
   await page.evaluate(() => {
