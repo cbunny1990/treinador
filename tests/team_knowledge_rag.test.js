@@ -104,6 +104,26 @@ test('chunks use an allowlist of coaching text and preserve epistemic provenance
  assert.deepEqual(rag.teamKnowledgeTestAPI.chunkRecord({...match(),kind:'player'}),[]);
 });
 
+test('RAG indexes only current coach-written player reports with match and athlete provenance',()=>{
+ const source=match(),other='30000000-0000-4000-8000-000000000004';
+ source.payload.visual_match={roster:[{ref:PLAYER,name:'Maria Silva'}]};
+ source.payload.post_game.player_reports={schema:'vision-match-player-reports@1',revision:4,items:[
+  {player_ref:PLAYER,status:'reported',observation:'Maria Silva ofereceu apoio após passe.',positives:'Criou uma linha de passe curta.',to_improve:'Deve aproximar-se mais cedo.',history:[{observation:'Nota antiga que não deve entrar no índice.'}]},
+  {player_ref:other,status:'not_observed',observation:'Texto ignorado por ausência de observação.'},
+  {player_ref:'invalid',status:'reported',observation:'Texto com UUID inválido.'},
+  {player_ref:other,status:'pending',observation:'Texto apagado da versão atual.'}
+ ]};
+ const chunks=rag.teamKnowledgeTestAPI.chunkRecord(source,{redactNames:['Atleta Externo']}),report=chunks.filter(item=>item.category==='player_match_report');
+ assert.deepEqual(report.map(item=>item.source_path),['post_game.player_reports.items[0].observation','post_game.player_reports.items[0].positives','post_game.player_reports.items[0].to_improve']);
+ assert.ok(report.every(item=>item.match_ref===SOURCE&&item.player_ref===PLAYER&&item.evidence_type==='coach_observation'&&item.source_date==='2026-09-20'));
+ assert.ok(report[0].content.includes('atleta ofereceu apoio após passe.'));
+ assert.doesNotMatch(JSON.stringify(report),/Maria Silva|Nota antiga|Texto ignorado|Texto apagado|UUID inválido/);
+ source.payload.post_game.player_reports.items[0].status='pending';
+ assert.equal(rag.teamKnowledgeTestAPI.chunkRecord(source).some(item=>item.category==='player_match_report'),false,'clearing the current report removes its derived chunks on reindex');
+ source.payload.post_game.player_reports.items[0]={player_ref:PLAYER,status:'reported',observation:'Teve uma lesão muscular durante o jogo.'};
+ assert.equal(rag.teamKnowledgeTestAPI.chunkRecord(source).some(item=>item.category==='player_match_report'),false,'recognized health text is not sent for embedding');
+});
+
 test('RAG indexes coach video evidence with stable clip links but never embeds the video URL',async()=>{
  const memoryRef='40000000-0000-4000-8000-000000000004',source=match();
  source.payload.match_evidence={schema:'vision-match-evidence@1',revision:1,moments:[

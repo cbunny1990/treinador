@@ -3,12 +3,13 @@ import '../../../js/match_visual.js';
 import '../../../js/match_events.js';
 import '../../../js/match_analysis.js';
 import '../../../js/match_evidence.js';
+import '../../../js/match_player_reports.js';
 import '../../../js/training_session.js';
 import '../../../js/player_goals.js';
 import '../../../js/seasons.js';
 import { executePlayerGoalTool } from './player_goals.mjs';
 
-const M=globalThis.VisionMatchVisual,E=globalThis.VisionMatchEvents,A=globalThis.VisionMatchAnalysis,V=globalThis.VisionMatchEvidence;
+const M=globalThis.VisionMatchVisual,E=globalThis.VisionMatchEvents,A=globalThis.VisionMatchAnalysis,V=globalThis.VisionMatchEvidence,P=globalThis.VisionMatchPlayerReports;
 const T=globalThis.VisionTrainingSession;
 const G=globalThis.PlayerGoals,S=globalThis.VisionSeasons;
 const LOCAL_WORKSPACE_KEY='default';
@@ -18,7 +19,7 @@ const choose={oneOf:[{required:['id'],not:{required:['external_key']}},{required
 
 export const REPORT_TOOLS=[{
  name:'get_match_report',
- description:'Prepare current structured match-sheet and post-match report data from one persisted match. Includes kickoff availability snapshot when recorded, plus recorded events, usage, analysis and video evidence, with provenance; read-only and scoped to the authorized team.',
+ description:'Prepare current structured match-sheet and post-match report data from one persisted match. Includes kickoff availability snapshot when recorded, plus recorded events, usage, analysis, individual coach reports and video evidence, with provenance; read-only and scoped to the authorized team.',
  inputSchema:{type:'object',properties:{...selector,report_type:{type:'string',enum:['match_sheet','post_match'],default:'post_match'}},required:['report_type'],additionalProperties:false,...choose},
  annotations:{readOnlyHint:true,destructiveHint:false}
 },{
@@ -100,6 +101,9 @@ export async function executeReportTool(admin,c,name,args){
   const opponent=p.post_game?.opponent_observation||p.pre_game||{};
   const hasOpponentData=Boolean(opponent.adversario_sistema||opponent.adversario_estilo||opponent.adversario_notas||(opponent.adversario_pontos_fortes||[]).length||(opponent.adversario_vulnerabilidades||[]).length);
   result.opponent_observation={formation:opponent.adversario_sistema||null,style:opponent.adversario_estilo||null,strengths:opponent.adversario_pontos_fortes||[],vulnerabilities:opponent.adversario_vulnerabilidades||[],notes:opponent.adversario_notas||null,source:p.post_game?.opponent_observation?'post_match':hasOpponentData?'legacy_pre_game':'not_recorded'};
+  const playerReports=P.state(p),pendingPlayerRefs=P.pending(p).filter(ref=>UUID.test(ref));
+  result.player_reports={revision:playerReports.revision,items:playerReports.items.filter(item=>UUID.test(String(item.player_ref||''))&&['reported','not_observed','pending'].includes(item.status)),pending_player_refs:pendingPlayerRefs,provenance:'Coach-entered reports for called-up athletes; not_observed and pending contain no inferred observation. History preserves earlier coach entries.'};
+  result.missing_data.player_reports=pendingPlayerRefs.length>0||(!P.called(p).length&&!playerReports.items.length);
  }
  return result;
 }
