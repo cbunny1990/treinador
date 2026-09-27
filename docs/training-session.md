@@ -14,6 +14,10 @@ O novo percurso é `#/sessao/ID_LOCAL`. A consulta anterior e as imagens aprovad
 8. **Apagar registo da sessão** remove presenças, cronómetro e notas da sessão, com confirmação e apenas quando não está a contar. O plano, exercícios e imagens não são apagados.
 
 ## Preparação e cópias
+
+### Treino passado sem cronómetro
+
+Na ficha de um treino de hoje ou anterior que não tenha sido iniciado, **Confirmar que o treino aconteceu** regista uma decisão explícita do treinador. O plano passa a **Realizado sem cronómetro** e fica no histórico. A ação não cria tempos, não marca presenças e não declara exercícios concluídos. Presenças reais e avaliação podem ser guardadas separadamente. **Anular confirmação de realização** repõe o estado anterior do plano e guarda as duas ações no histórico; não apaga avaliação ou presenças. Enquanto confirmado, o plano não pode ser editado nem o cronómetro iniciado; duplicar continua disponível. A alteração usa o registo `treinos` existente, com sincronização e deteção de versões obsoletas.
 A ficha oferece **Duplicar treino**: escolher outra data e hora, copiar objetivo, exercícios, ordem, tempos e notas. Não copia identificadores, presenças, tempos realizados ou avaliação.
 A cópia preserva `source_training_ref`. A sua data é validada antes de criar; não se cria nada só por abrir o formulário.
 No planeador, **Subir / Descer** altera a ordem sem arrastar. As notas próprias de cada bloco ficam preservadas ao guardar.
@@ -42,6 +46,7 @@ A ligação MCP existente ganha:
 - `remove_training_session_note`: remoção explicitamente confirmada.
 - `control_training_session`: iniciar, pausar, retomar, avançar, terminar, assumir controlo em pausa ou apagar o registo apenas com confirmação explícita do treinador e revisões atuais.
 - `duplicate_training_plan`: nova data, plano limpo e `request_key` estável para tentativas repetidas da mesma operação; exige `confirmed: true`, `expected_updated_at` e `expected_revision` atuais da origem.
+- `set_training_occurrence`: confirmar ou anular explicitamente a realização de um treino passado sem cronómetro; exige `confirmed: true`, `expected_updated_at` e `expected_revision` atuais, e preserva plano, avaliação, presenças e histórico.
 
 Ler primeiro pelo UUID remoto ou `external_key` exato. Para alterar, fornecer `expected_updated_at` e `expected_revision` atuais. Não usar IDs numéricos de outro browser.
 Leitura exige scope `read`; escritas exigem também `write`. O servidor filtra sempre a equipa do conector, usa `head_coach_put_record` e regista autoria do agente.

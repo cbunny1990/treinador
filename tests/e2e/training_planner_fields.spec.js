@@ -1,7 +1,7 @@
 const { test, expect } = require('@playwright/test');
 
-test('planos passados ficam no histórico sem serem apresentados como treinos realizados', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+for (const width of [390, 1440]) test(`planos passados ficam no histórico sem inferir realização · ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 844 });
   await page.goto('/#/treinos');
   const ids = await page.evaluate(async () => {
     RemoteWorkspace.scheduleSync = () => {};
@@ -31,6 +31,30 @@ test('planos passados ficam no histórico sem serem apresentados como treinos re
   const saved = await page.evaluate(async (id) => DB.obter('treinos', id), ids.old);
   expect(saved.status).toBe('ready');
   expect(saved.session?.status).toBeFalsy();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  page.on('dialog', dialog => dialog.accept());
+  await page.context().setOffline(true);
+  await page.getByRole('button', { name: 'Confirmar que o treino aconteceu' }).click();
+  await expect(page.getByText('Realizado sem cronómetro', { exact: true })).toBeVisible();
+  let occurrence = await page.evaluate(async id => DB.obter('treinos', id), ids.old);
+  expect(occurrence.status).toBe('completed');
+  expect(occurrence.session?.status).toBeFalsy();
+  expect(occurrence.review).toBeUndefined();
+  await page.getByRole('link', { name: 'Treino em campo / presenças' }).click();
+  await expect(page.getByRole('button', { name: 'Iniciar treino' })).toHaveCount(0);
+  await expect(page.getByText('Não foram atribuídos minutos')).toBeVisible();
+  await page.getByRole('link', { name: 'Ficha do treino' }).click();
+  await page.locator('form[data-form="training-review"] textarea[name="conclusao"]').fill('Texto ainda por guardar');
+  await page.getByRole('button', { name: 'Anular confirmação de realização' }).click();
+  await expect(page.getByText('Guarda a avaliação antes de alterar o estado')).toBeVisible();
+  await expect(page.locator('form[data-form="training-review"] textarea[name="conclusao"]')).toHaveValue('Texto ainda por guardar');
+  await page.context().setOffline(false);
+  await page.reload();
+  await page.getByRole('button', { name: 'Anular confirmação de realização' }).click();
+  await expect(page.getByText('Plano passado')).toBeVisible();
+  occurrence = await page.evaluate(async id => DB.obter('treinos', id), ids.old);
+  expect(occurrence.status).toBe('ready');
+  expect(occurrence.manual_completion.history.map(event => event.action)).toEqual(['confirm', 'retract']);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 

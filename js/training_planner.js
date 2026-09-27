@@ -171,6 +171,8 @@ function tpTrainingStatus(training, referenceDate = tpLocalDate()) {
     completed: "Terminado",
   };
   if (Object.hasOwn(sessionLabels, sessionStatus)) return sessionLabels[sessionStatus];
+  if (training?.manual_completion?.status === "confirmed" && training?.status === "completed") return "Realizado sem cronómetro";
+  if (training?.status === "completed") return "Realização registada";
   const plannedDate = String(training?.data || "").slice(0, 10);
   if (/^\d{4}-\d{2}-\d{2}$/.test(plannedDate) && plannedDate < referenceDate) return "Plano passado";
   if (sessionStatus === "not_started") return "Por iniciar";
