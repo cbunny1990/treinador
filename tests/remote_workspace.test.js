@@ -3206,14 +3206,16 @@ test("sync reutiliza o snapshot local e pede apenas registos remotos alterados d
     init: RemoteWorkspace.init,
   };
   const teamId = "team-a", localCreatedAt = "2026-09-01T10:00:00.000Z";
-  const watermark = "2026-09-26T10:00:00.000Z";
+  const watermark = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const expectedSince = new Date(Date.parse(watermark) - 5 * 60 * 1000).toISOString();
+  const changedAt = new Date(Date.parse(watermark) + 60 * 1000).toISOString();
   const cachedId = "11111111-1111-4111-8111-111111111111";
   const changedId = "22222222-2222-4222-8222-222222222222";
   const values = new Map([[
     "treinador.remote.supabase.v1",
     JSON.stringify({ remoteTeamId: teamId, syncCursors: { [teamId]: {
       recordsWatermark: watermark, activityWatermark: watermark, mediaWatermark: watermark,
-      fullRefreshAt: "2026-09-26T09:00:00.000Z", localTeamCreatedAt: localCreatedAt,
+      fullRefreshAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(), localTeamCreatedAt: localCreatedAt,
     } } }),
   ]]);
   const queries = [];
@@ -3229,7 +3231,7 @@ test("sync reutiliza o snapshot local e pede apenas registos remotos alterados d
   RemoteWorkspace.init = async () => ({ from(table) {
     const query = { table, filters: {}, rows: table === "workspace_records" ? [{
       id: changedId, team_id: teamId, kind: "player", payload: { nome: "Atleta atualizado" },
-      updated_at: "2026-09-26T10:01:00.000Z", deleted_at: null,
+      updated_at: changedAt, deleted_at: null,
     }] : [] };
     queries.push(query);
     const chain = {
@@ -3246,16 +3248,16 @@ test("sync reutiliza o snapshot local e pede apenas registos remotos alterados d
   try {
     const snapshot = await RemoteWorkspace._readSyncSnapshots(teamId);
     const recordsQuery = queries.find((query) => query.table === "workspace_records");
-    assert.equal(recordsQuery.filters[">=updated_at"], "2026-09-26T09:55:00.000Z");
+    assert.equal(recordsQuery.filters[">=updated_at"], expectedSince);
     const rangedQueries = queries.filter((query) => Object.keys(query.filters).some((key) => key.startsWith(">=")));
     assert.ok(rangedQueries.length > 0);
     assert.deepEqual(new Set(rangedQueries.map((query) => query.table)), new Set(["workspace_records", "activity_log", "media_assets"]));
-    assert.equal(queries.find((query) => query.table === "activity_log").filters[">=created_at"], "2026-09-26T09:55:00.000Z");
-    assert.equal(queries.find((query) => query.table === "media_assets").filters[">=updated_at"], "2026-09-26T09:55:00.000Z");
+    assert.equal(queries.find((query) => query.table === "activity_log").filters[">=created_at"], expectedSince);
+    assert.equal(queries.find((query) => query.table === "media_assets").filters[">=updated_at"], expectedSince);
     assert.deepEqual(new Set(snapshot.records.map((row) => row.id)), new Set([cachedId, changedId]));
     assert.equal(snapshot.records.find((row) => row.id === cachedId)._sync_cache, true);
     assert.equal(snapshot.records.find((row) => row.id === changedId)._sync_cache, undefined);
-    assert.equal(snapshot.recordsSince, "2026-09-26T09:55:00.000Z");
+    assert.equal(snapshot.recordsSince, expectedSince);
   } finally {
     globalThis.localStorage = original.storage;
     globalThis.DB = original.DB;
