@@ -59,12 +59,12 @@ test("MCP expõe ferramentas Vision Coach essenciais", () => {
   for (const tool of [
     "workspace_summary", "search_workspace", "list_players", "list_matches", "get_match",
     "list_exercises", "list_trainings", "update_player_availability", "create_exercise", "create_training",
-    "update_match_pre_game", "add_external_media", "get_media", "update_external_media",
+    "update_match_pre_game", "update_match_opponent_observation", "add_external_media", "get_media", "update_external_media",
   ]) assert.match(mcp, new RegExp('name: "' + tool + '"'));
   assert.match(mcp, /REPORT_TOOLS, executeReportTool/);
   assert.match(mcp, /\.\.\.REPORT_TOOLS/);
   assert.match(mcp, /REPORT_TOOLS\.some\(\(tool\) => tool\.name === name\).*executeReportTool/);
-  assert.match(mcp, /SERVER_VERSION = "1\.14\.9"/);
+  assert.match(mcp, /SERVER_VERSION = "1\.14\.10"/);
   assert.match(mcp, /2026-07-28/);
   assert.match(mcp, /2025-11-25/);
 });
@@ -108,7 +108,7 @@ test("search_workspace pagina na origem e anuncia cobertura e cursor", () => {
   assert.match(helper, /has_more_results: hasMoreResults/);
   assert.match(helper, /next_offset: nextOffset/);
   assert.match(mcp, /offset: \{ type: "integer", minimum: 0, maximum: 1000000, default: 0 \}/);
-  assert.match(mcp, /SERVER_VERSION = "1\.14\.9"/);
+  assert.match(mcp, /SERVER_VERSION = "1\.14\.10"/);
 });
 
 test("RAG aceita um conjunto limitado de UUIDs para evidência de vários jogos", () => {
@@ -122,7 +122,7 @@ test("RAG aceita um conjunto limitado de UUIDs para evidência de vários jogos"
   assert.match(mcp, /TEAM_KNOWLEDGE_TOOLS\.some\(\(tool\) => tool\.name === name\).*executeTeamKnowledgeTool/);
 });
 
-test("MCP distingue dados observados do adversário no plano pré-jogo", () => {
+test("MCP regista observações ao adversário só no pós-jogo", () => {
   for (const field of ["opponent_formation", "opponent_style", "opponent_strengths", "opponent_vulnerabilities"])
     assert.match(mcp, new RegExp(field));
   const helper = fs.readFileSync(path.join(root, "supabase", "functions", "vision-coach-mcp", "match_pre_game.mjs"), "utf8");
@@ -132,6 +132,9 @@ test("MCP distingue dados observados do adversário no plano pré-jogo", () => {
   assert.match(helper, /_too_many_items/);
   assert.doesNotMatch(helper, /\.slice\(0,\s*20\)|\.slice\(0,\s*500\)/);
   assert.match(mcp, /payload\.pre_game\s*=\s*updateMatchPreGame\(payload, args\)/);
+  assert.match(mcp, /payload\.post_game\s*=\s*\{[^\n]*opponent_observation:\s*updateMatchOpponentObservation\(payload, args\)/);
+  const pre=mcp.slice(mcp.indexOf('name: "update_match_pre_game"'),mcp.indexOf('name: "update_match_opponent_observation"'));
+  assert.doesNotMatch(pre, /opponent_strengths|opponent_formation/);
 });
 
 test("browser não persiste token MCP", () => {
@@ -212,7 +215,7 @@ test("MCP writes that change attendance, timers or coach decisions require confi
     const end = mcp.indexOf("\n  {", start + 1);
     return mcp.slice(start, end < 0 ? undefined : end);
   };
-  for (const name of ["update_player_availability", "set_player_roster_status", "remove_player_permanently", "update_match_pre_game"]) {
+  for (const name of ["update_player_availability", "set_player_roster_status", "remove_player_permanently", "update_match_pre_game", "update_match_opponent_observation"]) {
     const schema = block(name);
     assert.match(schema, /confirmed:\s*\{\s*type:\s*"boolean",\s*const:\s*true\s*\}/, name);
     assert.match(schema, /expected_updated_at/, name);

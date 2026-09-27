@@ -186,6 +186,16 @@ function linesFromText(value){
 }
 function linesText(value){return Array.isArray(value)?value.join(String.fromCharCode(10)):"";}
 function matchStructure(match){return VisionCalendar.normalizeMatch(match||{});}
+function matchOpponentObservation(match){
+  var data=match?.post_game?.opponent_observation||match?.pre_game||{};
+  return {
+    adversario_sistema:data.adversario_sistema??"",
+    adversario_estilo:data.adversario_estilo??"",
+    adversario_pontos_fortes:data.adversario_pontos_fortes??[],
+    adversario_vulnerabilidades:data.adversario_vulnerabilidades??[],
+    adversario_notas:data.adversario_notas??""
+  };
+}
 function docTypeLabel(type){return WORKSPACE_DOC_LABELS[type]||"Documento";}
 function docTypeShort(type){
   return {training_plan:"PT",match_analysis:"AJ",weekly_plan:"S",team_goal:"EE",season_index:"Ép",player_archive:"HA",note:"N",brief:"B"}[type]||"D";
@@ -751,6 +761,11 @@ function matchPlayerReportsSection(match,allPlayers,id){
   }).join('');
   return '<section class="section" id="match-player-reports"><div class="section-head"><div><h3>Relatório de cada convocado</h3><p>'+(refs.length-pending.length)+' de '+refs.length+' concluídos · '+pending.length+' por preencher</p></div></div>'+(refs.length?rows:'<div class="empty">Ainda não existe convocatória. Define os convocados para escrever os relatórios individuais.</div>')+'</section>';
 }
+function matchOpponentForm(match,id){
+  if(match.estado!=="concluido")return "";
+  var opponent=matchOpponentObservation(match);
+  return '<form class="panel match-form form section" data-form="match-opponent" data-id="'+id+'"><h3>Observações ao adversário</h3><p class="hint">Preenche depois do jogo apenas o que observaste. Registos antigos do plano pré-jogo aparecem aqui para revisão.</p><input type="hidden" name="expected_updated_at" value="'+esc(match.post_game?.opponent_observation?.updated_at||'')+'"><div class="form-grid"><label class="field"><span>Sistema observado</span><input name="adversario_sistema" maxlength="40" placeholder="Ex.: 1-2-1" value="'+esc(opponent.adversario_sistema)+'"></label><label class="field"><span>Estilo observado</span><select name="adversario_estilo"><option value="">Não observado</option>'+[['posse','Posse'],['direto','Jogo direto'],['pressao_alta','Pressão alta'],['bloco_baixo','Bloco baixo'],['transicoes','Transições']].map(function(x){return '<option value="'+x[0]+'" '+(opponent.adversario_estilo===x[0]?'selected':'')+'>'+x[1]+'</option>';}).join('')+'</select></label></div><div class="form-grid"><label class="field"><span>Pontos fortes observados · um por linha</span><textarea name="adversario_pontos_fortes">'+esc(linesText(opponent.adversario_pontos_fortes))+'</textarea></label><label class="field"><span>Vulnerabilidades observadas · um por linha</span><textarea name="adversario_vulnerabilidades">'+esc(linesText(opponent.adversario_vulnerabilidades))+'</textarea></label></div><label class="field"><span>Notas do adversário</span><textarea name="adversario_notas">'+esc(opponent.adversario_notas)+'</textarea></label><button class="btn accent" type="submit">Guardar observações ao adversário</button></form>';
+}
 async function viewMatch(id){
   var raw=await DB.obter("jogos",id);
   if(!raw) return go("#/equipa");
@@ -774,15 +789,15 @@ async function viewMatch(id){
   html+='<aside class="panel hero-side"><div class="metric-label">Preparação</div><div class="match-progress"><span class="'+(progress.pre_game?"done":"")+'">Plano</span><span class="'+(progress.callup?"done":"")+'">Convocados</span><span class="'+(progress.lineup?"done":"")+'">5v5</span><span class="'+(progress.post_game?"done":"")+'">Análise</span></div><div class="meta" style="margin-top:16px">'+memory.length+' observações · '+media.length+' media</div></aside></div>';
   if(match.estado==="agendado")html+='<section class="panel section" data-match-finish><h3>Quando o jogo acabar</h3><p>Podes concluir o jogo sem ter usado a app durante a partida. A convocatória e o alinhamento ficam guardados; minutos e substituições não são inventados.</p><button class="btn accent" type="button" data-action="finish-match" data-id="'+id+'">Dar jogo como terminado</button></section>';
   if(match.estado==="concluido")html+='<section class="notice section"><strong>Jogo terminado</strong><p>Preenche o relatório de cada convocado, o resultado, os acontecimentos que recordas e a análise. '+(match.visual_match?.started_at?'A utilização vem do cronómetro registado.':'Não foi usado cronómetro: os minutos dos atletas continuam desconhecidos.')+'</p><a class="btn accent" href="#/equipa/jogo/'+id+'?focus=players">Relatórios dos convocados</a></section>';
-  html+='<div class="match-stage-nav"><button type="button" data-action="jump-match" data-target="match-before">Antes</button><button type="button" data-action="jump-match" data-target="match-during">Durante</button><button type="button" data-action="jump-match" data-target="match-after">Depois</button></div>';
+  html+='<div class="match-stage-nav"><button type="button" data-action="jump-match" data-target="match-before">Antes</button><button type="button" data-action="jump-match" data-target="match-after">Depois</button></div>';
   html+='<section class="section match-stage" id="match-before"><div class="section-head"><div><h2>Antes do jogo</h2><p>Plano, convocatória e alinhamento</p></div></div><div class="grid cols-2">';
-  html+='<form class="panel match-form form" data-form="match-pre" data-id="'+id+'"><h3>Plano pré-jogo</h3><label class="field"><span>Objetivo principal</span><input name="objetivo_principal" value="'+esc(match.pre_game.objetivo_principal)+'"></label><label class="field"><span>Plano de jogo</span><textarea name="plano_jogo">'+esc(match.pre_game.plano_jogo)+'</textarea></label><h4>Observação do adversário</h4><div class="form-grid"><label class="field"><span>Sistema observado</span><input name="adversario_sistema" maxlength="40" placeholder="Ex.: 1-2-1" value="'+esc(match.pre_game.adversario_sistema||'')+'"></label><label class="field"><span>Estilo observado</span><select name="adversario_estilo"><option value="">Ainda não observado</option>'+[['posse','Posse'],['direto','Jogo direto'],['pressao_alta','Pressão alta'],['bloco_baixo','Bloco baixo'],['transicoes','Transições']].map(function(x){return '<option value="'+x[0]+'" '+(match.pre_game.adversario_estilo===x[0]?'selected':'')+'>'+x[1]+'</option>';}).join('')+'</select></label></div><div class="form-grid"><label class="field"><span>Pontos fortes observados · um por linha</span><textarea name="adversario_pontos_fortes">'+esc(linesText(match.pre_game.adversario_pontos_fortes))+'</textarea></label><label class="field"><span>Vulnerabilidades observadas · um por linha</span><textarea name="adversario_vulnerabilidades">'+esc(linesText(match.pre_game.adversario_vulnerabilidades))+'</textarea></label></div><label class="field"><span>Notas do adversário</span><textarea name="adversario_notas">'+esc(match.pre_game.adversario_notas)+'</textarea></label><label class="field"><span>Pontos a observar · um por linha</span><textarea name="pontos_observar">'+esc(linesText(match.pre_game.pontos_observar))+'</textarea></label><button class="btn accent" type="submit">Guardar plano</button></form>';
+  html+='<form class="panel match-form form" data-form="match-pre" data-id="'+id+'"><h3>Plano pré-jogo</h3><label class="field"><span>Objetivo principal</span><input name="objetivo_principal" value="'+esc(match.pre_game.objetivo_principal)+'"></label><label class="field"><span>Plano de jogo</span><textarea name="plano_jogo">'+esc(match.pre_game.plano_jogo)+'</textarea></label><label class="field"><span>Pontos a observar · um por linha</span><textarea name="pontos_observar">'+esc(linesText(match.pre_game.pontos_observar))+'</textarea></label><button class="btn accent" type="submit">Guardar plano</button></form>';
   html+='<form class="panel match-form form" data-form="match-callup" data-id="'+id+'"><h3>Convocatória</h3>'+(retiredCalled.length?'<div class="notice">Histórico: '+retiredCalled.map(function(p){return esc(p.nome);}).join(", ")+' já não pertence ao plantel atual.</div>':'')+(unavailableCalled.length?'<div class="notice">'+unavailableCalled.map(function(p){return esc(p.nome)+" · "+esc(PlayerStatus.label(p.estado_disponibilidade));}).join("<br>")+'<br>Estes jogadores deixaram de estar disponíveis e serão retirados ao guardar a convocatória.</div>':'')+'<div class="player-choice-grid">'+playerChecks(players,match.callup.player_ids,"player_ids")+'</div><label class="field"><span>Notas</span><textarea name="notes">'+esc(match.callup.notes)+'</textarea></label><button class="btn accent" type="submit">Guardar convocatória</button></form></div>';
   html+='<section class="panel section" data-match-lineup-summary><div class="section-head"><div><h2>Alinhamento 5v5</h2><p>Sistema '+esc(visualSystem)+' · posições guardadas no quadro visual</p></div><a class="btn accent" href="#/jogo-visual/'+id+'">'+(match.visual_match?.started_at?'Ver jogo visual':'Editar alinhamento visual')+'</a></div><ul class="match-lineup-summary">'+visualRoles+'</ul><p class="hint">O quadro visual é o único local para alterar o sistema e as posições iniciais.</p></section></div></section>';
-  html+='<section class="section match-stage" id="match-during"><div class="section-head"><div><h2>Durante</h2><p>Registo simples, sem distrair do jogo</p></div></div><form class="panel match-form form" data-form="match-during" data-id="'+id+'"><label class="field"><span>Resultado ao intervalo</span><input name="halftime_score" placeholder="Ex.: 2-1" value="'+esc(match.during.halftime_score)+'"></label><label class="field"><span>Notas rápidas · uma por linha</span><textarea name="notes">'+esc(linesText(match.during.notes))+'</textarea></label><button class="btn accent" type="submit">Guardar durante</button></form></section>';
+  var matchNotes=match.estado==="concluido"?'<details class="panel section"><summary>Notas do jogo e resultado ao intervalo · opcional</summary><form class="form" data-form="match-during" data-id="'+id+'"><label class="field"><span>Resultado ao intervalo</span><input name="halftime_score" placeholder="Ex.: 2-1" value="'+esc(match.during.halftime_score)+'"></label><label class="field"><span>Notas recordadas · uma por linha</span><textarea name="notes">'+esc(linesText(match.during.notes))+'</textarea></label><button class="btn accent" type="submit">Guardar notas do jogo</button></form></details>':'';
   var resultForm=match.estado==="concluido"?'<form class="panel form section" data-form="match-result" data-id="'+id+'"><h3>Resultado</h3><p class="hint">Introduz o resultado observado. Não é preenchido pelos lances nem pelo alinhamento.</p><div class="form-grid"><label class="field"><span>Golos a favor</span><input name="golos_favor" type="number" min="0" value="'+esc(match.golos_favor??'')+'"></label><label class="field"><span>Golos contra</span><input name="golos_contra" type="number" min="0" value="'+esc(match.golos_contra??'')+'"></label></div><label class="field"><span>Notas gerais do jogo</span><textarea name="notas">'+esc(match.notas||'')+'</textarea></label><button class="btn accent" type="submit">Guardar resultado e notas</button></form>':'';
   var postMatchEvents=match.estado==="concluido"?'<details class="section" data-post-match-events><summary>Registar acontecimentos e estatísticas</summary>'+MatchEventsUI.html(match,allPlayers)+'</details>':'';
-  html+='<section class="section match-stage" id="match-after"><div class="section-head"><div><h2>Depois do jogo</h2><p>Resultado, relatórios dos convocados, acontecimentos e análise registados pelo treinador</p></div></div>'+matchPlayerReportsSection(match,allPlayers,id)+resultForm+postMatchEvents+matchAnalysisSection(match,players,id,memory)+(progress.post_game?'<a class="btn secondary section" href="#/treinos/novo/jogo/'+id+'">Preparar treino desta análise</a>':'')+'<div class="grid cols-2 section"><div><div class="section-head"><div><h2>Contexto associado</h2><p>Observações e decisões</p></div></div>'+context+'</div><div><div class="section-head"><div><h2>Media</h2><p>'+media.length+' item(ns)</p></div></div>'+renderMediaCards(media)+'</div></div></section>';
+  html+='<section class="section match-stage" id="match-after"><div class="section-head"><div><h2>Depois do jogo</h2><p>Resultado, relatórios dos convocados, adversário, acontecimentos e análise registados pelo treinador</p></div></div>'+matchPlayerReportsSection(match,allPlayers,id)+resultForm+matchOpponentForm(match,id)+matchNotes+postMatchEvents+matchAnalysisSection(match,players,id,memory)+(progress.post_game?'<a class="btn secondary section" href="#/treinos/novo/jogo/'+id+'">Preparar treino desta análise</a>':'')+'<div class="grid cols-2 section"><div><div class="section-head"><div><h2>Contexto associado</h2><p>Observações e decisões</p></div></div>'+context+'</div><div><div class="section-head"><div><h2>Media</h2><p>'+media.length+' item(ns)</p></div></div>'+renderMediaCards(media)+'</div></div></section>';
   if((location.hash||"").split("?")[0]!=="#/equipa/jogo/"+id)return;
   setView("Jogo vs "+match.adversario,html,"Jogo");
   if(match.estado==="concluido")MatchEventsUI.attach(match,allPlayers);
@@ -1909,19 +1924,33 @@ app.addEventListener("submit",async function(event){
   if(type==="match-pre"){
     var preMatch=matchStructure(await DB.obter("jogos",id));
     preMatch.pre_game={
+      ...preMatch.pre_game,
       status:"ready",
       objetivo_principal:fd.get("objetivo_principal")||null,
       plano_jogo:fd.get("plano_jogo")||null,
-      adversario_notas:fd.get("adversario_notas")||null,
-      adversario_sistema:fd.get("adversario_sistema")||null,
-      adversario_estilo:fd.get("adversario_estilo")||null,
-      adversario_pontos_fortes:linesFromText(fd.get("adversario_pontos_fortes")),
-      adversario_vulnerabilidades:linesFromText(fd.get("adversario_vulnerabilidades")),
       pontos_observar:linesFromText(fd.get("pontos_observar"))
     };
     await DB.modificar("jogos",id,current=>({...current,pre_game:preMatch.pre_game}));
     await logHuman("updated_match_pre_game","Atualizou plano pré-jogo · "+preMatch.adversario,"match",id);
     return router();
+  }
+  if(type==="match-opponent"){
+    try{
+      await DB.modificar("jogos",id,current=>{
+        if(current.estado!=="concluido")throw new Error("Conclui o jogo antes de guardar observações ao adversário.");
+        if((current.post_game?.opponent_observation?.updated_at||"")!==fd.get("expected_updated_at"))throw new Error("As observações ao adversário mudaram noutro dispositivo. Revê a versão atual antes de guardar.");
+        return {...current,post_game:{...(current.post_game||{}),opponent_observation:{
+          adversario_sistema:fd.get("adversario_sistema")||null,
+          adversario_estilo:fd.get("adversario_estilo")||null,
+          adversario_pontos_fortes:linesFromText(fd.get("adversario_pontos_fortes")),
+          adversario_vulnerabilidades:linesFromText(fd.get("adversario_vulnerabilidades")),
+          adversario_notas:fd.get("adversario_notas")||null,
+          updated_at:new Date().toISOString()
+        }}};
+      });
+      await logHuman("updated_match_opponent","Atualizou observações ao adversário · "+(await DB.obter("jogos",id)).adversario,"match",id);
+      return router();
+    }catch(error){alert(error.message);return;}
   }
   if(type==="match-callup"){
     var callMatch=matchStructure(await DB.obter("jogos",id));
@@ -1958,7 +1987,7 @@ app.addEventListener("submit",async function(event){
   }
   if(type==="match-post"){
     var postMatch=matchStructure(await DB.obter("jogos",id));
-    postMatch.post_game={status:"done",correu_bem:fd.get("correu_bem")||null,melhorar:fd.get("melhorar")||null,conclusoes:fd.get("conclusoes")||null,acoes_proximo_treino:linesFromText(fd.get("acoes"))};
+    postMatch.post_game={...postMatch.post_game,status:"done",correu_bem:fd.get("correu_bem")||null,melhorar:fd.get("melhorar")||null,conclusoes:fd.get("conclusoes")||null,acoes_proximo_treino:linesFromText(fd.get("acoes"))};
     await DB.modificar("jogos",id,current=>({...current,post_game:postMatch.post_game}));
     await logHuman("updated_match_post_game","Atualizou análise pós-jogo · "+postMatch.adversario,"match",id);
     return router();

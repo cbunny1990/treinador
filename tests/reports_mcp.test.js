@@ -44,6 +44,19 @@ test('match report MCP is read-only and exposes registered evidence with provena
  assert.equal(out.video_evidence[0].seconds,4);assert.equal(out.missing_data.events,false);assert.equal(f.calls.length,0);
 });
 test('match report MCP lists independent exits and entries in the recorded chronology',async()=>{const f=fixture();f.match.payload.visual_match.events.push({id:'exit-1',type:'exit',at_ms:40000,out_ref:refs[0]},{id:'entry-1',type:'enter',at_ms:50000,in_ref:refs[0],role:'gr'});const out=await api.executeReportTool(f.admin,c,'get_match_report',{id:MATCH,report_type:'post_match'});assert.deepEqual(out.usage.movements.map(x=>[x.type,x.at_ms]),[['substitute',30000],['exit',40000],['enter',50000]]);assert.equal(out.usage.movements[1].out_ref,refs[0]);assert.equal(out.usage.movements[2].role,'gr');assert.equal(out.usage.players.find(x=>x.ref===refs[0]).total_ms,50000);assert.equal(f.calls.length,0);});
+test('match report MCP separates opponent observations from the pre-game sheet and identifies legacy provenance',async()=>{
+ const f=fixture();f.match.payload.pre_game={adversario_sistema:'1-2-1',adversario_notas:'Nota antiga'};
+ const legacy=await api.executeReportTool(f.admin,c,'get_match_report',{id:MATCH,report_type:'post_match'});
+ assert.equal(legacy.opponent_observation.source,'legacy_pre_game');assert.equal(legacy.opponent_observation.formation,'1-2-1');
+ f.match.payload.post_game.opponent_observation={adversario_sistema:'2-2',adversario_notas:'Observado depois'};
+ const post=await api.executeReportTool(f.admin,c,'get_match_report',{id:MATCH,report_type:'post_match'});
+ assert.equal(post.opponent_observation.source,'post_match');assert.equal(post.opponent_observation.formation,'2-2');
+ const sheet=await api.executeReportTool(f.admin,c,'get_match_report',{id:MATCH,report_type:'match_sheet'});
+ assert.equal(Object.hasOwn(sheet,'opponent_observation'),false);assert.equal(f.calls.length,0);
+ delete f.match.payload.post_game.opponent_observation;delete f.match.payload.pre_game;
+ const empty=await api.executeReportTool(f.admin,c,'get_match_report',{id:MATCH,report_type:'post_match'});
+ assert.equal(empty.opponent_observation.source,'not_recorded');
+});
 test('match-sheet report excludes post-match analysis but keeps missing data explicit',async()=>{
  const f=fixture();delete f.match.payload.availability_snapshot;f.match.payload.match_events.events=[];f.match.payload.golos_favor=null;f.match.payload.golos_contra=null;f.match.payload.visual_match={schema:'vision-match-visual@1',revision:0,status:'not_started',period:1,elapsed_ms:0,roster:[],events:[]};
  const out=await api.executeReportTool(f.admin,c,'get_match_report',{external_key:'cup-final',report_type:'match_sheet'});

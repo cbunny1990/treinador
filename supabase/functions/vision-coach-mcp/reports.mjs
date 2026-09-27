@@ -96,5 +96,10 @@ export async function executeReportTool(admin,c,name,args){
   missing_data:{result:p.golos_favor==null||p.golos_contra==null,events:!stats.events_available,registered_events_empty:stats.events_available&&events.length===0,usage:!p.visual_match?.started_at,availability_snapshot:!availability,analysis:!A.hasCoachContent(analysis.fields,analysis.goals_conceded),video:evidence.moments.length===0}
  };
  if(args.report_type==='match_sheet')delete result.analysis;
+ if(args.report_type==='post_match'){
+  const opponent=p.post_game?.opponent_observation||p.pre_game||{};
+  const hasOpponentData=Boolean(opponent.adversario_sistema||opponent.adversario_estilo||opponent.adversario_notas||(opponent.adversario_pontos_fortes||[]).length||(opponent.adversario_vulnerabilidades||[]).length);
+  result.opponent_observation={formation:opponent.adversario_sistema||null,style:opponent.adversario_estilo||null,strengths:opponent.adversario_pontos_fortes||[],vulnerabilities:opponent.adversario_vulnerabilidades||[],notes:opponent.adversario_notas||null,source:p.post_game?.opponent_observation?'post_match':hasOpponentData?'legacy_pre_game':'not_recorded'};
+ }
  return result;
 }

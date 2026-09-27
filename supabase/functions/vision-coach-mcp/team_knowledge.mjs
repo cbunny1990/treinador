@@ -112,13 +112,13 @@ function sourceFields(row){
     return fields;
   }
   if(kind==='match'){
-    const analysis=obj(obj(p.post_game).analysis),values=obj(analysis.fields),date=isoDate(p.data),pre=obj(p.pre_game);
-    add('pre_game.adversario_notas','Notas de análise do adversário',pre.adversario_notas,'coach_observation',{category:'opponent_analysis',source_date:date,match_ref:row.id});
-    add('pre_game.adversario_sistema','Sistema observado do adversário',pre.adversario_sistema,'coach_observation',{category:'opponent_analysis',source_date:date,match_ref:row.id});
-    add('pre_game.adversario_estilo','Estilo observado do adversário',pre.adversario_estilo,'coach_observation',{category:'opponent_analysis',source_date:date,match_ref:row.id});
-    for(const [i,value] of arr(pre.adversario_pontos_fortes).entries())add(`pre_game.adversario_pontos_fortes[${i}]`,'Ponto forte observado do adversário',value,'coach_observation',{category:'opponent_analysis',source_date:date,match_ref:row.id});
-    for(const [i,value] of arr(pre.adversario_vulnerabilidades).entries())add(`pre_game.adversario_vulnerabilidades[${i}]`,'Vulnerabilidade observada do adversário',value,'coach_observation',{category:'opponent_analysis',source_date:date,match_ref:row.id});
-    for(const [i,value] of arr(pre.pontos_observar).entries())add(`pre_game.pontos_observar[${i}]`,'Ponto a observar',value,'coach_observation',{category:'opponent_analysis',source_date:date,match_ref:row.id});
+    const post=obj(p.post_game),analysis=obj(post.analysis),values=obj(analysis.fields),date=isoDate(p.data),pre=obj(p.pre_game),hasPostOpponent=!!post.opponent_observation,opponent=hasPostOpponent?obj(post.opponent_observation):pre,opponentPath=hasPostOpponent?'post_game.opponent_observation':'pre_game',opponentLabel=hasPostOpponent?'':'Registo anterior do pré-jogo · por confirmar · ';
+    add(`${opponentPath}.adversario_notas`,opponentLabel+'Notas de análise do adversário',opponent.adversario_notas,'coach_observation',{category:'opponent_analysis',source_date:date,match_ref:row.id});
+    add(`${opponentPath}.adversario_sistema`,opponentLabel+'Sistema indicado do adversário',opponent.adversario_sistema,'coach_observation',{category:'opponent_analysis',source_date:date,match_ref:row.id});
+    add(`${opponentPath}.adversario_estilo`,opponentLabel+'Estilo indicado do adversário',opponent.adversario_estilo,'coach_observation',{category:'opponent_analysis',source_date:date,match_ref:row.id});
+    for(const [i,value] of arr(opponent.adversario_pontos_fortes).entries())add(`${opponentPath}.adversario_pontos_fortes[${i}]`,opponentLabel+'Ponto forte indicado do adversário',value,'coach_observation',{category:'opponent_analysis',source_date:date,match_ref:row.id});
+    for(const [i,value] of arr(opponent.adversario_vulnerabilidades).entries())add(`${opponentPath}.adversario_vulnerabilidades[${i}]`,opponentLabel+'Vulnerabilidade indicada do adversário',value,'coach_observation',{category:'opponent_analysis',source_date:date,match_ref:row.id});
+    for(const [i,value] of arr(pre.pontos_observar).entries())add(`pre_game.pontos_observar[${i}]`,'Ponto a observar no jogo',value,'coach_decision',{category:'match_preparation',source_date:date,match_ref:row.id});
     add('pre_game.plano_jogo','Plano de jogo preparado pelo treinador',pre.plano_jogo,'coach_decision',{category:'match_preparation',source_date:date,match_ref:row.id});
     const labels={summary:'Resumo do treinador',positives:'Pontos positivos',problems:'Problemas identificados',losses:'Perdas de bola',recoveries:'Recuperações',offense:'Criação ofensiva',defense:'Comportamento defensivo',transitions:'Transições',set_pieces:'Bolas paradas',keep:'Aspetos a manter',correct:'Aspetos a corrigir',observations:'Observação do treinador',interpretation:'Interpretação',hypotheses:'Hipótese por confirmar',decisions:'Decisão do treinador',next_priority:'Prioridade seguinte'};
     for(const [key,label] of Object.entries(labels)){
