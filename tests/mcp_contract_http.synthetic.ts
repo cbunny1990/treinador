@@ -62,6 +62,10 @@ const sanitizationMatch = {
     player: { estado_disponibilidade: "indisponivel" },
     session: { attendance: [{ player_ref: archivePlayerRef, status: "present" }] },
     analysis: { summary: "Criámos oportunidades em ataque rápido." },
+    post_game: { analysis: { fields: {
+      summary: "Atleta sintético abriu uma linha de passe durante a saída curta.",
+      problems: "Atleta sintético teve febre após o jogo.",
+    } } },
   },
 };
 const weeklyDocuments = new Map<string, any>();
@@ -83,6 +87,7 @@ runtime.serve = (...args: any[]) => {
 Deno.env.set("SUPABASE_URL", "http://supabase.synthetic");
 Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", "synthetic-only-not-a-secret");
 Deno.env.delete("TYPESAFE_API_KEY");
+Deno.env.delete("OPENAI_API_KEY");
 globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = new URL(input instanceof Request ? input.url : String(input));
   networkPaths.push(url.origin + url.pathname);
@@ -122,10 +127,13 @@ globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       }]);
     }
     check(query.get("team_id") === `eq.${connector.team_id}`, "Archived athlete read was not scoped to the authorized team.");
-    check(query.get("deleted_at") === "is.null", "Archived athlete read included deleted archive documents.");
+    if (query.get("select") !== "payload") check(query.get("deleted_at") === "is.null", "Archived athlete read included deleted archive documents.");
     const kind = query.get("kind");
     if (kind === "eq.memory") {
       return Response.json([archiveObservation]);
+    }
+    if (kind === "eq.player" && query.get("select") === "payload") {
+      return Response.json([{ payload: { nome: "Atleta sintético" } }]);
     }
     if (kind === "eq.match") {
       return Response.json([sanitizationMatch]);
@@ -140,6 +148,7 @@ globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     check(["eq.document", "eq.match", "eq.training"].includes(kind || ""), "Archived athlete read queried an unrelated record type.");
     if (kind === "eq.document") {
       check(query.get("payload->>type") === "eq.player_archive", "Archived athlete read did not filter archive documents.");
+      if (query.get("select") === "payload") return Response.json([{ payload: archiveRecord.payload }]);
       check(query.get("payload->>external_key") === `eq.player-archive:default:${archivePlayerRef}`, "Archived athlete read did not use the exact stable athlete UUID.");
       return Response.json([archiveRecord]);
     }
@@ -296,6 +305,15 @@ try {
   check(safeMatch.payload.analysis.summary === "Criámos oportunidades em ataque rápido.", "The MCP HTTP boundary removed ordinary tactical analysis.");
   check(safeMatch.sensitive_text_omitted === true, "The MCP HTTP boundary did not indicate that content was filtered.");
 
+  const recentContext = await call("tools/call", {
+    name: "get_recent_match_context", arguments: { question: "O que correu mal no último jogo?", match_count: 1 },
+  });
+  const recent = recentContext.result.structuredContent;
+  check(!recentContext.result.isError && recent.semantic_retrieval_status === "provider_not_configured", `MCP HTTP did not report the absent embedding provider: ${recent.semantic_retrieval_status}`);
+  check(recent.structured_coach_evidence_status === "available" && recent.structured_coach_evidence[0].source.ref === sanitizationMatchRef, "MCP HTTP did not return sourced coach-written match analysis.");
+  check(recent.structured_coach_evidence[0].evidence_type === "coach_observation", "MCP HTTP lost the observation provenance.");
+  check(!/Atleta sintético|febre/.test(JSON.stringify(recent.structured_coach_evidence)), "MCP HTTP exposed a player name or health note in the direct fallback.");
+
   const refused = await call("tools/call", {
     name: "evaluate_cross_session_pattern",
     arguments: {
@@ -312,7 +330,7 @@ try {
   check(refused.result.isError === true, "A call without a provider key should return an MCP error result.");
   check(/typesafe_api_not_configured/.test(refused.result.content?.[0]?.text || ""), "The missing Jev provider was not identified.");
   check(networkPaths.every((path) => path.endsWith("/rest/v1/rpc/mcp_connector_lookup") || path.endsWith("/rest/v1/rpc/head_coach_put_record") || path.endsWith("/rest/v1/workspace_records")), "The synthetic test attempted a non-fixture database or external provider request.");
-  console.log("MCP HTTP synthetic contract: initialize, archived athlete read, privacy-filtered full match, paginated lexical search, weekly proposal prepare/idempotency/approve and confirmation refusal, RAG sensitive-query refusal, tool refusal without provider key — passed; external network calls: 0.");
+  console.log("MCP HTTP synthetic contract: initialize, archived athlete read, privacy-filtered full match, recent-match coach analysis without embeddings, paginated lexical search, weekly proposal prepare/idempotency/approve and confirmation refusal, RAG sensitive-query refusal, tool refusal without provider key — passed; external network calls: 0.");
 } finally {
   if (server) {
     server.shutdown();
