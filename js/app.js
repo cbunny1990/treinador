@@ -685,12 +685,12 @@ async function viewArchivedPlayers(){
 
 async function viewTeamForm(){
   var t=await HeadCoachMemory.ensureTeam();
-  var html='<section class="panel hero-main" style="max-width:760px"><form class="form" data-form="team">';
+  var html='<section class="panel hero-main" style="max-width:760px"><form class="form" data-form="team"><input type="hidden" name="expected_local_updated_at" value="'+esc(t.sync_local_updated_at||t.updated_at||'')+'"><input type="hidden" name="expected_remote_updated_at" value="'+esc(t.remote_updated_at||'')+'"><input type="hidden" name="expected_sync_id" value="'+esc(t.sync_id||'')+'">';
   html+='<div class="form-grid"><label class="field"><span>Nome da equipa</span><input name="nome" required value="'+esc(t.nome)+'"></label><label class="field"><span>Clube</span><input name="clube" value="'+esc(t.clube)+'"></label></div>';
   html+='<div class="form-grid"><label class="field"><span>Escalão</span><input name="escalao" value="'+esc(t.escalao)+'"></label><label class="field"><span>Época</span><input name="epoca" placeholder="2026/27" value="'+esc(t.epoca)+'"></label></div>';
   html+='<div class="form-grid"><label class="field"><span>Competição</span><input name="competicao" value="'+esc(t.competicao)+'"></label><label class="field"><span>Formato</span><input name="formato" placeholder="5v5" value="'+esc(t.formato)+'"></label></div>';
   html+='<label class="field"><span>Horários / contexto</span><textarea name="horarios">'+esc(t.horarios&&t.horarios.texto)+'</textarea></label>';
-  html+='<div class="toolbar"><button class="btn accent" type="submit">Guardar alterações</button><a class="btn secondary" href="#/equipa">Cancelar</a></div></form></section>';
+  html+='<div class="toolbar"><button class="btn accent" type="submit">Guardar alterações</button><a class="btn secondary" href="#/equipa">Cancelar</a></div><p class="notice" data-team-feedback hidden></p></form></section>';
   setView("Editar equipa",html,"Equipa");
 }
 async function viewPlayerForm(id){
@@ -1108,10 +1108,10 @@ function remoteConflictBatchReviewHTML(result){
 }
 function remoteConflictReviewHTML(versions){
   var merge=versions.merge_suggestion;
-  var fields={nome:'Nome',title:'Título',titulo:'Título',objetivo:'Objetivo',descricao:'Descrição',note:'Nota',data:'Data',hora:'Hora',local:'Local',adversario:'Adversário',status:'Estado',observacoes:'Observações',summary:'Resumo'};
+  var fields={nome:'Nome',clube:'Clube',escalao:'Escalão',epoca:'Época',competicao:'Competição',formato:'Formato',horarios:'Horários',staff:'Equipa técnica',title:'Título',titulo:'Título',objetivo:'Objetivo',descricao:'Descrição',note:'Nota',data:'Data',hora:'Hora',local:'Local',adversario:'Adversário',status:'Estado',observacoes:'Observações',summary:'Resumo'};
   var fieldList=function(keys){return (keys||[]).map(function(key){return fields[key]||key.replace(/_/g,' ');}).join(', ');};
   var valueText=function(present,value){return present?JSON.stringify(value===undefined?null:value,null,2):'Campo removido nesta versão';};
-  var html='<div class="notice"><strong>Revê as duas versões · '+esc(versions.store)+'</strong><p>A versão local mantém as alterações deste dispositivo. A versão remota é a última gravação do workspace. A decisão só é aplicada se nenhuma delas tiver mudado desde esta comparação. Credenciais e ligações temporárias são ocultadas; qualquer conteúdo omitido da pré-visualização aparece assinalado. Escolher uma versão aplica o registo completo.</p></div><div class="grid cols-2"><section><h4>Neste dispositivo</h4><pre class="conflict-preview">'+esc(JSON.stringify(versions.local,null,2))+'</pre></section><section><h4>No workspace remoto</h4><pre class="conflict-preview">'+esc(JSON.stringify(versions.remote,null,2))+'</pre></section></div>';
+  var html='<div class="notice"><strong>Revê as duas versões · '+esc(versions.store==='teams'?'Equipa':versions.store)+'</strong><p>A versão local mantém as alterações deste dispositivo. A versão remota é a última gravação do workspace. A decisão só é aplicada se nenhuma delas tiver mudado desde esta comparação. Credenciais e ligações temporárias são ocultadas; qualquer conteúdo omitido da pré-visualização aparece assinalado. Escolher uma versão aplica o registo completo.</p></div><div class="grid cols-2"><section><h4>Neste dispositivo</h4><pre class="conflict-preview">'+esc(JSON.stringify(versions.local,null,2))+'</pre></section><section><h4>No workspace remoto</h4><pre class="conflict-preview">'+esc(JSON.stringify(versions.remote,null,2))+'</pre></section></div>';
   if(merge){
     html+='<section class="notice section"><strong>Combinação segura disponível</strong><p>O dispositivo alterou: '+esc(fieldList(merge.local_changes)||'nenhum campo')+'. O workspace alterou: '+esc(fieldList(merge.remote_changes)||'nenhum campo')+'. Os campos não se sobrepõem.</p><details open><summary>Pré-visualizar a combinação</summary><pre class="conflict-preview">'+esc(JSON.stringify(merge.payload,null,2))+'</pre></details><button class="btn accent" type="button" data-action="resolve-version-conflict" data-resolution="merge_non_overlapping" data-sync-id="'+esc(versions.sync_id)+'" data-store="'+esc(versions.store)+'" data-remote-version="'+esc(versions.remote_updated_at)+'" data-local-version="'+esc(versions.local_updated_at||'')+'">Combinar alterações independentes</button></section>';
   }else if(versions.single_change_suggestion){
@@ -1895,20 +1895,30 @@ app.addEventListener("submit",async function(event){
   }
 
   if(type==="team"){
-    var currentTeam=await HeadCoachMemory.ensureTeam();
-    var currentSchedule=currentTeam.horarios||{};
-    await HeadCoachMemory.saveTeam({
-      id:DEFAULT_TEAM_ID,
-      nome:fd.get("nome"),
-      clube:fd.get("clube")||null,
-      escalao:fd.get("escalao")||null,
-      epoca:fd.get("epoca")||null,
-      competicao:fd.get("competicao")||null,
-      formato:fd.get("formato")||null,
-      horarios:Object.assign({},currentSchedule,{texto:fd.get("horarios")||null})
-    });
-    await logHuman("updated_team","Atualizou o perfil da equipa","team",DEFAULT_TEAM_ID);
-    return go("#/equipa");
+    try{
+      var currentTeam=await HeadCoachMemory.ensureTeam();
+      var currentSchedule=currentTeam.horarios||{};
+      await HeadCoachMemory.saveTeam({
+        id:DEFAULT_TEAM_ID,
+        nome:fd.get("nome"),
+        clube:fd.get("clube")||null,
+        escalao:fd.get("escalao")||null,
+        epoca:fd.get("epoca")||null,
+        competicao:fd.get("competicao")||null,
+        formato:fd.get("formato")||null,
+        horarios:Object.assign({},currentSchedule,{texto:fd.get("horarios")||null})
+      },{expectedVersion:{
+        local_updated_at:fd.get("expected_local_updated_at")||null,
+        remote_updated_at:fd.get("expected_remote_updated_at")||null,
+        sync_id:fd.get("expected_sync_id")||null
+      }});
+      await logHuman("updated_team","Atualizou o perfil da equipa","team",DEFAULT_TEAM_ID);
+      return go("#/equipa");
+    }catch(error){
+      var teamFeedback=form.querySelector("[data-team-feedback]");
+      teamFeedback.textContent=error.message;teamFeedback.hidden=false;
+      return;
+    }
   }
   if(type==="player"){
     if(form.dataset.saving==="true")return;

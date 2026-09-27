@@ -139,6 +139,10 @@ function remotePayload(row) {
   if (String(payload.foto || "").startsWith("data:") || row.profile_media_ref || /\/storage\/v1\/object\/sign\/team-media\//i.test(String(payload.foto || ""))) delete payload.foto;
   return payload;
 }
+function remoteTeamPayload(row) {
+  const metadata = row?.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata) ? row.metadata : {};
+  return { ...remotePayload(metadata), nome: row?.name || metadata.nome || "Equipa principal" };
+}
 function remoteFreshLocalRecord(row) {
   const fresh = { ...row };
   delete fresh.id;
@@ -734,6 +738,7 @@ const RemoteWorkspace = {
       sync_id: data.id,
       sync_dirty: false,
       remote_updated_at: data.updated_at,
+      _sync_base: remoteTeamPayload(data),
     }, { remote: true });
     this.scheduleSync(0);
     return data;
@@ -747,12 +752,13 @@ const RemoteWorkspace = {
       config = remoteLoadConfig();
     }
     if (config.remoteTeamId !== id) {
+      const pendingTeam = await DB.obter("teams", DEFAULT_TEAM_ID);
+      if (pendingTeam?.sync_dirty) throw new Error("Sincroniza ou resolve primeiro as alterações pendentes do perfil da equipa.");
       if (!navigator.onLine) {
         const session = await this.getSession();
         const target = remoteCachedTeams(config, session?.user?.id).find((team) => team.id === id);
         if (!target) throw new Error("Só podes abrir offline um workspace confirmado anteriormente nesta conta e neste projeto.");
-        const localTeam = await DB.obter("teams", DEFAULT_TEAM_ID);
-        if (localTeam?.sync_dirty) throw new Error("Sincroniza ou resolve primeiro as alterações pendentes do perfil da equipa.");
+        const localTeam = pendingTeam;
         const unassignedStores = [...Object.keys(REMOTE_STORE_KINDS), "media_items", "activity_items"];
         for (const store of unassignedStores) {
           const rows = await DB.listar(store);
@@ -781,6 +787,7 @@ const RemoteWorkspace = {
           sync_id: target.id,
           sync_dirty: false,
           remote_updated_at: target.updated_at,
+          _sync_base: remoteTeamPayload(target),
         };
         await DB.atualizar("teams", teamProfile, { remote: true });
         remoteSaveConfig({ ...config, remoteTeamId: id });
@@ -830,23 +837,25 @@ const RemoteWorkspace = {
           pulled: 0,
         };
       }
-      await DB.atualizar("teams", {
-        ...local, sync_id: remoteTeamId, sync_dirty: false, remote_updated_at: saved.updated_at,
+      await DB.modificar("teams", DEFAULT_TEAM_ID, (current) => {
+        if (!current.sync_dirty || current.sync_local_updated_at !== local.sync_local_updated_at || current.updated_at !== local.updated_at) {
+          throw new Error("O perfil da equipa mudou durante a sincronização. Compara as versões antes de guardar.");
+        }
+        return { ...current, sync_id: remoteTeamId, sync_dirty: false,
+          remote_updated_at: saved.updated_at, _sync_base: remoteTeamPayload(saved) };
       }, { remote: true });
       return { conflicts: [], pushed: 1, pulled: 0 };
     }
 
-    if (!local.sync_dirty && local.remote_updated_at !== remote.updated_at) {
-      const merged = {
-        ...local,
-        ...(remote.metadata || {}),
-        nome: remote.name || local.nome,
-        id: local.id || DEFAULT_TEAM_ID,
-        sync_id: remoteTeamId,
-        sync_dirty: false,
-        remote_updated_at: remote.updated_at,
-      };
-      await DB.atualizar("teams", merged, { remote: true });
+    if (!local.sync_dirty && (local.sync_id !== remoteTeamId || local.remote_updated_at !== remote.updated_at)) {
+      await DB.modificar("teams", DEFAULT_TEAM_ID, (current) => {
+        if (current.sync_dirty || current.sync_local_updated_at !== local.sync_local_updated_at || current.updated_at !== local.updated_at) {
+          throw new Error("O perfil da equipa mudou durante a sincronização. Compara as versões antes de guardar.");
+        }
+        return { ...current, ...remoteTeamPayload(remote), id: DEFAULT_TEAM_ID,
+          sync_id: remoteTeamId, sync_dirty: false, remote_updated_at: remote.updated_at,
+          _sync_base: remoteTeamPayload(remote) };
+      }, { remote: true });
       return { conflicts: [], pushed: 0, pulled: 1 };
     }
     return {
@@ -2432,6 +2441,39 @@ const RemoteWorkspace = {
       && item.store === storeName && item.reason === "version_mismatch");
     if (!conflict || !conflict.remote_updated_at) throw new Error("O conflito mudou. Sincroniza novamente antes de rever as versões.");
     const store = conflict.store;
+    if (store === "teams") {
+      const remoteTeamId = config.remoteTeamId;
+      const local = await DB.obter("teams", DEFAULT_TEAM_ID);
+      if (!remoteIsUuid(remoteTeamId) || local?.id !== conflict.local_id || local?.sync_id !== syncId || !local.sync_dirty) {
+        throw new Error("A edição local da equipa já não está pendente neste workspace.");
+      }
+      const client = await this.init();
+      const { data: remote, error } = await client.from("teams").select("id,name,metadata,updated_at").eq("id", remoteTeamId).single();
+      if (error) throw error;
+      if (!remote || remote.id !== remoteTeamId || remote.updated_at !== conflict.remote_updated_at) {
+        throw new Error("A versão remota da equipa mudou. Sincroniza novamente antes de decidir.");
+      }
+      const localPayload = remotePayload(local), remoteProfile = remoteTeamPayload(remote);
+      const merge = local._sync_base ? remoteThreeWayMerge(local._sync_base, localPayload, remoteProfile) : null;
+      const manualFields = remoteManualMergeFields(localPayload, remoteProfile);
+      const single = merge && !merge.overlaps.length
+        ? merge.local_changes.length && !merge.remote_changes.length
+          ? { resolution: "keep_local", changed_side: "local", changes: merge.local_changes }
+          : !merge.local_changes.length && merge.remote_changes.length
+            ? { resolution: "keep_remote", changed_side: "remote", changes: merge.remote_changes }
+            : null : null;
+      return {
+        store, sync_id: syncId, remote_updated_at: remote.updated_at,
+        local_updated_at: local.sync_local_updated_at || local.updated_at || null,
+        local: remoteConflictPreview(localPayload), remote: remoteConflictPreview(remoteProfile),
+        merge_suggestion: merge && !merge.overlaps.length && merge.local_changes.length && merge.remote_changes.length
+          ? { payload: remoteConflictPreview(merge.merged), local_changes: merge.local_changes, remote_changes: merge.remote_changes } : null,
+        single_change_suggestion: single, manual_merge_fields: manualFields,
+        merge_unavailable: single ? "Só uma versão mudou desde a última base comum."
+          : merge?.overlaps?.length ? "As duas versões alteraram os mesmos campos. Escolhe o valor a manter."
+          : "Compara o perfil da equipa e escolhe explicitamente os campos ou a versão completa a manter.",
+      };
+    }
     if (!REMOTE_STORE_KINDS[store] && store !== "media_items") throw new Error("Tipo de conflito não suportado para comparação.");
     if (conflict.local_id == null) throw new Error("A edição local já não está pendente neste dispositivo.");
     const local = await DB.obter(store, conflict.local_id);
@@ -2561,7 +2603,7 @@ const RemoteWorkspace = {
         const keys = Object.keys(choices).sort();
         return keys.length > 0 && keys.every((name) => ["local", "remote"].includes(choices[name]));
       })();
-      if (!item?.mergeable || !remoteIsUuid(item.sync_id) || !REMOTE_STORE_KINDS[item.store]
+      if (!item?.mergeable || !remoteIsUuid(item.sync_id) || (!REMOTE_STORE_KINDS[item.store] && item.store !== "teams")
         || !item.expected_remote || !item.expected_local
         || !["merge_non_overlapping", "keep_local", "keep_remote", "merge_manual_fields"].includes(item.resolution)
         || !validManualChoices
@@ -2596,6 +2638,55 @@ const RemoteWorkspace = {
     const reviewed = await this.readVersionConflict(syncId, storeName);
     if (reviewed.remote_updated_at !== expectedRemote || reviewed.local_updated_at !== expectedLocal) {
       throw new Error("Uma das versões mudou desde a comparação. Reabre o conflito antes de decidir.");
+    }
+    if (storeName === "teams") {
+      const config = remoteLoadConfig(), remoteTeamId = config.remoteTeamId;
+      if (!remoteIsUuid(remoteTeamId)) throw new Error("Seleciona primeiro o workspace da equipa.");
+      const client = await this.init();
+      const { data: remote, error } = await client.from("teams").select("id,name,metadata,updated_at").eq("id", remoteTeamId).single();
+      if (error) throw error;
+      if (!remote || remote.id !== remoteTeamId || remote.updated_at !== expectedRemote) {
+        throw new Error("A versão remota da equipa mudou durante a decisão. Nada foi substituído.");
+      }
+      const remoteProfile = remoteTeamPayload(remote);
+      await DB.modificar("teams", DEFAULT_TEAM_ID, (current) => {
+        if (!current.sync_dirty || current.sync_id !== syncId
+          || (current.sync_local_updated_at || current.updated_at || null) !== expectedLocal) {
+          throw new Error("O perfil local da equipa mudou durante a decisão. Reabre o conflito.");
+        }
+        if (resolution === "keep_remote") return { ...current, ...remoteProfile,
+          sync_id: remoteTeamId, sync_dirty: false, remote_updated_at: remote.updated_at,
+          _sync_base: remoteProfile };
+        if (resolution === "keep_local") return { ...current, sync_id: remoteTeamId,
+          sync_dirty: true, remote_updated_at: remote.updated_at, _sync_base: remoteProfile };
+        const localProfile = remotePayload(current);
+        let merged;
+        if (resolution === "merge_non_overlapping") {
+          const merge = remoteThreeWayMerge(current._sync_base, localProfile, remoteProfile);
+          if (!merge?.merged || merge.overlaps.length || !merge.local_changes.length || !merge.remote_changes.length) {
+            throw new Error("Estas alterações da equipa não são independentes. Revê os campos e escolhe os valores.");
+          }
+          merged = merge.merged;
+        } else {
+          const fields = remoteManualMergeFields(localProfile, remoteProfile), keys = fields.map((field) => field.key).sort();
+          const choices = fieldChoices && typeof fieldChoices === "object" && !Array.isArray(fieldChoices) ? fieldChoices : {};
+          if (!keys.length || JSON.stringify(Object.keys(choices).sort()) !== JSON.stringify(keys)
+            || keys.some((key) => !["local", "remote"].includes(choices[key]))) {
+            throw new Error("Escolhe uma versão para cada campo diferente do perfil da equipa.");
+          }
+          merged = Object.create(null);
+          for (const key of new Set([...Object.keys(localProfile), ...Object.keys(remoteProfile)])) {
+            const source = choices[key] === "local" ? localProfile : remoteProfile;
+            if (Object.prototype.hasOwnProperty.call(source, key)) merged[key] = source[key];
+          }
+          if (Object.prototype.hasOwnProperty.call(remoteProfile, "updated_at")) merged.updated_at = remoteProfile.updated_at;
+        }
+        const next = { ...current };
+        for (const key of new Set([...Object.keys(localProfile), ...Object.keys(remoteProfile)])) delete next[key];
+        return { ...next, ...merged, id: DEFAULT_TEAM_ID, sync_id: remoteTeamId,
+          sync_dirty: true, remote_updated_at: remote.updated_at, _sync_base: remoteProfile };
+      }, { remote: true });
+      return options.deferSync === true ? { applied: true, conflicts: [] } : this.syncNow();
     }
     const conflict = (remoteLoadConfig().conflicts || []).find((item) => item.sync_id === syncId && item.store === storeName && item.reason === "version_mismatch");
     const store = conflict?.store;
