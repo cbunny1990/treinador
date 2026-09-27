@@ -1051,6 +1051,7 @@ function remoteConflictQueueHTML(conflicts){
   var html='<div id="remote-conflicts"><div class="notice" style="margin-top:12px"><strong>'+conflicts.length+' ocorrências detetadas</strong><p>'+summary.join(' · ')+'. As versões locais e remotas continuam preservadas.</p></div>';
   var groups={};conflicts.forEach(function(item){var key=(item.reason||'unknown')+' · '+(stores[item.store]||item.store||'Registo');groups[key]=(groups[key]||0)+1;});
   html+='<details class="section"><summary>Contagem por motivo e tipo de registo</summary><ul class="conflict-counts">'+Object.keys(groups).sort().map(function(key){return '<li>'+esc(key)+': <strong>'+groups[key]+'</strong></li>';}).join('')+'</ul></details>';
+  html+='<div class="toolbar section"><button class="btn secondary" type="button" data-action="copy-conflict-counts">Copiar resumo sem dados pessoais</button></div><p class="hint" data-conflict-copy-feedback role="status" hidden></p>';
   if(versionConflicts>1)html+='<section class="section"><button class="btn secondary" type="button" data-action="review-independent-conflict-batch">Analisar resoluções seguras ('+versionConflicts+')</button><p class="hint">A prévia não altera dados. Mostra combinações de campos independentes e casos em que só uma versão mudou desde a base comum.</p><div class="conflict-review section" data-conflict-batch-preview hidden></div></section>';
   return html+'<div class="list section">'+conflicts.map(remoteConflictCardHTML).join('')+'</div></div>';
 }
@@ -1380,6 +1381,15 @@ app.addEventListener("click",async function(event){
     if(countHeading)countHeading.textContent=searchCountText(activeSearchResults.visible,activeSearchResults.total);
     if(moreButton)moreButton.hidden=moreTo>=activeSearchResults.rows.length;
     if(limitNotice)limitNotice.hidden=activeSearchResults.total<=activeSearchResults.rows.length||moreTo<activeSearchResults.rows.length;
+    return;
+  }
+  if(action==="copy-conflict-counts"){
+    var conflictQueue=target.closest('#remote-conflicts'),feedback=conflictQueue?.querySelector('[data-conflict-copy-feedback]');
+    var countRows=Array.from(conflictQueue?.querySelectorAll('.conflict-counts li')||[]).map(function(row){return row.textContent.trim();});
+    if(!feedback||!countRows.length)return;
+    try{await navigator.clipboard.writeText('Vision Coach — conflitos por motivo e tipo de registo\n'+countRows.join('\n'));feedback.textContent='Resumo copiado. Contém apenas motivos, tipos de registo e contagens.';}
+    catch(_){feedback.textContent='Não foi possível copiar automaticamente. Abre «Contagem por motivo e tipo de registo» e copia as linhas apresentadas.';}
+    feedback.hidden=false;
     return;
   }
   if(action==="review-independent-conflict-batch"){
