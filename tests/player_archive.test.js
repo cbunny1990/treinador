@@ -17,3 +17,13 @@ test('player without development goals still has a stable historical archive wit
  assert.equal(archive.player.ref,playerRef);assert.deepEqual(archive.development_goals.items,[]);assert.doesNotMatch(JSON.stringify(archive),/data:image|private-media-uuid|profile_media_ref|"foto"/);
  assert.deepEqual(Archive.state({type:'player_archive',body:JSON.stringify(archive)}),archive);
 });
+test('historical identity requires exact team and UUID and refuses ambiguous archives',()=>{
+ const value=Archive.snapshot({sync_id:playerRef,nome:'Atleta histórico',numero:8},{teamId:team});
+ const doc=(snapshot,owner=team)=>({type:'player_archive',team_id:owner,body:JSON.stringify(snapshot)});
+ assert.deepEqual([...Archive.identitiesForRefs(team,new Set([playerRef]),[doc(value)])],[[playerRef,{name:'Atleta histórico',number:8}]]);
+ assert.equal(Archive.identitiesForRefs(team,[playerRef],[doc(value,'outra-equipa')]).size,0);
+ assert.equal(Archive.identitiesForRefs(team,[playerRef],[doc({...value,team_id:'outra-equipa'})]).size,0);
+ assert.equal(Archive.identitiesForRefs(team,['id-local'],[doc({...value,player:{...value.player,ref:'id-local'}})]).size,0);
+ assert.equal(Archive.identitiesForRefs(team,[playerRef],[doc(value),doc({...value,player:{...value.player,name:'Outro nome'}})]).size,0);
+ assert.deepEqual([...Archive.identitiesForRefs(team,[playerRef],[{type:'player_archive',team_id:team,body:'{invalid'},doc(value)])],[[playerRef,{name:'Atleta histórico',number:8}]]);
+});
