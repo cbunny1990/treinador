@@ -1613,12 +1613,15 @@ const RemoteWorkspace = {
     return result;
   },
 
-  async _activityRemoteRow(local, remoteTeamId, userId) {
+  async _activityRemoteRow(local, remoteTeamId, userId, referenceContext = {}) {
     const row = remoteActivityRow(local, remoteTeamId, userId);
     if (local.entity_type && local.entity_id != null) {
       try {
         row.entity_ref = String(await this._subjectRemoteRef(
-          local.entity_type, local.entity_id, remoteTeamId
+          local.entity_type, local.entity_id, remoteTeamId, {
+            knownRemoteRows: local.entity_type === "media" ? referenceContext.mediaRows : referenceContext.recordRows,
+            allowRemoteLookup: referenceContext.allowRemoteLookup === true,
+          }
         ));
       } catch (error) {
         const detachedReferenceReasons = new Set([
@@ -1640,7 +1643,7 @@ const RemoteWorkspace = {
     return row;
   },
 
-  async _syncActivity(remoteTeamId, userId, initialRows) {
+  async _syncActivity(remoteTeamId, userId, initialRows, referenceContext = {}) {
     const client = await this.init();
     const localReferenceCache = new Map();
     const remoteRows = initialRows || await remoteReadTeamRows(client, "activity_log", remoteTeamId);
@@ -1656,7 +1659,7 @@ const RemoteWorkspace = {
       const local = await this._ensureSyncId("activity_items", original);
       if (!remoteMap.has(local.sync_id)) {
         let remoteRow;
-        try { remoteRow = await this._activityRemoteRow(local, remoteTeamId, userId); }
+        try { remoteRow = await this._activityRemoteRow(local, remoteTeamId, userId, referenceContext); }
         catch (error) {
           if (error.code !== "LOCAL_REFERENCE_CONFLICT") throw error;
           result.conflicts.push(remoteConflict("activity_items", local, null, error.reason));
@@ -1687,7 +1690,7 @@ const RemoteWorkspace = {
         result.pushed++;
       } else if (local.sync_dirty) {
         let expected;
-        try { expected = await this._activityRemoteRow(local, remoteTeamId, userId); }
+        try { expected = await this._activityRemoteRow(local, remoteTeamId, userId, referenceContext); }
         catch (error) {
           if (error.code !== "LOCAL_REFERENCE_CONFLICT") throw error;
           result.conflicts.push(remoteConflict("activity_items", local, null, error.reason));
@@ -1765,9 +1768,12 @@ const RemoteWorkspace = {
     return path;
   },
 
-  async _mediaRemoteRow(local, remoteTeamId, userId) {
+  async _mediaRemoteRow(local, remoteTeamId, userId, referenceContext = {}) {
     const subjectRef = await this._subjectRemoteRef(
-      local.subject_type, local.subject_id, remoteTeamId
+      local.subject_type, local.subject_id, remoteTeamId, {
+        knownRemoteRows: local.subject_type === "media" ? referenceContext.mediaRows : referenceContext.recordRows,
+        allowRemoteLookup: referenceContext.allowRemoteLookup === true,
+      }
     );
     const storagePath = await this._uploadLocalMedia(local, remoteTeamId);
     return {
@@ -1789,7 +1795,7 @@ const RemoteWorkspace = {
     };
   },
 
-  async _syncMedia(remoteTeamId, userId, initialRows) {
+  async _syncMedia(remoteTeamId, userId, initialRows, referenceContext = {}) {
     const client = await this.init();
     const localReferenceCache = new Map();
     const remoteRows = initialRows || await remoteReadTeamRows(client, "media_assets", remoteTeamId);
@@ -1847,7 +1853,7 @@ const RemoteWorkspace = {
       }
 
       let row;
-      try { row = await this._mediaRemoteRow(local, remoteTeamId, userId); }
+      try { row = await this._mediaRemoteRow(local, remoteTeamId, userId, referenceContext); }
       catch (error) {
         if (error.code !== "LOCAL_REFERENCE_CONFLICT") throw error;
         addConflict(remoteConflict("media_items", local, remote, error.reason));
@@ -2250,11 +2256,18 @@ const RemoteWorkspace = {
       this.syncTeam(remoteTeamId),
       this._readSyncSnapshots(remoteTeamId),
     ]);
+    const referenceContext = {
+      recordRows: new Map(snapshots.records.map((row) => [row.id, row])),
+      mediaRows: new Map(snapshots.media.map((row) => [row.id, row])),
+      // Incremental snapshots omit unchanged remote rows, so a UUID cache miss
+      // must retain the exact team/kind/deletion-scoped lookup as a fallback.
+      allowRemoteLookup: Boolean(snapshots.recordsSince),
+    };
     const recordResult = await this._syncRecords(remoteTeamId, session.user.id, snapshots.records, snapshots.media, {
       allowRemoteLookup: Boolean(snapshots.recordsSince),
     });
-    const activityResult = await this._syncActivity(remoteTeamId, session.user.id, snapshots.activity);
-    const mediaResult = await this._syncMedia(remoteTeamId, session.user.id, snapshots.media);
+    const activityResult = await this._syncActivity(remoteTeamId, session.user.id, snapshots.activity, referenceContext);
+    const mediaResult = await this._syncMedia(remoteTeamId, session.user.id, snapshots.media, referenceContext);
     const parts = [tombstoneResult, teamResult, recordResult, activityResult, mediaResult];
 
     for (const part of parts) {
