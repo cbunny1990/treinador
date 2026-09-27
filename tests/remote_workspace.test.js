@@ -1550,6 +1550,37 @@ test("sync reutiliza snapshots para referências UUID de atividade e media, com 
   });
 });
 
+test("full sync valida atividade e media ligados a registo criado na mesma passagem", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    const playerRef = "89000000-0000-4000-8000-000000000031";
+    useDevice(0);
+    await devices[0].criar("jogadores", { team_id: "default", remote_team_id: remoteTeamId,
+      sync_id: playerRef, sync_dirty: true, nome: "Atleta novo" });
+    await devices[0].criar("activity_items", { team_id: "default", remote_team_id: remoteTeamId,
+      sync_dirty: true, actor: "human", action: "linked", summary: "Registo e atividade", entity_type: "player", entity_id: playerRef });
+    await devices[0].criar("media_items", { team_id: "default", remote_team_id: remoteTeamId,
+      sync_dirty: true, subject_type: "player", subject_id: playerRef, type: "photo", title: "Foto do registo novo" });
+
+    const referenceContext = { recordRows: new Map(), mediaRows: new Map(), allowRemoteLookup: true };
+    remote.queryLog.length = 0;
+    const records = await RemoteWorkspace._syncRecords(remoteTeamId, "coach", [], [], {
+      allowRemoteLookup: false, referenceContext,
+    });
+    assert.equal(records.pushed, 1);
+    assert.equal(referenceContext.recordRows.get(playerRef)?.kind, "player",
+      "a resposta confirmada do push passa a fazer parte do contexto partilhado");
+    const activity = await RemoteWorkspace._syncActivity(remoteTeamId, "coach", [], referenceContext);
+    const media = await RemoteWorkspace._syncMedia(remoteTeamId, "coach", [], referenceContext);
+    assert.equal(activity.pushed, 1);
+    assert.equal(media.pushed, 1);
+    assert.equal(remote.activityRows[0].entity_ref, playerRef);
+    assert.equal(remote.mediaRows.find((row) => row.title === "Foto do registo novo").subject_ref, playerRef);
+    assert.equal(remote.queryLog.filter((query) => query.table === "workspace_records" && query.action === "select"
+      && query.filters.some(([op, key]) => op === "eq" && key === "id")).length, 0,
+    "atividade e media reutilizam a linha criada no início da mesma passagem, inclusive em full refresh");
+  });
+});
+
 test("referências em snapshot recusam equipa, tipo e eliminação incorretos", async () => {
   const ref = "89000000-0000-4000-8000-000000000021";
   for (const row of [

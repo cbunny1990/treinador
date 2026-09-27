@@ -1443,6 +1443,7 @@ const RemoteWorkspace = {
         }
         await this._ackPushedRecord(store, local, saved, payload, remoteTeamId);
         remoteMap.set(saved.id, saved);
+        options.referenceContext?.recordRows?.set(saved.id, saved);
         result.pushed++;
       }
     }
@@ -1687,6 +1688,7 @@ const RemoteWorkspace = {
           remote_team_id: remoteTeamId,
         }, { remote: true });
         remoteMap.set(saved.id, saved);
+        referenceContext.mediaRows?.set(saved.id, saved);
         result.pushed++;
       } else if (local.sync_dirty) {
         let expected;
@@ -1889,6 +1891,7 @@ const RemoteWorkspace = {
       }
       await this._ackPushedRecord("media_items", local, saved, {}, remoteTeamId);
       remoteMap.set(saved.id, saved);
+      referenceContext.mediaRows?.set(saved.id, saved);
       result.pushed++;
     }
 
@@ -2259,12 +2262,13 @@ const RemoteWorkspace = {
     const referenceContext = {
       recordRows: new Map(snapshots.records.map((row) => [row.id, row])),
       mediaRows: new Map(snapshots.media.map((row) => [row.id, row])),
-      // Incremental snapshots omit unchanged remote rows, so a UUID cache miss
-      // must retain the exact team/kind/deletion-scoped lookup as a fallback.
-      allowRemoteLookup: Boolean(snapshots.recordsSince),
+      // A miss can be a record created earlier in this sync or an unchanged row
+      // omitted from an incremental snapshot; retain the scoped lookup fallback.
+      allowRemoteLookup: true,
     };
     const recordResult = await this._syncRecords(remoteTeamId, session.user.id, snapshots.records, snapshots.media, {
       allowRemoteLookup: Boolean(snapshots.recordsSince),
+      referenceContext,
     });
     const activityResult = await this._syncActivity(remoteTeamId, session.user.id, snapshots.activity, referenceContext);
     const mediaResult = await this._syncMedia(remoteTeamId, session.user.id, snapshots.media, referenceContext);
