@@ -1076,8 +1076,13 @@ test("editar documento remoto preserva identidade e versão de sincronização",
 
 
 test("calendário e página de jogo preservam preparação estruturada", async ({ page }) => {
+  const gameDate = await page.evaluate(() => {
+    const date = new Date();
+    date.setDate(date.getDate() - 2);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  });
   await page.goto("/#/equipa/jogo/novo");
-  await page.getByLabel("Data").fill("2026-09-26");
+  await page.getByLabel("Data").fill(gameDate);
   await page.getByLabel("Hora do jogo").fill("10:00");
   await page.getByLabel("Adversário").fill("Teste E2E");
   await page.getByLabel("Casa / Fora").selectOption("fora");
@@ -1115,9 +1120,10 @@ test("calendário e página de jogo preservam preparação estruturada", async (
   expect(stored.post_game.opponent_observation.adversario_pontos_fortes).toEqual(["Pressão coordenada", "Avançado rápido"]);
   expect(stored.post_game.opponent_observation.adversario_vulnerabilidades).toEqual(["Espaço nas costas"]);
   expect(stored.hora_saida).toBe("08:30");
-  expect(stored.external_key).toContain("2026-09-26");
+  expect(stored.external_key).toContain(gameDate);
 
   await page.goto("/#/calendario");
+  await page.getByRole("link", { name: "6 semanas anteriores" }).click();
   await expect(page.getByText("Jogo vs Teste E2E")).toBeVisible();
 });
 
