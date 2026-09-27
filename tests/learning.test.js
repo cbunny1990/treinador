@@ -24,3 +24,25 @@ test("visibilidade, agrupamento e progresso", () => {
   assert.deepEqual(L.progress(rows),{seen:1,total:2});
   assert.deepEqual(L.BLOCKS.map(b=>b.id),["jogador","ensinar","treinador"]);
 });
+
+test("semana atual",()=>{
+  const w=[{week_no:1,starts_on:"2026-09-07"},{week_no:2,starts_on:"2026-09-14"},{week_no:3,starts_on:"2026-09-21"}];
+  assert.equal(L.currentWeek(w,"2026-09-01").week_no,1);
+  assert.equal(L.currentWeek(w,"2026-09-16").week_no,2);
+  assert.equal(L.currentWeek(w,"2026-09-20").week_no,2);
+  assert.equal(L.currentWeek(w,"2027-01-01").week_no,3);
+  assert.equal(L.currentWeek([],"2026-09-16"),null);
+});
+test("agrupar por bloco",()=>{
+  const g=L.groupWeeksByBlock([{week_no:3,block_no:2,block_title:"B"},{week_no:1,block_no:1,block_title:"A"},{week_no:2,block_no:1,block_title:"A"}]);
+  assert.deepEqual(g.map(b=>[b.block_no,b.weeks.map(w=>w.week_no)]),[[1,[1,2]],[2,[3]]]);
+});
+test("filtros da biblioteca",()=>{
+  const s=[{library_code:"T02",status:"aprovado",pillars:["tecnica"],season_block:2,focus:"drible"},
+           {library_code:"T01",status:"aprovado",pillars:["tatica"],season_block:1,focus:"jogo"},
+           {library_code:"T03",status:"proposto",pillars:["tecnica"],season_block:2,focus:"drible"}];
+  assert.deepEqual(L.filterLibrary(s,{}).map(x=>x.library_code),["T01","T02"]);
+  assert.deepEqual(L.filterLibrary(s,{pillar:"tecnica"}).map(x=>x.library_code),["T02"]);
+  assert.deepEqual(L.filterLibrary(s,{block:1}).map(x=>x.library_code),["T01"]);
+  assert.deepEqual(L.focuses(s),["drible","jogo"]);
+});

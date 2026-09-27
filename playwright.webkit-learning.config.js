@@ -1,23 +1,25 @@
 "use strict";
 
 const { defineConfig } = require("@playwright/test");
-const testPort = process.env.VISION_TEST_PORT || "18765";
 
 module.exports = defineConfig({
   testDir: "./tests/e2e",
-  testIgnore: ["tests/e2e/static_subpath.spec.js"],
+  testMatch: "learning.spec.js",
   timeout: 30000,
   workers: 1,
   use: {
-    baseURL: `http://127.0.0.1:${testPort}`,
-    channel: "chrome",
+    browserName: "webkit",
+    baseURL: "http://127.0.0.1:18867",
     viewport: { width: 390, height: 844 },
-    serviceWorkers: "allow",
+    isMobile: true,
+    hasTouch: true,
+    serviceWorkers: "block",
   },
   webServer: {
     command: "node scripts/test-server.mjs",
-    url: `http://127.0.0.1:${testPort}`,
+    url: "http://127.0.0.1:18867",
     cwd: __dirname,
     reuseExistingServer: false,
+    env: { VISION_TEST_PORT: "18867" },
   },
 });
