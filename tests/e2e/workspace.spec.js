@@ -1503,6 +1503,8 @@ test("conflito bloqueado orienta para a equipa e liga ao registo local sem trans
   await expect(page.locator('[data-conflict-card="match-blocked"] [data-conflict-local-link]')).toHaveAttribute("href", "#/equipa/jogo/12");
   await expect(page.locator('[data-conflict-card="training-blocked"] [data-conflict-local-link]')).toHaveAttribute("href", "#/treinos/4");
   await expect(page.locator('[data-conflict-card="training-blocked"]')).not.toContainText("Abrir seleção do workspace");
+  await expect(page.locator('[data-conflict-card="training-blocked"]')).toContainText("A UUID do registo de origem não pertence ao workspace selecionado");
+  await expect(page.locator('[data-conflict-card="training-blocked"]')).not.toContainText("atividade");
   await expect(page.locator('[data-conflict-card="media-blocked"] [data-conflict-local-link]')).toHaveAttribute("href", "#/media/9/editar");
   await expect(page.locator('[data-conflict-card="match-blocked"] [data-conflict-reason]')).toHaveText("subject_other_team");
   await expect(page.locator('[data-conflict-card="unknown-memory"] [data-conflict-next-step]')).toContainText("invalid_subject_id");
