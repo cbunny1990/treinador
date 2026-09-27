@@ -31,6 +31,7 @@ Cada exercício mantém os campos existentes (`fase`, `organizacao`, `regras`, `
 - `material`: lista de objetos `{ "item": "cones", "qtd": 4 }`;
 - `preparacao`: lista numerada de 2 a 4 ações para montar o espaço;
 - `passos`: lista numerada de 3 a 6 ações para jogar;
+- `mais_criancas` (opcional): uma frase curta para integrar a 9.ª e a 10.ª crianças sem criar uma fila;
 - `diagrama`: posições e movimentos para o desenho automático.
 
 Exemplo de `diagrama`:

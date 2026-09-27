@@ -38,6 +38,21 @@ test("treino v2: nível, material, preparação, passo a passo e desenho",()=>{
   assert.match(h,/learning-diagram-caption[^>]*>Todos conduzem &lt;script&gt; dentro do quadrado\./);
   assert.doesNotMatch(h,/<script>/);
 });
+test("legenda do desenho fica fiel à jogada e não repete a legenda de símbolos",()=>{
+  const h=UI.renderSession({title:"Passe",library_code:"T03",exercises:[{fase:"Parte principal",organizacao:"A equipa espera no mesmo espaço atrás dos cones.",passos:["A1 conduz até ao espaço livre.","A1 passa ao A2."],
+    diagrama:{campo:{largura:12,comprimento:12},elementos:[{tipo:"jogador_a",x:20,y:50},{tipo:"bola",x:22,y:50}],setas:[],legenda:"A1 conduz até ao espaço livre e passa ao A2."}}]});
+  const outsideSvg=h.replace(/<svg[\s\S]*?<\/svg>/,"" );
+  assert.match(outsideSvg,/A1 conduz até ao espaço livre e passa ao A2\./);
+  assert.doesNotMatch(outsideSvg,/▲ cone;/);
+});
+test("exercício com passos não repete organização e mostra nota para mais crianças",()=>{
+  const modern=UI.renderSession({title:"Passe",exercises:[{fase:"Parte principal",organizacao:"Organização longa que duplica os passos.",espaco:"12 x 12 m",jogadores:"8",duracao_min:12,
+    mais_criancas:"Põe uma criança em cada canto livre e roda após duas jogadas.",passos:["A1 passa a A2.","A2 devolve a bola."],material:[],preparacao:[],diagrama:{campo:{largura:12,comprimento:12},elementos:[{tipo:"jogador_a",x:20,y:50}],setas:[],legenda:"A1 passa a A2."}}]});
+  assert.doesNotMatch(modern,/Organização longa que duplica os passos/);
+  assert.match(modern.replace(/<[^>]+>/g,""),/Com mais crianças: Põe uma criança em cada canto livre e roda após duas jogadas\./);
+  const legacy=UI.renderSession({title:"Antigo",exercises:[{fase:"Aquecimento",organizacao:"Organização antiga sem lista de passos."}]});
+  assert.match(legacy,/Organização antiga sem lista de passos\./);
+});
 test("texto da base de dados é escapado também em atributos HTML",()=>{
   const h=UI.renderModule({slug:"tecnica",title:'Técnica "<script>',age_group_code:"sub8"},null,[
     {id:'x" onmouseover="alert(1)',kind:"ver",media:"video",status:"aprovado",broken:false,title:'Vídeo "<script>',url:"https://youtu.be/abc",source:"<b>fonte</b>",notes:'</textarea><script>alert(1)</script>'}
