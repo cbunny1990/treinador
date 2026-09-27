@@ -19,9 +19,9 @@ async function withDb(fn) {
       select set_config('request.jwt.claim.role','service_role',false);`);
     const migration = path.join(__dirname, "..", "supabase", "migrations", "20260926120000_learning_tables.sql");
     if (fs.existsSync(migration)) await db.exec(fs.readFileSync(migration, "utf8"));
-    const seasonMigration = path.join(__dirname, "..", "supabase", "migrations", "20260927100000_learning_season_plan.sql");
+    const seasonMigration = path.join(__dirname, "..", "supabase", "migrations", "20260926233609_learning_season_plan.sql");
     if (fs.existsSync(seasonMigration)) await db.exec(fs.readFileSync(seasonMigration, "utf8"));
-    const ownerLinksMigration = path.join(__dirname, "..", "supabase", "migrations", "20260927101000_learning_plan_owner_links.sql");
+    const ownerLinksMigration = path.join(__dirname, "..", "supabase", "migrations", "20260927013751_learning_plan_owner_links.sql");
     if (fs.existsSync(ownerLinksMigration)) await db.exec(fs.readFileSync(ownerLinksMigration, "utf8"));
     await fn(db);
   } finally { await db.close(); }

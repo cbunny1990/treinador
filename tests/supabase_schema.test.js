@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const migrationDir = path.join(__dirname, "..", "supabase", "migrations");
-const learningSeasonSql = fs.readFileSync(path.join(migrationDir, "20260927100000_learning_season_plan.sql"), "utf8");
+const learningSeasonSql = fs.readFileSync(path.join(migrationDir, "20260926233609_learning_season_plan.sql"), "utf8");
 const sql = fs.readdirSync(migrationDir)
   .filter((name) => name.endsWith(".sql"))
   .sort()

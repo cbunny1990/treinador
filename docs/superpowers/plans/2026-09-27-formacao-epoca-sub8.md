@@ -22,7 +22,7 @@
 
 ### Task 1: Migração + testes PGlite
 
-**Files:** Create `supabase/migrations/20260927100000_learning_season_plan.sql`, Modify `tests/learning_migrations.pglite.test.js`, Modify `tests/supabase_schema.test.js`.
+**Files:** Create `supabase/migrations/20260926233609_learning_season_plan.sql`, Modify `tests/learning_migrations.pglite.test.js`, Modify `tests/supabase_schema.test.js`.
 
 - [ ] Testes (acrescentar ao ficheiro PGlite existente, reutilizando `withDb`/`asUser`):
 
