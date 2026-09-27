@@ -158,8 +158,28 @@ test("duas PWA sincronizam trabalho offline, expõem conflito concorrente e não
       await DB.modificar("workspace_documents", row.id, (current) => ({ ...current, body: JSON.stringify(updated) }));
     }, weeklyPlanSyncId);
     await mobileContext.setOffline(false);
-    const phoneWeeklyPush = await phone.evaluate(async () => RemoteWorkspace.syncNow());
-    expect(phoneWeeklyPush.conflicts).toEqual([]);
+    await expect.poll(async () => {
+      const local = await phone.evaluate(async (syncId) => {
+        const rows = (await DB.listar("workspace_documents")).filter((item) => item.sync_id === syncId);
+        const conflicts = (await RemoteWorkspace.status()).conflicts
+          .filter((item) => item.sync_id === syncId);
+        return { count: rows.length, dirty: rows[0]?.sync_dirty, conflicts };
+      }, weeklyPlanSyncId);
+      const { data, error } = await admin.from("workspace_records")
+        .select("id,payload,deleted_at").eq("team_id", teamId).eq("id", weeklyPlanSyncId);
+      if (error) throw error;
+      return {
+        ...local,
+        remoteCount: data.length,
+        remoteId: data[0]?.id,
+        remoteObjective: data[0]?.payload?.body ? JSON.parse(data[0].payload.body).objective : null,
+        remoteDeleted: data[0]?.deleted_at || null,
+      };
+    }, { timeout: 25_000 }).toEqual({
+      count: 1, dirty: false, conflicts: [], remoteCount: 1,
+      remoteId: weeklyPlanSyncId, remoteObjective: "Foco semanal editado no telemóvel",
+      remoteDeleted: null,
+    });
     const weeklyPlanOnDesktop = await page.evaluate(async (syncId) => {
       const result = await RemoteWorkspace.syncNow();
       const rows = (await DB.listar("workspace_documents")).filter((item) => item.sync_id === syncId);
