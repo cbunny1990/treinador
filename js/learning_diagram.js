@@ -46,14 +46,19 @@
     const present=new Set(elements.map(item=>item.tipo));
     arrows.forEach(item=>present.add(item.tipo));
     const used=Object.keys(TYPES).filter(type=>present.has(type));
+    const numbered=arrows.some(item=>Number.isInteger(item.passo)&&item.passo>0);
+    if(numbered)used.push("step");
     const columns=3,rows=Math.ceil(used.length/columns),rowHeight=19,fieldBottom=fieldHeight+10;
     const legendTop=fieldBottom+19,svgHeight=legendTop+rows*rowHeight+5;
     const legend=used.map((type,index)=>{
       const col=index%columns,row=Math.floor(index/columns),x=14+col*108,y=legendTop+row*rowHeight;
-      const symbol=TYPES[type].kind==="element"
-        ?shape(type,x+7,y-3,.72)
-        :`<path d="M ${x} ${y-3} L ${x+17} ${y-3}" fill="none" ${Object.entries(arrowStyle[type]).map(([k,v])=>`${k}="${v}"`).join(" ")} marker-end="url(#learning-arrow)"/>`;
-      return `<g data-legend="${type}">${symbol}<text x="${x+22}" y="${y}" font-size="11" fill="#111827">${TYPES[type].name}</text></g>`;
+      const symbol=type==="step"
+        ?`<circle cx="${x+8}" cy="${y-4}" r="7" fill="#fff" stroke="#111827"/><text x="${x+8}" y="${y-1}" text-anchor="middle" font-size="8" fill="#111827">1</text>`
+        :TYPES[type].kind==="element"
+          ?shape(type,x+7,y-3,.72)
+          :`<path d="M ${x} ${y-3} L ${x+17} ${y-3}" fill="none" ${Object.entries(arrowStyle[type]).map(([k,v])=>`${k}="${v}"`).join(" ")} marker-end="url(#learning-arrow)"/>`;
+      const name=type==="step"?"N.º = passo a passo":TYPES[type].name;
+      return `<g data-legend="${type}">${symbol}<text x="${x+22}" y="${y}" font-size="11" fill="#111827">${name}</text></g>`;
     }).join("");
     const field=elements.map(item=>{
       const x=xPos(item.x),y=yPos(item.y),label=item.rotulo==null?"":`<text x="${x+8}" y="${y-8}" font-size="10" fill="#fff" stroke="#14532d" stroke-width=".5" paint-order="stroke">${esc(item.rotulo)}</text>`;
