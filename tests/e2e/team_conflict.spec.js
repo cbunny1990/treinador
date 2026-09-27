@@ -40,6 +40,10 @@ test('perfil da equipa mantém a identidade ao editar e o Workspace permite reso
  await expect(review).toContainText('Nome do treinador');
  await expect(review).toContainText('Nome remoto');
  await page.getByRole('button',{name:'Usar versão do workspace remoto'}).click();
+ await page.waitForFunction(async()=>{
+  const team=await DB.obter('teams',DEFAULT_TEAM_ID);
+  return team?.nome==='Nome remoto'&&team.sync_dirty===false&&team.remote_updated_at==='v2';
+ });
  const saved=await page.evaluate(async()=>{const team=await DB.obter('teams',DEFAULT_TEAM_ID);return{
   nome:team.nome,clube:team.clube,sync_id:team.sync_id,sync_dirty:team.sync_dirty,
   remote_updated_at:team.remote_updated_at,base:team._sync_base?.nome};});
