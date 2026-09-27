@@ -1558,8 +1558,11 @@ test("full sync valida atividade e media ligados a registo criado na mesma passa
       sync_id: playerRef, sync_dirty: true, nome: "Atleta novo" });
     await devices[0].criar("activity_items", { team_id: "default", remote_team_id: remoteTeamId,
       sync_dirty: true, actor: "human", action: "linked", summary: "Registo e atividade", entity_type: "player", entity_id: playerRef });
+    const mediaRef = "89000000-0000-4000-8000-000000000032";
     await devices[0].criar("media_items", { team_id: "default", remote_team_id: remoteTeamId,
-      sync_dirty: true, subject_type: "player", subject_id: playerRef, type: "photo", title: "Foto do registo novo" });
+      sync_id: mediaRef, sync_dirty: true, subject_type: "player", subject_id: playerRef, type: "photo", title: "Foto do registo novo" });
+    await devices[0].criar("activity_items", { team_id: "default", remote_team_id: remoteTeamId,
+      sync_dirty: true, actor: "human", action: "linked", summary: "Media associada", entity_type: "media", entity_id: mediaRef });
 
     const referenceContext = { recordRows: new Map(), mediaRows: new Map(), allowRemoteLookup: true };
     remote.queryLog.length = 0;
@@ -1569,11 +1572,12 @@ test("full sync valida atividade e media ligados a registo criado na mesma passa
     assert.equal(records.pushed, 1);
     assert.equal(referenceContext.recordRows.get(playerRef)?.kind, "player",
       "a resposta confirmada do push passa a fazer parte do contexto partilhado");
-    const activity = await RemoteWorkspace._syncActivity(remoteTeamId, "coach", [], referenceContext);
     const media = await RemoteWorkspace._syncMedia(remoteTeamId, "coach", [], referenceContext);
-    assert.equal(activity.pushed, 1);
+    const activity = await RemoteWorkspace._syncActivity(remoteTeamId, "coach", [], referenceContext);
+    assert.equal(activity.pushed, 2);
     assert.equal(media.pushed, 1);
     assert.equal(remote.activityRows[0].entity_ref, playerRef);
+    assert.equal(remote.activityRows.find((row) => row.summary === "Media associada").entity_ref, mediaRef);
     assert.equal(remote.mediaRows.find((row) => row.title === "Foto do registo novo").subject_ref, playerRef);
     assert.equal(remote.queryLog.filter((query) => query.table === "workspace_records" && query.action === "select"
       && query.filters.some(([op, key]) => op === "eq" && key === "id")).length, 0,
@@ -3088,7 +3092,7 @@ test("sync lê em paralelo os snapshots independentes antes de reconciliar regis
     assert.deepEqual(calls[0], "tombstones");
     assert.equal(readsStartedBeforeTeamDone, 3, "os três snapshots iniciam enquanto a equipa ainda é lida");
     assert.deepEqual(calls.slice(1, 5).sort(), ["read:activity_log", "read:media_assets", "read:workspace_records", "team"]);
-    assert.deepEqual(calls.slice(5), ["records", "activity", "media"]);
+    assert.deepEqual(calls.slice(5), ["records", "media", "activity"]);
     assert.ok([...localListCounts.values()].length > 2);
     assert.ok([...localListCounts.values()].every((count) => count === 1), "cada store local só é varrido uma vez para o snapshot, sem nova passagem de getAll para cursores");
     assert.deepEqual({ pushed: result.pushed, pulled: result.pulled, deleted: result.deleted }, { pushed: 6, pulled: 4, deleted: 1 });

@@ -2270,9 +2270,11 @@ const RemoteWorkspace = {
       allowRemoteLookup: Boolean(snapshots.recordsSince),
       referenceContext,
     });
-    const activityResult = await this._syncActivity(remoteTeamId, session.user.id, snapshots.activity, referenceContext);
     const mediaResult = await this._syncMedia(remoteTeamId, session.user.id, snapshots.media, referenceContext);
-    const parts = [tombstoneResult, teamResult, recordResult, activityResult, mediaResult];
+    // Activity may point at media created above, so reconcile it after both
+    // records and media have added their confirmed rows to the shared context.
+    const activityResult = await this._syncActivity(remoteTeamId, session.user.id, snapshots.activity, referenceContext);
+    const parts = [tombstoneResult, teamResult, recordResult, mediaResult, activityResult];
 
     for (const part of parts) {
       result.pushed += part.pushed || 0;
