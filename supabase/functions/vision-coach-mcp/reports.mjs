@@ -46,8 +46,8 @@ function validDate(value){return value==null||/^\d{4}-\d{2}-\d{2}$/.test(value);
 function approvedTrainingImage(exercise,ref){
  if(exercise.visual_removed)return null;
  const original=Visuals.approved.find(x=>x.key===exercise.external_key);
- const approvedAsset=original&&!exercise.visual_storage_path&&(!exercise.visual_url||exercise.visual_url===original.src)&&(!exercise.visual_image||exercise.visual_image.sha256===original.sha256)?original:null;
- const image=exercise.visual_image||approvedAsset;
+ const approvedAsset=original&&!exercise.visual_storage_path&&(!exercise.visual_url||exercise.visual_url===original.src)?original:null;
+ const image=approvedAsset||exercise.visual_image;
  if(!image)return null;
  return{exercise_ref:ref||null,sha256:image.sha256||null,width:image.width??null,height:image.height??null,source:image.source||(exercise.visual_storage_path?'private_storage':approvedAsset?'approved_asset':null),...(approvedAsset?{asset_path:approvedAsset.src}:{})};
 }

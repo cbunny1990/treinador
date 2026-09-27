@@ -118,6 +118,9 @@ test('training report MCP keeps legacy fallback and saved exercise snapshots wit
  assert.equal(historical.planned_blocks[0].content_source,'saved_snapshot');
  assert.equal(historical.planned_blocks[0].approved_image.sha256,'b9dcf40f03a6bc7f1ac51874b0880858d7cc99e7908c394e1262174792b08c27');
  assert.equal(historical.planned_blocks[0].approved_image.asset_path,block.exercise_snapshot.visual.url);
+ block.exercise_snapshot.visual.image={sha256:'outdated-metadata-sha',width:10,height:10};
+ historical=await api.executeReportTool(admin,c,'get_training_report',{id:trainingId});
+ assert.equal(historical.planned_blocks[0].approved_image.sha256,'b9dcf40f03a6bc7f1ac51874b0880858d7cc99e7908c394e1262174792b08c27');
  rows[1].deleted_at='2026-09-25T10:00:00Z';
  historical=await api.executeReportTool(admin,c,'get_training_report',{id:trainingId});
  assert.equal(historical.planned_blocks[0].exercise_missing,true);
