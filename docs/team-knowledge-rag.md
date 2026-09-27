@@ -1,5 +1,7 @@
 # Vision Coach — pesquisa RAG da equipa
 
+Atualização de código de 27/09/2026: os relatórios individuais pós-jogo escritos pelo treinador são fontes semânticas por UUID de jogo e atleta. Indexam-se apenas `observation`, `positives` e `to_improve` da versão atual com estado `reported`; os estados `not_observed` e `pending` e o histórico de revisões não entram no índice. O filtro de texto sensível e a redação dos nomes conhecidos aplicam-se antes do provider. `get_match_report` fornece também a leitura estruturada dos relatórios e dos atletas por preencher, mesmo sem provider. Ao ativar o provider num ambiente com chunks antigos, reindexar a equipa pela operação autorizada para incluir estas fontes; a atualização de uma origem substitui os chunks dessa origem sem duplicação. Esta alteração de código ainda não implica ativação do provider nem processamento da fila remota.
+
 ## Estado do branch e do projeto remoto (26/09/2026)
 
 O branch local contém pesquisa híbrida estruturada + semântica. A leitura remota confirma projeto `ACTIVE_HEALTHY`, 27 registos de migrations, extensão `vector` e tabelas de chunks/fila; `vision-coach-mcp` está na v8 e `head-coach-gateway` na v2. Uma query read-only devolveu 34 fontes na fila, 0 chunks indexados e nenhuma lease ativa. Não foram consultados valores de secrets nem executado qualquer pedido ao provider.

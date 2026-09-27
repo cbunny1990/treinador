@@ -44,6 +44,19 @@ test('match report MCP is read-only and exposes registered evidence with provena
  assert.equal(out.video_evidence[0].seconds,4);assert.equal(out.missing_data.events,false);assert.equal(f.calls.length,0);
 });
 test('match report MCP lists independent exits and entries in the recorded chronology',async()=>{const f=fixture();f.match.payload.visual_match.events.push({id:'exit-1',type:'exit',at_ms:40000,out_ref:refs[0]},{id:'entry-1',type:'enter',at_ms:50000,in_ref:refs[0],role:'gr'});const out=await api.executeReportTool(f.admin,c,'get_match_report',{id:MATCH,report_type:'post_match'});assert.deepEqual(out.usage.movements.map(x=>[x.type,x.at_ms]),[['substitute',30000],['exit',40000],['enter',50000]]);assert.equal(out.usage.movements[1].out_ref,refs[0]);assert.equal(out.usage.movements[2].role,'gr');assert.equal(out.usage.players.find(x=>x.ref===refs[0]).total_ms,50000);assert.equal(f.calls.length,0);});
+test('post-match MCP report includes individual coach reports without inventing missing observations',async()=>{
+ const f=fixture();f.match.payload.callup.player_ids=refs.slice(0,3);
+ f.match.payload.post_game.player_reports={schema:'vision-match-player-reports@1',revision:3,items:[
+  {player_ref:refs[0],status:'reported',observation:'Criou apoio após o passe.',positives:'Boa oferta de linha curta.',to_improve:'Aproximar mais cedo.',updated_at:'2026-09-20T12:00:00Z',history:[{status:'reported',observation:'Observação anterior.'}]},
+  {player_ref:refs[1],status:'not_observed',observation:'',positives:'',to_improve:'',history:[]}
+ ]};
+ const out=await api.executeReportTool(f.admin,c,'get_match_report',{id:MATCH,report_type:'post_match'});
+ assert.equal(out.player_reports.revision,3);assert.deepEqual(out.player_reports.items.map(item=>item.status),['reported','not_observed']);
+ assert.equal(out.player_reports.items[0].player_ref,refs[0]);assert.equal(out.player_reports.items[0].history[0].observation,'Observação anterior.');
+ assert.deepEqual(out.player_reports.pending_player_refs,[refs[2]]);assert.equal(out.missing_data.player_reports,true);
+ const sheet=await api.executeReportTool(f.admin,c,'get_match_report',{id:MATCH,report_type:'match_sheet'});
+ assert.equal(Object.hasOwn(sheet,'player_reports'),false);assert.equal(f.calls.length,0);
+});
 test('match report MCP separates opponent observations from the pre-game sheet and identifies legacy provenance',async()=>{
  const f=fixture();f.match.payload.pre_game={adversario_sistema:'1-2-1',adversario_notas:'Nota antiga'};
  const legacy=await api.executeReportTool(f.admin,c,'get_match_report',{id:MATCH,report_type:'post_match'});

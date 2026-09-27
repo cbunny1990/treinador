@@ -125,6 +125,14 @@ function sourceFields(row){
       const type=key==='interpretation'?'interpretation':key==='hypotheses'?'hypothesis':key==='decisions'||key==='next_priority'?'coach_decision':'coach_observation';
       add(`post_game.analysis.fields.${key}`,label,values[key],type,{category:'match_analysis',source_date:date,match_ref:row.id});
     }
+    for(const [i,report] of arr(obj(post.player_reports).items).entries()){
+      const playerRef=safeRef(report?.player_ref);
+      if(report?.status!=='reported'||!playerRef)continue;
+      const meta={category:'player_match_report',source_date:date,match_ref:row.id,player_ref:playerRef};
+      add(`post_game.player_reports.items[${i}].observation`,'Observação individual pós-jogo',report.observation,'coach_observation',meta);
+      add(`post_game.player_reports.items[${i}].positives`,'Aspetos positivos observados no atleta',report.positives,'coach_observation',meta);
+      add(`post_game.player_reports.items[${i}].to_improve`,'Aspetos a melhorar observados no atleta',report.to_improve,'coach_observation',meta);
+    }
     const conceded=obj(analysis.goals_conceded),events=arr(obj(p.match_events).events);
     const actualGoals=new Set(events.filter(e=>e.type==='goal_against').map(e=>String(e.id)));
     for(const [id,note] of Object.entries(conceded))if(actualGoals.has(String(id)))add(`post_game.analysis.goals_conceded.${id}`,'Hipótese sobre golo sofrido',note,'hypothesis',{category:'goal_against',source_date:date,match_ref:row.id,event_ref:String(id)});
@@ -230,7 +238,8 @@ function sourceFields(row){
 export function chunkRecord(row,{maxChars=1800,overlap=220,redactNames=[],ageGroup=null}={}){
   if(!row||!UUID.test(String(row.id||''))||!UUID.test(String(row.team_id||''))||!KINDS.has(row.kind))return [];
   const result=[];
-  const namesToRedact=redactionTerms(redactNames);
+  const matchRoster=row.kind==='match'?arr(obj(row.payload?.visual_match).roster).map(player=>player?.name):[];
+  const namesToRedact=redactionTerms([...arr(redactNames),...matchRoster]);
   for(const field of sourceFields(row)){
     if(containsSensitivePersonalText(`${field.label}\n${field.text}`))continue;
     let safeText=field.text;
