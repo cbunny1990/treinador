@@ -33,3 +33,23 @@ test("texto da base de dados é escapado também em atributos HTML",()=>{
   assert.match(h,/data-id="x&amp;quot;|data-id="x&quot;/);
   assert.match(h,/&lt;\/textarea&gt;/);
 });
+test("plano: blocos, esta semana, pausas e links",()=>{
+  const weeks=[{week_no:1,starts_on:"2026-09-07",block_no:1,block_title:"Adaptação",objective:"Conhecer",is_break:false,session_a_id:"s1",session_b_id:"s2"},
+               {week_no:2,starts_on:"2026-12-21",block_no:2,block_title:"Condução",objective:"Natal",is_break:true}];
+  const h=UI.renderSeasonPlan({title:"Época 2026/27"},weeks,{s1:{id:"s1",library_code:"T01",title:"<i>A</i>"},s2:{id:"s2",library_code:"T02",title:"B"}},"2026-09-09");
+  assert.match(h,/Adaptação[\s\S]*Condução/);
+  assert.match(h,/Esta semana/);
+  assert.match(h,/learning-break/);
+  assert.match(h,/href="#\/formacao\/treino\/s1"/);
+  assert.match(h,/&lt;i&gt;A&lt;\/i&gt;/);
+  assert.match(UI.renderSeasonPlan(null,[],{},"2026-09-09"),/Ainda não há plano da época aprovado/);
+});
+test("biblioteca: filtros e links",()=>{
+  const s=[{id:"s1",library_code:"T01",title:"Rondos",status:"aprovado",pillars:["tecnica"],season_block:1,focus:"passe",duration_min:60}];
+  const h=UI.renderLibrary({code:"sub8",name:"Sub-8"},s,{},["passe"]);
+  assert.match(h,/T01/);assert.match(h,/href="#\/formacao\/treino\/s1"/);assert.match(h,/passe/);
+});
+test("escalão: cartões de plano e biblioteca",()=>{
+  const h=UI.renderAgeGroup({code:"sub8",name:"Sub-8"},[],{});
+  assert.match(h,/href="#\/formacao\/plano\/sub8"/);assert.match(h,/href="#\/formacao\/biblioteca\/sub8"/);
+});
