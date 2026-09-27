@@ -48,26 +48,30 @@
     const used=Object.keys(TYPES).filter(type=>present.has(type));
     const numbered=arrows.some(item=>Number.isInteger(item.passo)&&item.passo>0);
     if(numbered)used.push("step");
-    const columns=3,rows=Math.ceil(used.length/columns),rowHeight=19,fieldBottom=fieldHeight+10;
+    const columns=2,rows=Math.ceil(used.length/columns),rowHeight=21,fieldBottom=fieldHeight+10;
     const legendTop=fieldBottom+19,svgHeight=legendTop+rows*rowHeight+5;
     const legend=used.map((type,index)=>{
-      const col=index%columns,row=Math.floor(index/columns),x=14+col*108,y=legendTop+row*rowHeight;
+      const col=index%columns,row=Math.floor(index/columns),x=14+col*158,y=legendTop+row*rowHeight;
       const symbol=type==="step"
-        ?`<circle cx="${x+8}" cy="${y-4}" r="7" fill="#fff" stroke="#111827"/><text x="${x+8}" y="${y-1}" text-anchor="middle" font-size="8" fill="#111827">1</text>`
+        ?`<circle cx="${x+9}" cy="${y-5}" r="7" fill="#fff" stroke="#111827"/><text x="${x+9}" y="${y-2}" text-anchor="middle" font-size="8" fill="#111827">1</text>`
         :TYPES[type].kind==="element"
-          ?shape(type,x+7,y-3,.72)
-          :`<path d="M ${x} ${y-3} L ${x+17} ${y-3}" fill="none" ${Object.entries(arrowStyle[type]).map(([k,v])=>`${k}="${v}"`).join(" ")} marker-end="url(#learning-arrow)"/>`;
-      const name=type==="step"?"N.º = passo a passo":TYPES[type].name;
-      return `<g data-legend="${type}">${symbol}<text x="${x+22}" y="${y}" font-size="11" fill="#111827">${name}</text></g>`;
+          ?shape(type,x+10,y-5,.72)
+          :`<path d="M ${x+2} ${y-5} L ${x+20} ${y-5}" fill="none" ${Object.entries(arrowStyle[type]).map(([k,v])=>`${k}="${v}"`).join(" ")} marker-end="url(#learning-arrow)"/>`;
+      const name=type==="step"?"N.º = passo":TYPES[type].name;
+      return `<g data-legend="${type}"><rect x="${x}" y="${y-15}" width="24" height="16" rx="2" fill="#3f9b4a"/>${symbol}<text data-legend-label="${type}" x="${x+30}" y="${y-2}" font-size="10" fill="#111827">${name}</text></g>`;
     }).join("");
     const field=elements.map(item=>{
-      const x=xPos(item.x),y=yPos(item.y),label=item.rotulo==null?"":`<text x="${x+8}" y="${y-8}" font-size="10" fill="#fff" stroke="#14532d" stroke-width=".5" paint-order="stroke">${esc(item.rotulo)}</text>`;
+      const x=xPos(item.x),y=yPos(item.y),fullLabel=item.rotulo==null?"":String(item.rotulo),shortLabel=fullLabel.length>12?`${fullLabel.slice(0,11)}…`:fullLabel;
+      const isTeamB=item.tipo==="jogador_b",labelX=isTeamB?x-8:x+8,labelY=isTeamB?y+16:y-8,labelAnchor=isTeamB?"end":"start";
+      const label=fullLabel?`<text x="${labelX}" y="${labelY}" text-anchor="${labelAnchor}" font-size="10" fill="#fff" stroke="#3f9b4a" stroke-width="3" stroke-linejoin="round" paint-order="stroke" aria-label="${esc(fullLabel)}">${esc(shortLabel)}</text>`:"";
       return `<g data-el="${item.tipo}">${shape(item.tipo,x,y)}${label}</g>`;
     }).join("");
     const paths=arrows.map(item=>{
       const x1=xPos(item.de[0]),y1=yPos(item.de[1]),x2=xPos(item.para[0]),y2=yPos(item.para[1]);
       const style=Object.entries(arrowStyle[item.tipo]).map(([k,v])=>`${k}="${v}"`).join(" ");
-      const step=Number.isInteger(item.passo)&&item.passo>0?`<g data-step="${item.passo}"><circle cx="${(x1+x2)/2}" cy="${(y1+y2)/2}" r="8" fill="#fff"/><text x="${(x1+x2)/2}" y="${(y1+y2)/2+3}" text-anchor="middle" font-size="10" fill="#111827">${item.passo}</text></g>`:"";
+      const dx=x2-x1,dy=y2-y1,length=Math.hypot(dx,dy),offsetX=length?(-dy/length)*10:0,offsetY=length?(dx/length)*10:10;
+      const stepX=(x1+x2)/2+offsetX,stepY=(y1+y2)/2+offsetY;
+      const step=Number.isInteger(item.passo)&&item.passo>0?`<g data-step="${item.passo}"><circle cx="${stepX}" cy="${stepY}" r="8" fill="#fff"/><text x="${stepX}" y="${stepY+3}" text-anchor="middle" font-size="10" fill="#111827">${item.passo}</text></g>`:"";
       return `<g><path data-arrow="${item.tipo}" d="M ${x1} ${y1} L ${x2} ${y2}" fill="none" ${style} marker-end="url(#learning-arrow)"/>${step}</g>`;
     }).join("");
     const cones=elements.filter(item=>item.tipo==="cone").length,players=elements.filter(item=>item.tipo==="jogador_a"||item.tipo==="jogador_b").length;
