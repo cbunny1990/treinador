@@ -1051,7 +1051,9 @@ const RemoteWorkspace = {
         blocks.push({
           ...block,
           exercise_ref: await this._subjectRemoteRef("exercise", block.exercise_ref, remoteTeamId, {
-            knownRemoteRows: knownRowsFor("exercise"), allowRemoteLookup: referenceContext.allowRemoteLookup,
+            // A plan or completed session keeps its exercise UUID after the library entry is removed.
+            // The UUID must still resolve to an exercise in this same team; this never restores it.
+            allowDeleted: true, knownRemoteRows: knownRowsFor("exercise"), allowRemoteLookup: referenceContext.allowRemoteLookup,
           }),
         });
       }
