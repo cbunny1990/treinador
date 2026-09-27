@@ -43,6 +43,14 @@ function remoteUuid() {
     return v.toString(16);
   });
 }
+async function remoteStableArchiveUuid(teamId, archiveKey) {
+  const bytes = new TextEncoder().encode(`vision-activity-conflict-archive:${teamId}:${archiveKey}`);
+  const hash = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes)).slice(0, 16);
+  hash[6] = (hash[6] & 15) | 128;
+  hash[8] = (hash[8] & 63) | 128;
+  const hex = [...hash].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 function remoteIsUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ""));
 }
@@ -2388,14 +2396,8 @@ const RemoteWorkspace = {
     const local = await DB.obter("activity_items", review.local_id);
     const stamp = new Date().toISOString();
     const archiveKey = `activity-conflict:${review.sync_id}:${review.local_updated_at || "sem-revisao"}`;
-    const archives = await DB.listar("workspace_documents");
-    let archive = archives.find((item) => item.external_key === archiveKey
-      && item.remote_team_id === review.remote_team_id);
-    if (archive && !remoteValueEqual(JSON.parse(archive.body || "null")?.local, review.local_snapshot)) {
-      throw new Error("O arquivo deste conflito já existe com conteúdo diferente. A atividade local foi preservada.");
-    }
-    if (!archive) {
-      const archiveId = await DB.criar("workspace_documents", {
+    const archiveSyncId = await remoteStableArchiveUuid(review.remote_team_id, archiveKey);
+    const archiveResult = await DB.criarWorkspaceDocumentSeAusente({
         team_id: DEFAULT_TEAM_ID, remote_team_id: review.remote_team_id,
         type: "sync_conflict_archive", title: "Cópia local de atividade em conflito",
         body: JSON.stringify({ schema: "vision-activity-conflict@1", source_sync_id: review.sync_id,
@@ -2403,9 +2405,15 @@ const RemoteWorkspace = {
           decision: "keep_remote", local: review.local_snapshot }, null, 2),
         status: "ready", external_key: archiveKey, created_at: stamp, updated_at: stamp,
         created_by: "human", created_by_label: "Treinador",
-        updated_by: "human", updated_by_label: "Treinador", sync_id: remoteUuid(),
+        updated_by: "human", updated_by_label: "Treinador", sync_id: archiveSyncId,
       });
-      archive = await DB.obter("workspace_documents", archiveId);
+    const archive = await DB.obter("workspace_documents", archiveResult.id);
+    let archiveBody;
+    try { archiveBody = JSON.parse(archive?.body || "null"); } catch (_) {}
+    if (archive?.type !== "sync_conflict_archive" || archive.sync_id !== archiveSyncId
+      || archive.remote_team_id !== review.remote_team_id || archive.external_key !== archiveKey
+      || !remoteValueEqual(archiveBody?.local, review.local_snapshot)) {
+      throw new Error("O arquivo deste conflito tem conteúdo ou equipa diferente. A atividade local foi preservada.");
     }
     const remote = current.remote_snapshot;
     const localEntityId = remote.entity_type && remote.entity_ref != null
