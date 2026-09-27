@@ -99,3 +99,29 @@ for(const width of [390,1440])test(`formulários do jogo não substituem ediçõ
  expect(await page.evaluate(id=>DB.obter('jogos',id).then(row=>row.post_game.conclusoes),id)).toBe('Outra secção atualizada');
  expect(dialogs).toHaveLength(5);
 });
+
+test('jogo de outra equipa não abre nem pode ser alterado ou apagado pelo ID local',async({page})=>{
+ await page.goto('/#/calendario');
+ await page.waitForFunction(()=>typeof DB!=='undefined'&&typeof go==='function');
+ const id=await page.evaluate(async()=>{
+  RemoteWorkspace.scheduleSync=()=>{};
+  return DB.criar('jogos',{team_id:'outra-equipa',sync_id:crypto.randomUUID(),data:'2026-09-27',adversario:'Jogo privado',estado:'concluido'});
+ });
+ const access=await page.evaluate(async id=>{
+  let changeError='',deleteError='';
+  try{await DB.modificar('jogos',id,row=>({...row,adversario:'Alterado'}));}catch(error){changeError=error.message;}
+  try{await DB.apagar('jogos',id);}catch(error){deleteError=error.message;}
+  return {read:await DB.obter('jogos',id),changeError,deleteError,raw:(await DB.listar('jogos')).find(row=>row.id===id)};
+ },id);
+ expect(access.read).toBeUndefined();
+ expect(access.changeError).toContain('outra equipa');
+ expect(access.deleteError).toContain('outra equipa');
+ expect(access.raw.adversario).toBe('Jogo privado');
+ await page.goto('/#/equipa/jogo/'+id);
+ await expect(page).toHaveURL(/#\/equipa$/);
+ await page.goto('/#/equipa/jogo/'+id+'/editar');
+ await expect(page).toHaveURL(/#\/calendario$/);
+ await page.goto('/#/jogo-visual/'+id);
+ await expect(page.getByRole('heading',{name:'Jogo indisponível'})).toBeVisible();
+ await expect(page.getByText('Jogo privado')).toHaveCount(0);
+});

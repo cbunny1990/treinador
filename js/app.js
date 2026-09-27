@@ -788,7 +788,9 @@ async function viewPlayer(id){
 
 async function viewMatchForm(id){
   var team=await HeadCoachMemory.ensureTeam();
-  var match=matchStructure(id?await DB.obter("jogos",id):null);
+  var raw=id?await DB.obter("jogos",id):null;
+  if(id&&!raw)return go("#/calendario");
+  var match=matchStructure(raw);
   var html='<section class="panel hero-main" style="max-width:820px"><form class="form" data-form="match" data-id="'+(id||"")+'">'+(id?'<input type="hidden" name="expected_details" value="'+esc(matchDetailsSnapshot(match,team))+'">':'');
   html+='<div class="form-grid"><label class="field"><span>Data</span><input type="date" name="data" required value="'+esc(match.data||today())+'"></label><label class="field"><span>Hora do jogo</span><input type="time" name="hora" value="'+esc(match.hora)+'"></label></div>';
   html+='<label class="field"><span>Adversário</span><input name="adversario" required value="'+esc(match.adversario)+'"></label>';
