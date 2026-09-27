@@ -19,6 +19,7 @@ O rascunho local inicial é um **modelo baseado nos registos**, identificado com
 Não inventa problemas, métricas ou melhorias. O critério de avaliação começa vazio, para ser definido pelo treinador ou proposto pela IA autorizada.
 O Head Coach externo pode consultar as evidências e rever o rascunho pelo MCP. Essa revisão fica marcada como **Proposta da IA autorizada**; as evidências permanecem as do registo de origem.
 O contexto híbrido preserva referências e datas dos jogos, treinos e excertos usados. O treinador ou Head Coach autorizado ainda tem de editar e justificar a proposta; a app não declara que um princípio melhorou só porque foi trabalhado.
+Um treino passado confirmado pelo treinador sem cronómetro conta como realizado para a etapa de avaliação, mas não como prova de minutos, presenças ou exercícios executados. O uso de exercícios só deriva de blocos efetivamente registados como realizados.
 Não cria exercícios ou imagens, não inicia cronómetros e não marca presenças.
 
 ## Preservação, edição e remoção
