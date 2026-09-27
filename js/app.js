@@ -536,6 +536,19 @@ async function viewTeamDevelopment(){
   html=html.replace('</fieldset><label class="field"><span>Facto observado</span>','</fieldset></details><details class="section" data-goal-analysis><summary>Registar análise e decisão</summary><label class="field"><span>Facto observado</span>');
   html=html.replace('</textarea></label><div class="toolbar"><button class="btn accent" type="submit">Guardar objetivo','</textarea></label></details><div class="toolbar"><button class="btn accent" type="submit">Guardar objetivo');
   html+='<h3>Objetivos guardados</h3><div class="list">'+(goals.length?goals.map(function(d){return compactEvolutionCard(card(d,'goal'));}).join(''):'<div class="empty">Ainda não há objetivos de equipa.</div>')+'</div></div>';
+  function moveEvolutionEditor(kind,label,panel){
+    var start=html.indexOf('<form class="panel form" data-form="'+kind+'">');
+    var end=start<0?-1:html.indexOf('</form>',start)+7;
+    if(start<0||end<7)throw new Error('Formulário de evolução indisponível: '+kind);
+    var formMarkup=html.slice(start,end).replace('class="panel form"','class="form"');
+    html=html.slice(0,start)+html.slice(end);
+    var insertAt=panel==='week'?html.indexOf('</div><div data-evolution-panel="objetivos"'):html.lastIndexOf('</div>');
+    if(insertAt<0)throw new Error('Painel de evolução indisponível: '+panel);
+    var editor='<details class="panel section evolution-editor" data-evolution-editor="'+panel+'"><summary>'+label+'</summary>'+formMarkup+'</details>';
+    html=html.slice(0,insertAt)+editor+html.slice(insertAt);
+  }
+  moveEvolutionEditor('team-week','Planear nova semana','week');
+  moveEvolutionEditor('team-goal','Registar novo objetivo','goal');
   setView('Semana e evolução',html,'Planeamento');
 }
 async function viewSeasons(){
@@ -1423,6 +1436,7 @@ app.addEventListener("click",async function(event){
     }
     if(target.dataset.kind==="week")form.querySelector('[data-week-evaluation]').open=!!(target.dataset.evaluate||value.evaluation?.summary||value.evaluation?.evidence?.length);
     else form.querySelectorAll('[data-goal-sources], [data-goal-analysis]').forEach(function(section){section.open=true;});
+    var editor=form.closest('[data-evolution-editor]');if(editor){editor.open=true;editor.querySelector('summary').textContent=target.dataset.kind==='week'?'Editar semana':'Editar objetivo';}
     form.querySelector('[data-action="cancel-team-edit"]').hidden=false;form.scrollIntoView({behavior:"smooth",block:"center"});return;
   }
   if(action==="accept-weekly-plan-proposal"||action==="dismiss-weekly-plan-proposal"){
