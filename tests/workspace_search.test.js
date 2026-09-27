@@ -103,6 +103,20 @@ test("pesquisa de categoria isolada ordena os resultados deterministicamente", a
   assert.equal(result.has_more_results, true);
 });
 
+test("pesquisa lexical de exercícios devolve só candidatos da equipa e não confunde uso registado", async () => {
+  const source = recordsOf(4, i => ({
+    kind: i < 2 ? "exercise" : "training",
+    payload: { nome: i === 0 ? "Apoio após passe" : "Construção sob pressão", objetivo: "Criar apoio em zona baixa" },
+  }));
+  source.push({ ...source[0], id: "foreign-exercise", team_id: "team-b" });
+  source.push({ ...source[0], id: "deleted-exercise", deleted_at: "2026-01-02" });
+  const result = await searchWorkspace(mockAdmin(source), "team-a", { query: "apoio", kinds: ["exercise"], limit: 3 });
+  assert.deepEqual(result.results.map(row => row.id), ["id-00000", "id-00001"]);
+  assert.ok(result.results.every(row => row.kind === "exercise"));
+  assert.equal(result.search_complete, true);
+  assert.equal(result.has_more_results, false);
+});
+
 test("pesquisa rejeita parâmetros inválidos", async () => {
   const admin = mockAdmin([]);
   await assert.rejects(searchWorkspace(admin, "team-a", { query: " " }), /query_required/);

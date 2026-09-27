@@ -31,7 +31,7 @@ test('RAG tool is read-scoped, bounded and has structured filters with stable UU
  const tool=rag.TEAM_KNOWLEDGE_TOOLS[0];assert.equal(tool.name,'search_team_knowledge');assert.equal(tool.annotations.readOnlyHint,false);
  assert.equal(tool.inputSchema.properties.limit.maximum,12);assert.equal(tool.inputSchema.properties.source_kinds.maxItems,7);assert.equal(tool.inputSchema.properties.match_ref.format,'uuid');assert.equal(tool.inputSchema.properties.match_refs.maxItems,10);assert.equal(tool.inputSchema.properties.match_refs.uniqueItems,true);assert.equal(tool.inputSchema.properties.player_ref.format,'uuid');
  assert.equal(tool.inputSchema.properties.per_match_limit.maximum,4);
- const context=rag.TEAM_KNOWLEDGE_TOOLS.find(x=>x.name==='get_training_planning_context');assert.ok(context);assert.equal(context.annotations.readOnlyHint,false);assert.deepEqual(context.inputSchema.required,['target_date','question']);assert.match(context.description,/recently completed training sessions/);assert.match(context.description,/do not count as completed exercise use/);assert.match(tool.description,/not proof that a session or exercise was completed/);
+ const context=rag.TEAM_KNOWLEDGE_TOOLS.find(x=>x.name==='get_training_planning_context');assert.ok(context);assert.equal(context.annotations.readOnlyHint,false);assert.deepEqual(context.inputSchema.required,['target_date','question']);assert.match(context.description,/recently completed training sessions/);assert.match(context.description,/do not count as completed exercise use/);assert.match(context.description,/search_workspace can search kind exercise/);assert.match(tool.description,/not proof that a session or exercise was completed/);
  const recent=rag.TEAM_KNOWLEDGE_TOOLS.find(x=>x.name==='get_recent_match_context');assert.ok(recent);assert.deepEqual(recent.inputSchema.required,['question']);assert.equal(recent.inputSchema.properties.match_count.maximum,5);
 });
 
@@ -62,6 +62,7 @@ test('hybrid training context combines exact structured scope and separate cited
  assert.equal(structuredFallback.evidence_status,'retrieval_unavailable');assert.equal(structuredFallback.missing_data.semantic_retrieval,true);assert.deepEqual(structuredFallback.semantic_retrieval_statuses,['provider_unavailable','skipped_after_retrieval_failure']);assert.equal(providerCalls,1,'a failed provider is not retried for the second semantic scope in the same request');assert.equal(structuredFallback.semantic_evidence.length,0);assert.equal(structuredFallback.target_training.ref,target);assert.equal(structuredFallback.roster.available_count,1);assert.equal(structuredFallback.roster.unavailable_count,1);assert.equal(structuredFallback.recent_matches.length,5);assert.doesNotMatch(JSON.stringify(structuredFallback),/synthetic provider network failure/);
  assert.equal(structuredFallback.structured_match_evidence_status,'available');assert.equal(structuredFallback.structured_match_evidence[0].source.ref,matchRows[0].id);assert.equal(structuredFallback.structured_match_evidence[0].source.path,'post_game.analysis.fields.problems');assert.doesNotMatch(JSON.stringify(structuredFallback.structured_match_evidence),/Atleta A/);
  assert.equal(structuredFallback.structured_training_evidence_status,'available');assert.ok(structuredFallback.structured_training_evidence.some(item=>item.source.ref===completedSession.id&&item.source.path==='review.melhorou'&&item.evidence_type==='coach_evaluation'));
+ assert.match(structuredFallback.guidance,/search_workspace com kinds exercise, termos táticos concretos/);
  assert.ok(structuredFallback.structured_training_evidence.some(item=>item.source.path==='review.proxima_acao'&&item.evidence_type==='coach_decision'));
  assert.ok(structuredFallback.structured_training_evidence.every(item=>item.retrieval_method==='bounded_structured_training_read'&&item.excerpt.length<=500));
  assert.doesNotMatch(JSON.stringify(structuredFallback.structured_training_evidence),/Atleta A|febre|médico/);
@@ -257,6 +258,8 @@ test('RAG preserves archived player-goal history by stable player UUID without e
 
 test('Head Coach instructions keep archived athlete goals historical',async()=>{
  const {SERVER_INSTRUCTIONS}=await import('../supabase/functions/vision-coach-mcp/server_instructions.mjs');
+ assert.match(SERVER_INSTRUCTIONS,/search_workspace with kinds exercise, a small limit/);
+ assert.match(SERVER_INSTRUCTIONS,/lexical hit is only an exercise definition, not proof of use/);
  assert.match(SERVER_INSTRUCTIONS,/player_goal_archive.*historical_coach_goal/);
  assert.match(SERVER_INSTRUCTIONS,/never present it as a current team priority/);
  assert.match(SERVER_INSTRUCTIONS,/proof of improvement\/transfer to another athlete/);
