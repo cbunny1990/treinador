@@ -29,7 +29,7 @@
 ### Task 1: Migração, seed Sub-8 e testes de RLS
 
 **Files:**
-- Create: `supabase/migrations/20260926120000_learning_tables.sql`
+- Create: `supabase/migrations/20260926223649_learning_tables.sql`
 - Modify: `tests/supabase_schema.test.js` (acrescentar asserções no fim)
 - Create: `tests/learning_migrations.pglite.test.js`
 
@@ -240,7 +240,7 @@ Expected: PASS.
 
 Run: `npm run check && npm test`
 ```bash
-git add supabase/migrations/20260926120000_learning_tables.sql tests/learning_migrations.pglite.test.js tests/supabase_schema.test.js
+git add supabase/migrations/20260926223649_learning_tables.sql tests/learning_migrations.pglite.test.js tests/supabase_schema.test.js
 git commit -m "feat(formacao): tabelas learning_* com RLS e seed Sub-8"
 ```
 

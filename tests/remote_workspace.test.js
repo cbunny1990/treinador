@@ -1508,6 +1508,183 @@ test("push valida UUIDs de exercício pelo snapshot já lido e não consulta cad
   });
 });
 
+test("treino sincroniza blocos históricos sem restaurar o exercício apagado da mesma equipa", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    const exerciseRef = "89100000-0000-4000-8000-000000000001";
+    const trainingRef = "89100000-0000-4000-8000-000000000002";
+    const deletedAt = "2026-09-24T12:00:00.000Z";
+    remote.rows.push(
+      { id: exerciseRef, team_id: remoteTeamId, kind: "exercise", payload: { nome: "Passe e apoio" }, updated_at: "exercise-v2", deleted_at: deletedAt },
+      { id: trainingRef, team_id: remoteTeamId, kind: "training", payload: { data: "2026-09-25", blocos: [] }, updated_at: "training-v1", deleted_at: null },
+    );
+    useDevice(0);
+    await devices[0].criar("treinos", {
+      team_id: "default", sync_id: trainingRef, remote_team_id: remoteTeamId,
+      remote_updated_at: "training-v1", sync_dirty: true, data: "2026-09-25",
+      blocos: [{ exercise_ref: exerciseRef, exercise_snapshot: { nome: "Passe e apoio" }, duracao_min: 10 }],
+      session: { blocks: [{ exercise_ref: exerciseRef, exercise_snapshot: { nome: "Passe e apoio" }, elapsed_ms: 60_000 }] },
+    });
+    remote.queryLog.length = 0;
+    const result = await RemoteWorkspace._syncRecords(remoteTeamId, "coach", remote.rows, remote.mediaRows);
+    assert.equal(result.pushed, 1);
+    assert.deepEqual(result.conflicts, []);
+    const savedTraining = remote.rows.find((row) => row.id === trainingRef);
+    assert.equal(savedTraining.payload.blocos[0].exercise_ref, exerciseRef);
+    assert.equal(savedTraining.payload.session.blocks[0].exercise_ref, exerciseRef);
+    assert.equal(savedTraining.payload.blocos[0].exercise_snapshot.nome, "Passe e apoio");
+    assert.equal(remote.rows.find((row) => row.id === exerciseRef).deleted_at, deletedAt);
+    assert.equal((await devices[0].listar("exercicios")).length, 0);
+    assert.equal(remote.queryLog.filter((query) => query.table === "workspace_records"
+      && query.action === "select"
+      && query.filters.some(([op, key]) => op === "eq" && key === "id")
+      && query.filters.some(([op, key]) => op === "eq" && key === "kind")).length, 0);
+    const repeated = await RemoteWorkspace._syncRecords(remoteTeamId, "coach", remote.rows, remote.mediaRows);
+    assert.equal(repeated.pushed, 0);
+    assert.deepEqual(repeated.conflicts, []);
+    useDevice(1);
+    const received = await RemoteWorkspace._syncRecords(remoteTeamId, "coach", remote.rows, remote.mediaRows);
+    assert.equal(received.pulled, 1);
+    assert.equal((await devices[1].listar("treinos"))[0].blocos[0].exercise_ref, exerciseRef);
+    assert.equal((await devices[1].listar("exercicios")).length, 0);
+  });
+});
+
+test("treino revalida exercício apagado ausente do delta e recusa UUID ausente ou de outra equipa", async () => {
+  const team = "89100000-0000-4000-8000-000000000010";
+  const deletedRef = "89100000-0000-4000-8000-000000000011";
+  const missingRef = "89100000-0000-4000-8000-000000000012";
+  const originalInit = RemoteWorkspace.init;
+  const queries = [];
+  RemoteWorkspace.init = async () => ({ from(table) {
+    assert.equal(table, "workspace_records");
+    const filters = [];
+    const query = {
+      select() { return this; },
+      eq(key, value) { filters.push([key, value]); return this; },
+      is() { throw new Error("Um bloco histórico não pode exigir exercício ativo."); },
+      async maybeSingle() {
+        queries.push(filters);
+        const valid = filters.some(([key, value]) => key === "id" && value === deletedRef)
+          && filters.some(([key, value]) => key === "team_id" && value === team)
+          && filters.some(([key, value]) => key === "kind" && value === "exercise");
+        return { data: valid ? { id: deletedRef } : null, error: null };
+      },
+    };
+    return query;
+  } });
+  const training = (ref) => ({ blocos: [{ exercise_ref: ref, exercise_snapshot: { nome: "Exercício preservado" } }] });
+  try {
+    const context = { recordRows: new Map(), allowRemoteLookup: true };
+    const payload = await RemoteWorkspace._payloadForRemote("treinos", training(deletedRef), team, context);
+    assert.equal(payload.blocos[0].exercise_ref, deletedRef);
+    assert.equal(payload.blocos[0].exercise_snapshot.nome, "Exercício preservado");
+    assert.equal(queries.length, 1);
+    await assert.rejects(RemoteWorkspace._payloadForRemote("treinos", training(missingRef), team, context),
+      (error) => error.reason === "subject_uuid_not_in_team");
+    await assert.rejects(RemoteWorkspace._payloadForRemote("treinos", training(deletedRef), team, {
+      recordRows: new Map([[deletedRef, { id: deletedRef, team_id: "other-team", kind: "exercise", deleted_at: "2026-09-24" }]]),
+    }), (error) => error.reason === "subject_uuid_not_in_team");
+    await assert.rejects(RemoteWorkspace._payloadForRemote("treinos", training(deletedRef), team, {
+      recordRows: new Map([[deletedRef, { id: deletedRef, team_id: team, kind: "player", deleted_at: "2026-09-24" }]]),
+    }), (error) => error.reason === "subject_uuid_not_in_team");
+  } finally { RemoteWorkspace.init = originalInit; }
+});
+
+test("sync reutiliza snapshots para referências UUID de atividade e media, com fallback no delta", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    const playerRef = "89000000-0000-4000-8000-000000000011";
+    const mediaRef = "89000000-0000-4000-8000-000000000012";
+    const snapshot = {
+      recordRows: new Map([[playerRef, { id: playerRef, team_id: remoteTeamId, kind: "player", deleted_at: null }]]),
+      mediaRows: new Map([[mediaRef, { id: mediaRef, team_id: remoteTeamId, deleted_at: null }]]),
+      allowRemoteLookup: true,
+    };
+    remote.rows.push({ id: playerRef, team_id: remoteTeamId, kind: "player", payload: { nome: "Atleta" }, updated_at: "p1", deleted_at: null });
+    remote.mediaRows.push({ id: mediaRef, team_id: remoteTeamId, subject_type: "team", subject_ref: remoteTeamId,
+      media_type: "file", title: "Referência media", external_url: "https://example.test/ref", updated_at: "m1", deleted_at: null });
+    useDevice(0);
+    await devices[0].criar("activity_items", { team_id: "default", remote_team_id: remoteTeamId,
+      sync_dirty: true, actor: "human", action: "linked", summary: "Atleta associado", entity_type: "player", entity_id: playerRef });
+    await devices[0].criar("media_items", { team_id: "default", remote_team_id: remoteTeamId,
+      sync_dirty: true, subject_type: "player", subject_id: playerRef, type: "photo", title: "Foto" });
+    remote.queryLog.length = 0;
+
+    const activity = await RemoteWorkspace._syncActivity(remoteTeamId, "coach", [], snapshot);
+    const media = await RemoteWorkspace._syncMedia(remoteTeamId, "coach", [], snapshot);
+    assert.equal(activity.pushed, 1);
+    assert.equal(media.pushed, 1);
+    assert.equal(remote.activityRows[0].entity_ref, playerRef);
+    assert.equal(remote.mediaRows.find((row) => row.title === "Foto").subject_ref, playerRef);
+    assert.equal(remote.queryLog.filter((query) => query.table === "workspace_records" && query.action === "select"
+      && query.filters.some(([op, key]) => op === "eq" && key === "id")).length, 0,
+    "UUIDs presentes nos snapshots não fazem GET individual");
+
+    const unchangedPlayerRef = "89000000-0000-4000-8000-000000000013";
+    remote.rows.push({ id: unchangedPlayerRef, team_id: remoteTeamId, kind: "player", payload: { nome: "Outro atleta" }, updated_at: "p2", deleted_at: null });
+    const fallbackSnapshot = { ...snapshot, recordRows: new Map(), allowRemoteLookup: true };
+    const remoteReadsBefore = remote.queryLog.filter((query) => query.table === "workspace_records" && query.action === "select"
+      && query.filters.some(([op, key]) => op === "eq" && key === "id")).length;
+    const row = await RemoteWorkspace._activityRemoteRow({ entity_type: "player", entity_id: unchangedPlayerRef }, remoteTeamId, "coach", fallbackSnapshot);
+    assert.equal(row.entity_ref, unchangedPlayerRef);
+    const remoteReadsAfter = remote.queryLog.filter((query) => query.table === "workspace_records" && query.action === "select"
+      && query.filters.some(([op, key]) => op === "eq" && key === "id")).length;
+    assert.equal(remoteReadsAfter - remoteReadsBefore, 1, "cache miss no snapshot incremental mantém o GET de fallback validado");
+  });
+});
+
+test("full sync valida atividade e media ligados a registo criado na mesma passagem", async () => {
+  await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
+    const playerRef = "89000000-0000-4000-8000-000000000031";
+    useDevice(0);
+    await devices[0].criar("jogadores", { team_id: "default", remote_team_id: remoteTeamId,
+      sync_id: playerRef, sync_dirty: true, nome: "Atleta novo" });
+    await devices[0].criar("activity_items", { team_id: "default", remote_team_id: remoteTeamId,
+      sync_dirty: true, actor: "human", action: "linked", summary: "Registo e atividade", entity_type: "player", entity_id: playerRef });
+    const mediaRef = "89000000-0000-4000-8000-000000000032";
+    await devices[0].criar("media_items", { team_id: "default", remote_team_id: remoteTeamId,
+      sync_id: mediaRef, sync_dirty: true, subject_type: "player", subject_id: playerRef, type: "photo", title: "Foto do registo novo" });
+    await devices[0].criar("activity_items", { team_id: "default", remote_team_id: remoteTeamId,
+      sync_dirty: true, actor: "human", action: "linked", summary: "Media associada", entity_type: "media", entity_id: mediaRef });
+
+    const referenceContext = { recordRows: new Map(), mediaRows: new Map(), allowRemoteLookup: true };
+    remote.queryLog.length = 0;
+    const records = await RemoteWorkspace._syncRecords(remoteTeamId, "coach", [], [], {
+      allowRemoteLookup: false, referenceContext,
+    });
+    assert.equal(records.pushed, 1);
+    assert.equal(referenceContext.recordRows.get(playerRef)?.kind, "player",
+      "a resposta confirmada do push passa a fazer parte do contexto partilhado");
+    const media = await RemoteWorkspace._syncMedia(remoteTeamId, "coach", [], referenceContext);
+    const activity = await RemoteWorkspace._syncActivity(remoteTeamId, "coach", [], referenceContext);
+    assert.equal(activity.pushed, 2);
+    assert.equal(media.pushed, 1);
+    assert.equal(remote.activityRows[0].entity_ref, playerRef);
+    assert.equal(remote.activityRows.find((row) => row.summary === "Media associada").entity_ref, mediaRef);
+    assert.equal(remote.mediaRows.find((row) => row.title === "Foto do registo novo").subject_ref, playerRef);
+    assert.equal(remote.queryLog.filter((query) => query.table === "workspace_records" && query.action === "select"
+      && query.filters.some(([op, key]) => op === "eq" && key === "id")).length, 0,
+    "atividade e media reutilizam a linha criada no início da mesma passagem, inclusive em full refresh");
+  });
+});
+
+test("referências em snapshot recusam equipa, tipo e eliminação incorretos", async () => {
+  const ref = "89000000-0000-4000-8000-000000000021";
+  for (const row of [
+    { id: ref, team_id: "other-team", kind: "player", deleted_at: null },
+    { id: ref, team_id: "team-a", kind: "match", deleted_at: null },
+    { id: ref, team_id: "team-a", kind: "player", deleted_at: "deleted-v1" },
+  ]) {
+    const activity = await RemoteWorkspace._activityRemoteRow({ entity_type: "player", entity_id: ref, metadata: {} }, "team-a", "coach", {
+      recordRows: new Map([[ref, row]]), allowRemoteLookup: true,
+    });
+    assert.equal(activity.entity_ref, null, "atividade histórica conserva proveniência sem criar uma relação inválida");
+    assert.equal(activity.metadata._vision_coach_unresolved_origin.reason, "subject_uuid_not_in_team");
+    await assert.rejects(RemoteWorkspace._mediaRemoteRow({ subject_type: "player", subject_id: ref }, "team-a", "coach", {
+      recordRows: new Map([[ref, row]]), allowRemoteLookup: true,
+    }), (error) => error.code === "LOCAL_REFERENCE_CONFLICT" && error.reason === "subject_uuid_not_in_team");
+  }
+});
+
 test("sync reutiliza o snapshot quando está limpo e só volta a ler a tabela para rever conflitos", async () => {
   await withTwoDeviceSync(async ({ remote, devices, remoteTeamId, useDevice }) => {
     useDevice(0);
@@ -2988,8 +3165,8 @@ test("sync lê em paralelo os snapshots independentes antes de reconciliar regis
     return [{ table }];
   };
   RemoteWorkspace._syncRecords = async (_team, user, rows) => { calls.push("records"); assert.equal(user, "coach"); assert.deepEqual(rows, [{ table: "workspace_records" }]); return { pushed: 2 }; };
-  RemoteWorkspace._syncActivity = async (_team, user, rows) => { calls.push("activity"); assert.equal(user, "coach"); assert.deepEqual(rows, [{ table: "activity_log" }]); return { pulled: 3 }; };
-  RemoteWorkspace._syncMedia = async (_team, user, rows) => { calls.push("media"); assert.equal(user, "coach"); assert.deepEqual(rows, [{ table: "media_assets" }]); return { pushed: 4 }; };
+  RemoteWorkspace._syncActivity = async (_team, user, rows, refs) => { calls.push("activity"); assert.equal(user, "coach"); assert.deepEqual(rows, [{ table: "activity_log" }]); assert.ok(refs.recordRows instanceof Map); assert.ok(refs.mediaRows instanceof Map); return { pulled: 3 }; };
+  RemoteWorkspace._syncMedia = async (_team, user, rows, refs) => { calls.push("media"); assert.equal(user, "coach"); assert.deepEqual(rows, [{ table: "media_assets" }]); assert.ok(refs.recordRows instanceof Map); assert.ok(refs.mediaRows instanceof Map); return { pushed: 4 }; };
   RemoteWorkspace._clearSyncRetry = () => {};
   try {
     const result = await RemoteWorkspace._syncNow();
@@ -2997,7 +3174,7 @@ test("sync lê em paralelo os snapshots independentes antes de reconciliar regis
     assert.deepEqual(calls[0], "tombstones");
     assert.equal(readsStartedBeforeTeamDone, 3, "os três snapshots iniciam enquanto a equipa ainda é lida");
     assert.deepEqual(calls.slice(1, 5).sort(), ["read:activity_log", "read:media_assets", "read:workspace_records", "team"]);
-    assert.deepEqual(calls.slice(5), ["records", "activity", "media"]);
+    assert.deepEqual(calls.slice(5), ["records", "media", "activity"]);
     assert.ok([...localListCounts.values()].length > 2);
     assert.ok([...localListCounts.values()].every((count) => count === 1), "cada store local só é varrido uma vez para o snapshot, sem nova passagem de getAll para cursores");
     assert.deepEqual({ pushed: result.pushed, pulled: result.pulled, deleted: result.deleted }, { pushed: 6, pulled: 4, deleted: 1 });

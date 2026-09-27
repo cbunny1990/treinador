@@ -17,8 +17,9 @@ async function withDb(fn) {
       create function auth.role() returns text language sql stable as
         $$ select current_setting('request.jwt.claim.role', true) $$;
       select set_config('request.jwt.claim.role','service_role',false);`);
-    const migration = path.join(__dirname, "..", "supabase", "migrations", "20260926120000_learning_tables.sql");
-    if (fs.existsSync(migration)) await db.exec(fs.readFileSync(migration, "utf8"));
+    const migration = path.join(__dirname, "..", "supabase", "migrations", "20260926223649_learning_tables.sql");
+    assert.ok(fs.existsSync(migration), "migração learning_tables tem de existir com a versão remota");
+    await db.exec(fs.readFileSync(migration, "utf8"));
     const seasonMigration = path.join(__dirname, "..", "supabase", "migrations", "20260926233609_learning_season_plan.sql");
     if (fs.existsSync(seasonMigration)) await db.exec(fs.readFileSync(seasonMigration, "utf8"));
     const ownerLinksMigration = path.join(__dirname, "..", "supabase", "migrations", "20260927013751_learning_plan_owner_links.sql");
