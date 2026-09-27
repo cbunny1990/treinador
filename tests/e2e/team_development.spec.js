@@ -16,7 +16,8 @@ test('evolução móvel começa numa tarefa e guarda um objetivo sem exigir camp
  expect(await goals.evaluate(panel=>Boolean(panel.querySelector(':scope > .list').compareDocumentPosition(panel.querySelector('[data-evolution-editor="goal"]'))&Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
  await expect(goals.locator('[data-goal-sources]')).not.toHaveAttribute('open','');
  await expect(goals.locator('[data-goal-analysis]')).not.toHaveAttribute('open','');
- await goals.locator('[data-evolution-editor="goal"] > summary').click();
+ await goals.locator('[data-action="open-team-editor"][data-kind="goal"]').click();
+ await expect(goals.locator('[data-evolution-editor="goal"]')).toHaveAttribute('open','');
  await goals.locator('[name="title"]').fill('Apoio após passe');
  await goals.getByRole('button',{name:'Guardar objetivo'}).click();
  await expect(goals.getByText('Apoio após passe',{exact:true})).toBeVisible();
@@ -31,7 +32,8 @@ test('desktop shows saved weeks first and opens the editor only on request',asyn
  const editor=page.locator('[data-evolution-editor="week"]');
  await expect(editor).not.toHaveAttribute('open','');
  await expect(page.getByText('Ainda não há semanas planeadas.')).toBeVisible();
- await editor.locator('> summary').click();
+ await page.locator('[data-action="open-team-editor"][data-kind="week"]').click();
+ await expect(editor).toHaveAttribute('open','');
  await editor.locator('[name="objective"]').fill('Apoio após passe');
  await editor.getByRole('button',{name:'Guardar semana'}).click();
  await expect(page.getByText('Apoio após passe',{exact:true})).toBeVisible();
