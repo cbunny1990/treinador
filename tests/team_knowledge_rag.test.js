@@ -134,7 +134,17 @@ test('RAG indexes the coach-entered opponent analysis and tactical preparation w
  const source=match();source.payload.pre_game={adversario_notas:'O adversário pressiona alto após reposição curta.',adversario_sistema:'1-2-1',adversario_estilo:'pressao_alta',adversario_pontos_fortes:['Reação rápida à perda.'],adversario_vulnerabilidades:['Espaço nas costas dos alas.'],pontos_observar:['Saída pelo corredor esquerdo.'],plano_jogo:'Atrair a pressão e procurar apoio interior.'};
  const chunks=rag.teamKnowledgeTestAPI.chunkRecord(source),vulnerability=chunks.find(item=>item.source_path==='pre_game.adversario_vulnerabilidades[0]'),plan=chunks.find(item=>item.source_path==='pre_game.plano_jogo');
  assert.equal(vulnerability.category,'opponent_analysis');assert.equal(vulnerability.evidence_type,'coach_observation');assert.equal(vulnerability.match_ref,SOURCE);assert.match(vulnerability.content,/Espaço nas costas dos alas/);
+ assert.match(vulnerability.title,/pré-jogo.*por confirmar/);
  assert.equal(plan.category,'match_preparation');assert.equal(plan.evidence_type,'coach_decision');assert.equal(plan.source_date,'2026-09-20');
+ const toObserve=chunks.find(item=>item.source_path==='pre_game.pontos_observar[0]');assert.equal(toObserve.category,'match_preparation');assert.equal(toObserve.evidence_type,'coach_decision');
+});
+
+test('RAG uses post-match opponent observations without duplicating the legacy pre-game text',()=>{
+ const source=match();source.payload.pre_game={adversario_notas:'Nota antiga',adversario_pontos_fortes:['Valor antigo'],plano_jogo:'Preparar apoio.'};source.payload.post_game={opponent_observation:{adversario_notas:'Nota observada depois',adversario_pontos_fortes:['Pressão observada'],adversario_vulnerabilidades:[]}};
+ const chunks=rag.teamKnowledgeTestAPI.chunkRecord(source),opponent=chunks.filter(item=>item.category==='opponent_analysis'&&item.source_path.includes('adversario_'));
+ assert.ok(opponent.some(item=>item.source_path==='post_game.opponent_observation.adversario_notas'&&item.content.includes('Nota observada depois')));
+ assert.equal(opponent.filter(item=>item.content.includes('Nota antiga')||item.content.includes('Valor antigo')).length,0);
+ assert.ok(chunks.some(item=>item.source_path==='pre_game.plano_jogo'));
 });
 
 test('RAG indexes free coach notes on the existing training plan with its training UUID',()=>{

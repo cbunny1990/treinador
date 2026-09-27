@@ -9,6 +9,8 @@ No relatório agregado de equipa, a secção de estatísticas declara quantos jo
 
 O relatório de equipa mostra a posse separadamente por jogo, com origem medida, estimada ou desconhecida e o valor registado. Não calcula uma média que misture medições e estimativas.
 
+A ficha de jogo usa apenas dados de preparação, sem observações ao adversário. O relatório pós-jogo inclui as observações ao adversário registadas depois da conclusão. Nos jogos antigos, lê os campos históricos do pré-jogo até existir uma versão revista no pós-jogo. `get_match_report` segue a mesma distinção e identifica a origem histórica quando aplicável.
+
 Todos os relatórios PDF incluem agora o emblema original da equipa Sub-8 de Figueiró, inclusive treino, jogo e atleta; o ficheiro de imagem não é transformado.
 
 No relatório individual, uma posição na escalação planeada só conta como titularidade se o cronómetro do jogo tiver sido iniciado. Um atleta convocado e incluído no registo de utilização que não entrou tem `00:00` registados; uma convocação sem cronómetro tem minutos desconhecidos. O resumo conta separadamente as convocações sem minutos conhecidos, mesmo quando há relógio registado noutros jogos. Relatórios por época incluem objetivos iniciados no período ou associados a evidências nele registadas; uma evidência ligada de fora do intervalo fica identificada como tal e não altera as estatísticas da época.

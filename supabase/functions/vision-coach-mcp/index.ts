@@ -8,7 +8,7 @@ import { MATCH_VISUAL_TOOLS, executeMatchVisualTool } from "./match_visual.mjs";
 import { MATCH_EVENTS_TOOLS, executeMatchEventsTool } from "./match_events.mjs";
 import { MATCH_ANALYSIS_TOOLS, executeMatchAnalysisTool } from "./match_analysis.mjs";
 import { MATCH_EVIDENCE_TOOLS, executeMatchEvidenceTool } from "./match_evidence.mjs";
-import { updateMatchPreGame } from "./match_pre_game.mjs";
+import { updateMatchPreGame, updateMatchOpponentObservation } from "./match_pre_game.mjs";
 import { listMatches } from "./match_queries.mjs";
 import { getWorkspaceSummary } from "./workspace_summary.mjs";
 import { searchWorkspace } from "./workspace_search.mjs";
@@ -21,7 +21,7 @@ import { TEAM_KNOWLEDGE_TOOLS, executeTeamKnowledgeTool } from "./team_knowledge
 import { SERVER_INSTRUCTIONS } from "./server_instructions.mjs";
 
 const SERVER_NAME = "vision-coach";
-const SERVER_VERSION = "1.14.9";
+const SERVER_VERSION = "1.14.10";
 const MODERN_PROTOCOL = "2026-07-28";
 const LEGACY_PROTOCOLS = new Set(["2025-11-25", "2025-06-18", "2025-03-26"]);
 const MAX_BODY_BYTES = 256 * 1024;
@@ -302,12 +302,29 @@ const TOOLS = [
         confirmed: { type: "boolean", const: true },
         main_objective: { type: "string" },
         game_plan: { type: "string" },
+        observation_points: { type: "array", items: { type: "string", maxLength: 500 }, maxItems: 30 },
+      },
+      additionalProperties: false,
+      required: ["expected_updated_at", "confirmed"],
+      oneOf: [{ required: ["id"], not: { required: ["external_key"] } }, { required: ["external_key"], not: { required: ["id"] } }],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  {
+    name: "update_match_opponent_observation",
+    description: "Regista ou edita observações ao adversário depois de o treinador concluir o jogo. Não inventa factos e preserva o plano pré-jogo.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", format: "uuid" },
+        external_key: { type: "string" },
+        expected_updated_at: { type: "string" },
+        confirmed: { type: "boolean", const: true },
         opponent_notes: { type: "string" },
         opponent_formation: { type: "string", maxLength: 40 },
         opponent_style: { type: "string", enum: ["posse","direto","pressao_alta","bloco_baixo","transicoes"] },
         opponent_strengths: { type: "array", items: { type: "string", maxLength: 500 }, maxItems: 20 },
         opponent_vulnerabilities: { type: "array", items: { type: "string", maxLength: 500 }, maxItems: 20 },
-        observation_points: { type: "array", items: { type: "string", maxLength: 500 }, maxItems: 30 },
       },
       additionalProperties: false,
       required: ["expected_updated_at", "confirmed"],
@@ -665,6 +682,19 @@ async function executeTool(admin: any, connector: any, name: string, args: any, 
     payload.pre_game = updateMatchPreGame(payload, args);
     const record = await putRecord(admin, teamId, "match", payload, existing,
       "mcp:" + connector.id + ":match-pre:" + existing.id + ":" + existing.updated_at);
+    return { updated: true, record };
+  }
+
+  if (name === "update_match_opponent_observation") {
+    requireScope(connector, "write");
+    if (args?.confirmed !== true) throw new Error("explicit_confirmation_required");
+    const existing = await findRecord(admin, teamId, "match", args);
+    if (!existing) throw new Error("match_not_found");
+    if (!args.expected_updated_at || args.expected_updated_at !== existing.updated_at) throw new Error("record_conflict_read_again");
+    const payload = { ...(existing.payload || {}) };
+    payload.post_game = { ...(payload.post_game || {}), opponent_observation: updateMatchOpponentObservation(payload, args) };
+    const record = await putRecord(admin, teamId, "match", payload, existing,
+      "mcp:" + connector.id + ":match-opponent:" + existing.id + ":" + existing.updated_at);
     return { updated: true, record };
   }
 

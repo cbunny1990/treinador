@@ -1,38 +1,35 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { updateMatchPreGame } = require('../supabase/functions/vision-coach-mcp/match_pre_game.mjs');
+const { updateMatchPreGame, updateMatchOpponentObservation } = require('../supabase/functions/vision-coach-mcp/match_pre_game.mjs');
 
-test('partial pre-game MCP updates preserve omitted lists and explicit empty lists clear them', () => {
-  const current = { pre_game: {
-    adversario_pontos_fortes: ['Pressão alta'],
-    adversario_vulnerabilidades: ['Espaço nas costas'],
-    pontos_observar: ['Saída pelo lado esquerdo'],
-    plano_jogo: 'Atrair pressão e procurar apoio.',
-  } };
-  const partial = updateMatchPreGame(current, { opponent_notes: 'Observar reposições.' });
-  assert.deepEqual(partial.adversario_pontos_fortes, ['Pressão alta']);
-  assert.deepEqual(partial.adversario_vulnerabilidades, ['Espaço nas costas']);
-  assert.deepEqual(partial.pontos_observar, ['Saída pelo lado esquerdo']);
-  assert.equal(partial.plano_jogo, 'Atrair pressão e procurar apoio.');
-  const cleared = updateMatchPreGame(current, { opponent_strengths: [], opponent_vulnerabilities: [], observation_points: [] });
-  assert.deepEqual(cleared.adversario_pontos_fortes, []);
-  assert.deepEqual(cleared.adversario_vulnerabilidades, []);
-  assert.deepEqual(cleared.pontos_observar, []);
+test('pre-game keeps the plan and old opponent data, but refuses new opponent observations', () => {
+  const current = { pre_game: { adversario_notas: 'Registo antigo', pontos_observar: ['Saída pela esquerda'], plano_jogo: 'Procurar apoio.' } };
+  const plan = updateMatchPreGame(current, { main_objective: 'Circular' });
+  assert.equal(plan.objetivo_principal, 'Circular');
+  assert.equal(plan.adversario_notas, 'Registo antigo');
+  assert.deepEqual(plan.pontos_observar, ['Saída pela esquerda']);
+  assert.throws(() => updateMatchPreGame(current, { opponent_notes: 'Pressiona alto' }), /opponent_observations_belong_to_post_match/);
+  assert.deepEqual(updateMatchPreGame(current, { observation_points: [] }).pontos_observar, []);
 });
 
-test('pre-game text lists reject excess entries and overlong items without truncating', () => {
-  const base = { pre_game: { adversario_pontos_fortes: ['Dados existentes'] } };
-  assert.throws(() => updateMatchPreGame(base, { opponent_strengths: Array(21).fill('Ponto') }), /opponent_strengths_too_many_items/);
-  assert.throws(() => updateMatchPreGame(base, { opponent_strengths: ['x'.repeat(501)] }), /opponent_strengths_item_too_long/);
-  assert.throws(() => updateMatchPreGame(base, { observation_points: Array(31).fill('Observar') }), /observation_points_too_many_items/);
-  assert.throws(() => updateMatchPreGame(base, { observation_points: [42] }), /observation_points_invalid_item/);
-  assert.deepEqual(base.pre_game.adversario_pontos_fortes, ['Dados existentes']);
+test('post-game opponent updates preserve omitted fields and allow explicit clearing', () => {
+  const current = { estado: 'concluido', pre_game: { adversario_sistema: '1-2-1', adversario_pontos_fortes: ['Pressão alta'] } };
+  const first = updateMatchOpponentObservation(current, { opponent_notes: 'Pressiona reposições.' }, '2026-09-27T12:00:00Z');
+  assert.equal(first.adversario_sistema, '1-2-1');
+  assert.deepEqual(first.adversario_pontos_fortes, ['Pressão alta']);
+  const second = updateMatchOpponentObservation({ ...current, post_game: { opponent_observation: first } }, { opponent_strengths: [], opponent_notes: '' });
+  assert.deepEqual(second.adversario_pontos_fortes, []);
+  assert.equal(second.adversario_notas, '');
+  assert.equal(second.adversario_sistema, '1-2-1');
+  assert.equal(current.pre_game.adversario_pontos_fortes[0], 'Pressão alta');
 });
 
-test('pre-game text lists retain every item within documented limits', () => {
-  const points = Array.from({ length: 20 }, (_, index) => `Ponto ${index + 1}`);
-  const result = updateMatchPreGame({}, { opponent_strengths: points, observation_points: Array(30).fill('x'.repeat(500)) });
-  assert.deepEqual(result.adversario_pontos_fortes, points);
-  assert.equal(result.pontos_observar.length, 30);
-  assert.equal(result.pontos_observar[0].length, 500);
+test('opponent observations require a completed game and validate list limits', () => {
+  const scheduled = { estado: 'agendado', pre_game: { adversario_pontos_fortes: ['Dados existentes'] } };
+  assert.throws(() => updateMatchOpponentObservation(scheduled, { opponent_strengths: ['x'] }), /match_must_be_completed/);
+  const finished = { ...scheduled, estado: 'concluido' };
+  assert.throws(() => updateMatchOpponentObservation(finished, { opponent_strengths: Array(21).fill('Ponto') }), /opponent_strengths_too_many_items/);
+  assert.throws(() => updateMatchOpponentObservation(finished, { opponent_strengths: ['x'.repeat(501)] }), /opponent_strengths_item_too_long/);
+  assert.throws(() => updateMatchOpponentObservation(finished, { opponent_strengths: [42] }), /opponent_strengths_invalid_item/);
+  assert.deepEqual(finished.pre_game.adversario_pontos_fortes, ['Dados existentes']);
 });

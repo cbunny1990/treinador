@@ -1088,15 +1088,19 @@ test("calendário e página de jogo preservam preparação estruturada", async (
 
   await expect(page.getByRole("heading", { name: "Antes do jogo" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Alinhamento 5v5" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Durante" })).toBeVisible();
+  await expect(page.locator('.match-stage-nav').getByRole('button', { name: 'Durante' })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Depois" })).toBeVisible();
 
   await page.getByLabel("Objetivo principal").fill("Circular rápido e abrir o campo");
+  await expect(page.getByLabel("Sistema observado")).toHaveCount(0);
+  await page.getByRole("button", { name: "Guardar plano" }).click();
+  page.on('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Dar jogo como terminado' }).click();
   await page.getByLabel("Sistema observado").fill("1-2-1");
   await page.getByLabel("Estilo observado").selectOption("pressao_alta");
   await page.getByLabel("Pontos fortes observados · um por linha").fill("Pressão coordenada\nAvançado rápido");
   await page.getByLabel("Vulnerabilidades observadas · um por linha").fill("Espaço nas costas");
-  await page.getByRole("button", { name: "Guardar plano" }).click();
+  await page.getByRole("button", { name: "Guardar observações ao adversário" }).click();
   await page.getByRole("link", { name: "Editar dados" }).click();
   await page.getByLabel("Local").fill("Campo Teste 2");
   await page.getByRole("button", { name: "Guardar jogo" }).click();
@@ -1106,16 +1110,69 @@ test("calendário e página de jogo preservam preparação estruturada", async (
     return games.find((x) => x.adversario === "Teste E2E");
   });
   expect(stored.pre_game.objetivo_principal).toBe("Circular rápido e abrir o campo");
-  expect(stored.pre_game.adversario_sistema).toBe("1-2-1");
-  expect(stored.pre_game.adversario_estilo).toBe("pressao_alta");
-  expect(stored.pre_game.adversario_pontos_fortes).toEqual(["Pressão coordenada", "Avançado rápido"]);
-  expect(stored.pre_game.adversario_vulnerabilidades).toEqual(["Espaço nas costas"]);
+  expect(stored.post_game.opponent_observation.adversario_sistema).toBe("1-2-1");
+  expect(stored.post_game.opponent_observation.adversario_estilo).toBe("pressao_alta");
+  expect(stored.post_game.opponent_observation.adversario_pontos_fortes).toEqual(["Pressão coordenada", "Avançado rápido"]);
+  expect(stored.post_game.opponent_observation.adversario_vulnerabilidades).toEqual(["Espaço nas costas"]);
   expect(stored.hora_saida).toBe("08:30");
   expect(stored.external_key).toContain("2026-09-26");
 
   await page.goto("/#/calendario");
   await expect(page.getByText("Jogo vs Teste E2E")).toBeVisible();
-  await expect(page.getByText(/saída 08:30/)).toBeVisible();
+});
+
+for (const width of [390, 1440]) test(`observações antigas do adversário são revistas apenas depois do jogo · ${width}px`, async ({ page, context }) => {
+  await page.setViewportSize({ width, height: 844 });
+  await page.goto('/#/calendario');
+  await page.waitForFunction(() => typeof DB !== 'undefined' && typeof go === 'function');
+  const id = await page.evaluate(() => DB.criar('jogos', {
+    team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: '2026-09-27', adversario: 'Legado adversário', estado: 'concluido',
+    pre_game: { objetivo_principal: 'Circular', adversario_sistema: '1-2-1', adversario_notas: 'Nota antiga', adversario_pontos_fortes: ['Pressão alta'] },
+    post_game: { analysis: { schema: 'vision-match-analysis@1', revision: 0, status: 'pending', fields: {}, goals_conceded: {}, history: [] } },
+  }));
+  await page.evaluate(matchId => go('#/equipa/jogo/' + matchId), id);
+  await expect(page.locator('#match-before [name="adversario_sistema"]')).toHaveCount(0);
+  await expect(page.locator('.match-stage-nav [data-target="match-during"]')).toHaveCount(0);
+  const form = page.locator('[data-form="match-opponent"]');
+  await expect(form.getByLabel('Sistema observado')).toHaveValue('1-2-1');
+  await expect(form.getByLabel('Notas do adversário')).toHaveValue('Nota antiga');
+  await context.setOffline(true);
+  await form.getByLabel('Sistema observado').fill('2-2');
+  await form.getByLabel('Notas do adversário').fill('Observado depois da partida');
+  await form.getByRole('button', { name: 'Guardar observações ao adversário' }).click();
+  await expect.poll(() => page.evaluate(matchId => DB.obter('jogos', matchId).then(row => row.post_game?.opponent_observation?.adversario_sistema), id)).toBe('2-2');
+  await context.setOffline(false);
+  await page.reload();
+  const reopened = page.locator('[data-form="match-opponent"]');
+  await expect(reopened.getByLabel('Sistema observado')).toHaveValue('2-2');
+  await reopened.getByLabel('Sistema observado').fill('');
+  await reopened.getByLabel('Notas do adversário').fill('');
+  await reopened.getByLabel('Pontos fortes observados · um por linha').fill('');
+  await reopened.getByRole('button', { name: 'Guardar observações ao adversário' }).click();
+  const stored = await page.evaluate(matchId => DB.obter('jogos', matchId), id);
+  expect(stored.pre_game.adversario_sistema).toBe('1-2-1');
+  expect(stored.post_game.opponent_observation.adversario_sistema).toBeNull();
+  expect(stored.post_game.opponent_observation.adversario_pontos_fortes).toEqual([]);
+  expect(stored.post_game.analysis.schema).toBe('vision-match-analysis@1');
+  expect(await page.evaluate(matchId => ReportExporter.render('match-report', matchId), id)).toContain('Sem observações ao adversário registadas');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+});
+
+test('edição concorrente das observações ao adversário mantém o texto por guardar', async ({ page }) => {
+  await page.goto('/#/calendario');
+  await page.waitForFunction(() => typeof DB !== 'undefined' && typeof go === 'function');
+  const id = await page.evaluate(() => DB.criar('jogos', { team_id: DEFAULT_TEAM_ID, sync_id: crypto.randomUUID(), data: '2026-09-27', adversario: 'Conflito adversário', estado: 'concluido' }));
+  await page.evaluate(matchId => go('#/equipa/jogo/' + matchId), id);
+  const form = page.locator('[data-form="match-opponent"]');
+  await form.getByLabel('Notas do adversário').fill('Texto ainda por guardar');
+  await page.evaluate(matchId => DB.modificar('jogos', matchId, row => ({ ...row, post_game: { ...(row.post_game || {}), opponent_observation: { adversario_notas: 'Texto noutro dispositivo', updated_at: '2026-09-27T12:00:00.000Z' } } })), id);
+  const dialog = page.waitForEvent('dialog').then(async alert => {
+    expect(alert.message()).toContain('mudaram noutro dispositivo');
+    await alert.accept();
+  });
+  await Promise.all([dialog, form.getByRole('button', { name: 'Guardar observações ao adversário' }).click()]);
+  await expect(form.getByLabel('Notas do adversário')).toHaveValue('Texto ainda por guardar');
+  expect(await page.evaluate(matchId => DB.obter('jogos', matchId).then(row => row.post_game.opponent_observation.adversario_notas), id)).toBe('Texto noutro dispositivo');
 });
 
 
