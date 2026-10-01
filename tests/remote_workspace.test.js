@@ -69,6 +69,78 @@ test("payload remoto remove chaves locais e data_url", () => {
   assert.deepEqual(remotePayload({ nome: "Legado", foto: "https://legacy.example/photo.jpg" }), { nome: "Legado", foto: "https://legacy.example/photo.jpg" });
 });
 
+test("conflito do perfil da equipa permite comparar e combinar alterações independentes sem perder a identidade remota", async () => {
+  const teamId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const original = { DB: globalThis.DB, HeadCoachMemory: globalThis.HeadCoachMemory,
+    DEFAULT_TEAM_ID: globalThis.DEFAULT_TEAM_ID, localStorage: globalThis.localStorage,
+    init: RemoteWorkspace.init, getSession: RemoteWorkspace.getSession, syncNow: RemoteWorkspace.syncNow };
+  let local = { id: "default", nome: "Nome no PC", clube: "Clube base", created_at: "t0", updated_at: "local-v2",
+    sync_id: teamId, sync_dirty: true, sync_local_updated_at: "local-v2", remote_updated_at: "v1",
+    _sync_base: { nome: "Nome base", clube: "Clube base", created_at: "t0", updated_at: "base" } };
+  let remote = { id: teamId, name: "Nome base", metadata: { nome: "Nome base", clube: "Clube remoto", created_at: "t0", updated_at: "remote-v2" }, updated_at: "v2" };
+  const config = new Map([["treinador.remote.supabase.v1", JSON.stringify({ remoteTeamId: teamId, conflicts: [] })]]);
+  globalThis.DEFAULT_TEAM_ID = "default";
+  globalThis.localStorage = { getItem: key => config.get(key) || null, setItem: (key,value) => config.set(key,value) };
+  globalThis.DB = {
+    async obter(store,id) { assert.equal(store,"teams");assert.equal(id,"default");return { ...local }; },
+    async modificar(store,id,transform,options) { assert.equal(store,"teams");assert.equal(id,"default");assert.equal(options.remote,true);local=transform({ ...local });return { ...local }; },
+  };
+  globalThis.HeadCoachMemory = { ensureTeam: async () => ({ ...local }) };
+  const client = { from(table) {
+    assert.equal(table,"teams");const query = { patch:null,filters:{},
+      update(value) { this.patch=value;return this; },
+      select() { if (!this.patch) return this;
+        if (this.filters.id!==remote.id || this.filters.updated_at!==remote.updated_at) return Promise.resolve({ data:[],error:null });
+        remote={ ...remote,name:this.patch.name,metadata:this.patch.metadata,updated_at:"v3" };
+        return Promise.resolve({ data:[{ ...remote }],error:null }); },
+      eq(key,value) { this.filters[key]=value;return this; },
+      async single() { return { data:this.filters.id===remote.id?{ ...remote }:null,error:null }; },
+    };return query;
+  } };
+  RemoteWorkspace.init=async()=>client;
+  RemoteWorkspace.getSession=async()=>({ user:{ id:"synthetic-coach" } });
+  RemoteWorkspace.syncNow=()=>RemoteWorkspace.syncTeam(teamId);
+  try {
+    const first=await RemoteWorkspace.syncTeam(teamId);
+    assert.equal(first.conflicts[0].store,"teams");
+    config.set("treinador.remote.supabase.v1",JSON.stringify({ remoteTeamId:teamId,conflicts:first.conflicts }));
+    const review=await RemoteWorkspace.readVersionConflict(teamId,"teams");
+    assert.deepEqual(review.merge_suggestion.local_changes,["nome"]);
+    assert.deepEqual(review.merge_suggestion.remote_changes,["clube"]);
+    const resolved=await RemoteWorkspace.resolveVersionConflict(teamId,"teams","merge_non_overlapping",review.remote_updated_at,review.local_updated_at);
+    assert.equal(resolved.pushed,1);
+    assert.equal(local.sync_id,teamId);
+    assert.equal(local.sync_dirty,false);
+    assert.equal(local.nome,"Nome no PC");
+    assert.equal(local.clube,"Clube remoto");
+    assert.equal(remote.name,"Nome no PC");
+    assert.equal(remote.metadata.clube,"Clube remoto");
+    assert.equal(local._sync_base.nome,"Nome no PC");
+    assert.equal(local._sync_base.clube,"Clube remoto");
+    local={ ...local,nome:"Nome local novo",updated_at:"local-v4",sync_local_updated_at:"local-v4",sync_dirty:true };
+    remote={ ...remote,name:"Nome remoto novo",metadata:{ ...remote.metadata,nome:"Nome remoto novo",updated_at:"remote-v4" },updated_at:"v4" };
+    const overlap=await RemoteWorkspace.syncTeam(teamId);
+    config.set("treinador.remote.supabase.v1",JSON.stringify({ remoteTeamId:teamId,conflicts:overlap.conflicts }));
+    const manual=await RemoteWorkspace.readVersionConflict(teamId,"teams");
+    assert.equal(manual.merge_suggestion,null);
+    assert.deepEqual(manual.manual_merge_fields.map((field)=>field.key),["nome"]);
+    remote={ ...remote,updated_at:"v5" };
+    await assert.rejects(RemoteWorkspace.resolveVersionConflict(teamId,"teams","keep_remote",manual.remote_updated_at,manual.local_updated_at),/versão remota da equipa mudou/);
+    assert.equal(local.nome,"Nome local novo");
+    remote={ ...remote,updated_at:"v4" };
+    const chosen=await RemoteWorkspace.resolveVersionConflict(teamId,"teams","merge_manual_fields",manual.remote_updated_at,manual.local_updated_at,{ nome:"remote" },{ deferSync:true });
+    assert.equal(chosen.applied,true);
+    assert.equal(local.nome,"Nome remoto novo");
+    assert.equal(local.sync_dirty,true);
+    assert.equal(local.remote_updated_at,"v4");
+    assert.equal(local._sync_base.nome,"Nome remoto novo");
+  } finally {
+    Object.assign(globalThis,{ DB:original.DB,HeadCoachMemory:original.HeadCoachMemory,
+      DEFAULT_TEAM_ID:original.DEFAULT_TEAM_ID,localStorage:original.localStorage });
+    RemoteWorkspace.init=original.init;RemoteWorkspace.getSession=original.getSession;RemoteWorkspace.syncNow=original.syncNow;
+  }
+});
+
 test("confirmação manual de treino mantém proveniência e histórico no registo remoto", () => {
   const manual_completion = { schema: "vision-training-manual-completion@1", status: "confirmed", revision: 1, confirmed_at: "2026-09-27T12:00:00.000Z", history: [{ action: "confirm", at: "2026-09-27T12:00:00.000Z", actor: "Treinador" }] };
   const local = { id: 7, team_id: "default", sync_id: "training-uuid", sync_dirty: true, status: "completed", data: "2026-09-24", blocos: [{ exercise_name: "Passe" }], review: { status: "done", conclusao: "Observado" }, manual_completion };
@@ -557,17 +629,21 @@ test("troca de workspace identifica a origem dos dados legados antes de mudar", 
     { id: 1, team_id: "default", sync_id: "11111111-1111-4111-8111-111111111111", remote_updated_at: "v1", sync_dirty: false },
     { id: 2, team_id: "default", sync_id: "offline-player", sync_dirty: true },
   ];
+  let pendingTeam = true;
   globalThis.localStorage = { getItem(key) { return values.get(key) || null; }, setItem(key, value) { values.set(key, value); } };
   Object.defineProperty(globalThis, "navigator", { value: { onLine: true }, configurable: true });
   globalThis.DB = {
     async listar(store) { return store === "jogadores" ? rows.slice() : []; },
-    async obter(_store, id) { return rows.find((item) => item.id === id); },
+    async obter(store, id) { return store === "teams" ? (pendingTeam ? { id: "default", sync_dirty: true } : null) : rows.find((item) => item.id === id); },
     async atualizar(_store, row) { const index = rows.findIndex((item) => item.id === row.id); if (index >= 0) rows[index] = row; return row; },
   };
   globalThis.DEFAULT_TEAM_ID = "default";
   RemoteWorkspace.scheduleSync = () => {};
   RemoteWorkspace.init = async () => ({ from() { return { select() { return this; }, eq(_key, id) { this.id = id; return this; }, async maybeSingle() { return { data: this.id === "11111111-1111-4111-8111-111111111111" ? { team_id: "team-a" } : null, error: null }; } }; } });
   try {
+    await assert.rejects(RemoteWorkspace.useTeam("team-b"), /alterações pendentes do perfil/);
+    assert.equal(JSON.parse(values.get("treinador.remote.supabase.v1")).remoteTeamId, "team-a");
+    pendingTeam = false;
     await RemoteWorkspace.useTeam("team-b");
     assert.equal(rows[0].remote_team_id, "team-a");
     assert.equal(rows[1].remote_team_id, "team-a");
@@ -741,7 +817,7 @@ test("troca de workspace espera a sync atual antes de alterar a equipa seleciona
     setItem(key, value) { values.set(key, value); },
   };
   Object.defineProperty(globalThis, "navigator", { value: { onLine: true }, configurable: true });
-  globalThis.DB = { async listar() { return []; } };
+  globalThis.DB = { async listar() { return []; }, async obter() { return null; } };
   RemoteWorkspace.init = async () => ({});
   RemoteWorkspace.scheduleSync = () => {};
   RemoteWorkspace._syncPromise = new Promise((resolve) => { releaseSync = resolve; });

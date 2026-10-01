@@ -103,11 +103,22 @@ const HeadCoachMemory = {
     return team;
   },
   async getTeam(teamId = HEAD_COACH_DEFAULT_TEAM_ID) { return DB.obter("teams", teamId); },
-  async saveTeam(input) {
-    const atual = await DB.obter("teams", input.id || HEAD_COACH_DEFAULT_TEAM_ID);
-    const team = normalizarTeam({ ...(atual || {}), ...input, created_at: atual?.created_at });
-    await DB.atualizar("teams", team);
-    return team;
+  async saveTeam(input, options = {}) {
+    const id = input.id || HEAD_COACH_DEFAULT_TEAM_ID;
+    const atual = await DB.obter("teams", id);
+    if (!atual) {
+      const team = normalizarTeam({ ...input, id });
+      await DB.atualizar("teams", team);
+      return team;
+    }
+    return DB.modificar("teams", id, (current) => {
+      if (options.expectedVersion && (
+        (current.sync_local_updated_at || current.updated_at || null) !== options.expectedVersion.local_updated_at
+        || (current.remote_updated_at || null) !== options.expectedVersion.remote_updated_at
+        || (current.sync_id || null) !== options.expectedVersion.sync_id
+      )) throw new Error("O perfil da equipa mudou enquanto editavas. Revê a versão atual antes de guardar.");
+      return { ...current, ...normalizarTeam({ ...current, ...input, created_at: current.created_at }) };
+    });
   },
   async list(teamId = HEAD_COACH_DEFAULT_TEAM_ID, filters = {}) {
     let items = await DB.porIndice("memory_items", "team_id", teamId);
